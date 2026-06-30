@@ -11,6 +11,7 @@
 #include "gos_frame_context.h"      // RENDER-FRAME-CONTEXT-1 read-only mirror (file scope!)
 #include "../../RenderCore/frame_graph_validate.h"  // FRAME-GRAPH-SKELETON-1 validator (file scope!)
 #include "../../RenderCore/terrain_path_telemetry.h" // TERRAIN-PATH-TELEMETRY-1 (file scope!)
+#include "../../RenderCore/frame_executor.h"          // PER-PASS-APPLY-COUNTERS-1: ApplyPassId/applyPassName (GL-free)
 #include "../../code/unitprofile.h" // UNIT-PROFILE-SEAM-1 witness bridge (POD only)
 
 // Texture name lookup for mech node indices (mcTextureManager slot → name string).
@@ -28,6 +29,8 @@ extern "C" unsigned long mc2_framegraph_executor_validation_failures();
 // SAME-ORDER-EXECUTOR-VALIDATE-1: split top-level executor metrics (default-OFF gate).
 extern "C" unsigned long mc2_framegraph_executor_validated_top_level_passes();
 extern "C" unsigned long mc2_framegraph_executor_apply_state_passes();
+// PER-PASS-APPLY-COUNTERS-1: per-pass apply-state getter (sum == aggregate above).
+extern "C" unsigned long mc2_framegraph_executor_apply_state_by_pass(unsigned id);
 extern "C" unsigned long mc2_framegraph_executor_scheduled_passes();
 extern "C" unsigned long mc2_framegraph_executor_skipped_deferred_passes();
 // FRAME-GRAPH-EXECUTOR-DRYRUN-1: per-frame observe-and-diff accumulators (default-OFF gate).
@@ -274,6 +277,14 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "    \"executor_owned_wrappers\": " << mc2_framegraph_executor_owned_passes() << ",\n";
         s << "    \"executor_validated_top_level_passes\": " << mc2_framegraph_executor_validated_top_level_passes() << ",\n";
         s << "    \"executor_apply_state_passes\": " << mc2_framegraph_executor_apply_state_passes() << ",\n";
+        // PER-PASS-APPLY-COUNTERS-1: per-pass breakdown (aggregate above == sum of these).
+        s << "    \"executor_apply_state_by_pass\": {";
+        for (int i = 0; i < (int)RenderCore::framegraph::ApplyPassId::Count; ++i) {
+            s << (i == 0 ? "" : ",")
+              << " \"" << RenderCore::framegraph::applyPassName((RenderCore::framegraph::ApplyPassId)i) << "\": "
+              << mc2_framegraph_executor_apply_state_by_pass((unsigned)i);
+        }
+        s << " },\n";
         s << "    \"executor_scheduled_passes\": " << mc2_framegraph_executor_scheduled_passes() << ",\n";
         s << "    \"executor_skipped_deferred_passes\": " << mc2_framegraph_executor_skipped_deferred_passes() << ",\n";
         // FRAME-GRAPH-EXECUTOR-DRYRUN-1: per-frame fired-set/order/terrain-mutex/latch diff

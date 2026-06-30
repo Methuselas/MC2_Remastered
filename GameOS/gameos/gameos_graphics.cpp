@@ -39,6 +39,7 @@
 #include "../../mclib/camera_frustum_math.h"  // CAMERA-FRUSTUM-HARNESS-1 pure rect/frustum math
 #include "../../mclib/render_contract.h"      // [RENDER_PASS v1] noteRenderPass
 #include "RenderCore/top_level_pass_executor.h" // APPLY-STATE-TERRAINDECAL-1: findTopLevelStateDesc
+#include "../../RenderCore/frame_executor.h"     // PER-PASS-APPLY-COUNTERS-1: ApplyPassId
 #include "Stuff/Stuff.hpp"                     // Stuff::Matrix4D for gos_SetWorldToClipGL (full chain required; matrix.hpp alone creates circular include ordering)
 
 // [B1 C16] (diagnostic) gosFX heap + child accumulation counters; env-gated on
@@ -10119,7 +10120,7 @@ void gosRenderer::drawDecals()
 // (defined in gos_postprocess.cpp). Bumps the SAME g_applyStatePasses that the
 // PostProcess apply-state islands use, so executor_apply_state_passes aggregates
 // top-level + sub-stage applies without a separate gauge.
-extern "C" void mc2_framegraph_executor_bump_apply_state();
+extern "C" void mc2_framegraph_executor_bump_apply_state(unsigned id);
 
 // APPLY-STATE-TERRAINDECAL-1: pre-apply the declared TerrainDecal pipeline. This is
 // the top-level analog of gosPostProcess::executorApply<X>State() — it performs the
@@ -10133,7 +10134,7 @@ void gosRenderer::executorApplyTerrainDecalState()
 {
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainDecal), "TerrainDecal");
-    mc2_framegraph_executor_bump_apply_state();
+    mc2_framegraph_executor_bump_apply_state((unsigned)RenderCore::framegraph::ApplyPassId::TerrainDecal);
     decalStateAppliedByExecutor_ = true;
 }
 
@@ -10149,7 +10150,7 @@ void gosRenderer::executorApplyTerrainOverlayState()
 {
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainOverlay), "TerrainOverlay");
-    mc2_framegraph_executor_bump_apply_state();
+    mc2_framegraph_executor_bump_apply_state((unsigned)RenderCore::framegraph::ApplyPassId::TerrainOverlay);
     overlayStateAppliedByExecutor_ = true;
 }
 

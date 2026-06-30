@@ -219,4 +219,38 @@ inline const SubStageStateDesc* findSubStageState(ExecutorIslandId id) {
     return nullptr;
 }
 
+// PER-PASS-APPLY-COUNTERS-1 — independent observability id per apply-state path.
+// Replaces the coarse aggregate g_applyStatePasses (which made decal "rise"
+// look like variance) with one counter slot per apply site, so each path is
+// observable on its own in the render-state dump. The aggregate is now derived
+// as the SUM over these ids (back-compat: the total is byte-stable).
+// 5 PostProcess sub-stage applies + 3 top-level applies (TerrainDecal,
+// TerrainOverlay, StaticPropOpaque).
+enum class ApplyPassId : uint8_t {
+    PostProcessEdgeFog = 0,
+    PostProcessFogOob,
+    PostProcessShoreline,
+    PostProcessCloudShadow,
+    PostProcessScreenShadow,
+    TerrainDecal,
+    TerrainOverlay,
+    StaticPropOpaque,
+    Count,
+};
+
+// Exact stable string names for the dump keys (must match the dump map keys).
+inline const char* applyPassName(ApplyPassId id) {
+    switch (id) {
+        case ApplyPassId::PostProcessEdgeFog:      return "PostProcessEdgeFog";
+        case ApplyPassId::PostProcessFogOob:       return "PostProcessFogOob";
+        case ApplyPassId::PostProcessShoreline:    return "PostProcessShoreline";
+        case ApplyPassId::PostProcessCloudShadow:  return "PostProcessCloudShadow";
+        case ApplyPassId::PostProcessScreenShadow: return "PostProcessScreenShadow";
+        case ApplyPassId::TerrainDecal:            return "TerrainDecal";
+        case ApplyPassId::TerrainOverlay:          return "TerrainOverlay";
+        case ApplyPassId::StaticPropOpaque:        return "StaticPropOpaque";
+        default:                                   return "Unknown";
+    }
+}
+
 }} // namespace RenderCore::framegraph

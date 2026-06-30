@@ -26,6 +26,7 @@
 #include "../../mclib/terrain.h"         // C1b temporal-superset: Terrain::worldToBlockIdx()
 #include "../../mclib/render_contract.h" // [RENDER_PASS v1] noteRenderPass
 #include "../../RenderCore/top_level_pass_executor.h" // APPLY-STATE-STATICPROP-1: findTopLevelStateDesc
+#include "../../RenderCore/frame_executor.h"          // PER-PASS-APPLY-COUNTERS-1: ApplyPassId
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
@@ -5332,7 +5333,7 @@ static bool flushDepthPrepassV6(
 // SAME g_applyStatePasses that the PostProcess apply-state islands + the TerrainDecal/
 // TerrainOverlay top-level applies use, so executor_apply_state_passes aggregates with
 // no double-count (single increment per apply).
-extern "C" void mc2_framegraph_executor_bump_apply_state();
+extern "C" void mc2_framegraph_executor_bump_apply_state(unsigned id);
 
 // APPLY-STATE-STATICPROP-1: file-static flag mirroring decalStateAppliedByExecutor_.
 // When MC2_FRAMEGRAPH_EXECUTOR is ON, executorApplyStaticPropOpaqueState() pre-applies
@@ -5354,7 +5355,7 @@ static void executorApplyStaticPropOpaqueState() {
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque),
         "StaticPropOpaque");
-    mc2_framegraph_executor_bump_apply_state();
+    mc2_framegraph_executor_bump_apply_state((unsigned)RenderCore::framegraph::ApplyPassId::StaticPropOpaque);
     s_staticPropStateAppliedByExecutor = true;
 }
 

@@ -14,6 +14,8 @@
 #include "RenderCore/postprocess_subgraph.h" // POSTPROCESS-SUBGRAPH-1 PostProcessSubpass table
 #include "RenderCore/render_state_desc.h"  // FRAMEGRAPH-STATEPACK-SKELETON-1
 #include "RenderCore/top_level_pass_executor.h" // SAME-ORDER-EXECUTOR-VALIDATE-1
+#include <string>   // PER-PASS-APPLY-COUNTERS-1
+#include <cstring>  // PER-PASS-APPLY-COUNTERS-1
 
 using namespace RenderCore;
 using namespace RenderCore::framegraph;
@@ -1638,6 +1640,25 @@ TEST_CASE("apply-state-island (h): all 5 apply-island descriptors present (EdgeF
     CHECK(findSubStageState(ExecutorIslandId::Shoreline)    != nullptr);
     CHECK(findSubStageState(ExecutorIslandId::CloudShadow)  != nullptr);
     CHECK(findSubStageState(ExecutorIslandId::ScreenShadow) != nullptr);
+}
+
+TEST_CASE("per-pass-apply-counters-1: ApplyPassId table is complete + names unique/non-Unknown") {
+    using namespace RenderCore::framegraph;
+    // Exactly 8 apply paths: 5 PostProcess sub-stages + 3 top-level.
+    CHECK(static_cast<unsigned>(ApplyPassId::Count) == 8u);
+    // Spot-check a representative mapping.
+    CHECK(std::string(applyPassName(ApplyPassId::StaticPropOpaque)) == "StaticPropOpaque");
+    // All 8 ids return a non-"Unknown", unique name.
+    const char* seen[(int)ApplyPassId::Count] = {nullptr};
+    for (int i = 0; i < (int)ApplyPassId::Count; ++i) {
+        const char* n = applyPassName((ApplyPassId)i);
+        CHECK(std::strcmp(n, "Unknown") != 0);
+        for (int j = 0; j < i; ++j)
+            CHECK(std::strcmp(n, seen[j]) != 0); // uniqueness
+        seen[i] = n;
+    }
+    // Out-of-range id is "Unknown".
+    CHECK(std::string(applyPassName(ApplyPassId::Count)) == "Unknown");
 }
 
 } // TEST_SUITE

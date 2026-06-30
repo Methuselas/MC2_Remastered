@@ -1405,6 +1405,11 @@ extern "C" unsigned long mc2_framegraph_executor_apply_state_passes_impl();
 extern "C" unsigned long mc2_framegraph_executor_apply_state_passes() {
     return mc2_framegraph_executor_apply_state_passes_impl();
 }
+// PER-PASS-APPLY-COUNTERS-1: per-pass public forwarder (two-hop, mirrors above).
+extern "C" unsigned long mc2_framegraph_executor_apply_state_by_pass_impl(unsigned id);
+extern "C" unsigned long mc2_framegraph_executor_apply_state_by_pass(unsigned id) {
+    return mc2_framegraph_executor_apply_state_by_pass_impl(id);
+}
 extern "C" unsigned long mc2_framegraph_executor_scheduled_passes() {
     return 0ul;  // always 0; VALIDATE-ONLY slice, no scheduling
 }

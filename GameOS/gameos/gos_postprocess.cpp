@@ -4653,6 +4653,18 @@ static unsigned long g_executorValidationFailures = 0;
 // Exposed via mc2_framegraph_executor_apply_state_passes() so the advisor can assert > 0.
 static unsigned long g_applyStatePasses          = 0;
 
+// PER-PASS-APPLY-COUNTERS-1: per-apply-path counters keyed by ApplyPassId, so
+// each apply site is independently observable. The legacy aggregate
+// g_applyStatePasses above is no longer incremented; the reported aggregate is
+// DERIVED as the sum over this array (no drift). All apply sites — the 5
+// PostProcess sub-stage applies here plus the 3 top-level applies in other TUs
+// (routed through mc2_framegraph_executor_bump_apply_state(id)) — bump exactly
+// one slot.
+static unsigned long g_applyStateByPass[(int)RenderCore::framegraph::ApplyPassId::Count] = {0};
+static void applyStateBump(RenderCore::framegraph::ApplyPassId id) {
+    ++g_applyStateByPass[(int)id];
+}
+
 // Max log lines for validation failures — prevent log flooding in pathological cases.
 static constexpr unsigned kMaxExecutorFailureLog = 32u;
 
@@ -4784,7 +4796,7 @@ void gosPostProcess::executorApplyEdgeFogState()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessEdgeFog),
         "PostProcessEdgeFog");
-    ++g_applyStatePasses;
+    applyStateBump(RenderCore::framegraph::ApplyPassId::PostProcessEdgeFog);
     // APPLY-STATE-REDUNDANT-BODY-REMOVE-1: signal to runEdgeFog() that the executor
     // already applied these 4 setup calls so the body should skip its own copies.
     edgeFogStateAppliedByExecutor_ = true;
@@ -4801,7 +4813,7 @@ void gosPostProcess::executorApplyFogOobState()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessFogOob),
         "PostProcessFogOob");
-    ++g_applyStatePasses;
+    applyStateBump(RenderCore::framegraph::ApplyPassId::PostProcessFogOob);
     // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: signal runFogOob() to skip its own copies.
     fogOobStateAppliedByExecutor_ = true;
 }
@@ -4817,7 +4829,7 @@ void gosPostProcess::executorApplyShorelineState()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessShoreline),
         "PostProcessShoreline");
-    ++g_applyStatePasses;
+    applyStateBump(RenderCore::framegraph::ApplyPassId::PostProcessShoreline);
     // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: signal runShoreline() to skip its own copies.
     shorelineStateAppliedByExecutor_ = true;
 }
@@ -4833,7 +4845,7 @@ void gosPostProcess::executorApplyCloudShadowState()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessCloudShadow),
         "PostProcessCloudShadow");
-    ++g_applyStatePasses;
+    applyStateBump(RenderCore::framegraph::ApplyPassId::PostProcessCloudShadow);
     // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: signal runCloudShadow() to skip its own copies.
     cloudShadowStateAppliedByExecutor_ = true;
 }
@@ -4850,7 +4862,7 @@ void gosPostProcess::executorApplyScreenShadowState()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessScreenShadow),
         "PostProcessScreenShadow");
-    ++g_applyStatePasses;
+    applyStateBump(RenderCore::framegraph::ApplyPassId::PostProcessScreenShadow);
     // APPLY-STATE-REDUNDANT-BODY-REMOVE-2 pattern: signal runScreenShadow() to skip its own copies.
     screenShadowStateAppliedByExecutor_ = true;
 }
@@ -5043,17 +5055,30 @@ extern "C" unsigned long mc2_framegraph_executor_validation_failures()
 
 // FRAMEGRAPH-APPLY-STATE-ISLAND-1: apply-state counter (0 until EdgeFog fires, then >0 per frame).
 // Declared extern "C" so debug_state_dump.cpp and render_contract.cpp can forward-declare + call.
+// PER-PASS-APPLY-COUNTERS-1: aggregate is DERIVED as the sum over the per-pass
+// array. Back-compat: equals the former g_applyStatePasses total (every apply
+// site bumps exactly one slot), so executor_apply_state_passes is byte-stable.
 extern "C" unsigned long mc2_framegraph_executor_apply_state_passes_impl()
 {
-    return g_applyStatePasses;
+    unsigned long total = 0;
+    for (int i = 0; i < (int)RenderCore::framegraph::ApplyPassId::Count; ++i)
+        total += g_applyStateByPass[i];
+    return total;
 }
 
-// APPLY-STATE-TERRAINDECAL-1: cross-TU bump of the SAME g_applyStatePasses counter
-// so a top-level apply-state pass (gosRenderer::executorApplyTerrainDecalState in
-// gameos_graphics.cpp) AGGREGATES into the single reported value rather than
-// double-counting via a separate gauge. One increment per apply; the dump reads
-// mc2_framegraph_executor_apply_state_passes() which forwards to _impl() above.
-extern "C" void mc2_framegraph_executor_bump_apply_state()
+// PER-PASS-APPLY-COUNTERS-1: per-pass getter. Returns the count for one
+// ApplyPassId, or 0 for an out-of-range id.
+extern "C" unsigned long mc2_framegraph_executor_apply_state_by_pass_impl(unsigned id)
 {
-    ++g_applyStatePasses;
+    return id < (unsigned)RenderCore::framegraph::ApplyPassId::Count ? g_applyStateByPass[id] : 0;
+}
+
+// PER-PASS-APPLY-COUNTERS-1: cross-TU bump of the per-pass apply-state array so a
+// top-level apply-state pass (gosRenderer::executorApplyTerrainDecalState /
+// ...OverlayState in gameos_graphics.cpp, executorApplyStaticPropOpaqueState in
+// gos_static_prop_batcher.cpp) records into ITS OWN slot — independently
+// observable, and aggregating into the sum-derived total without double-count.
+extern "C" void mc2_framegraph_executor_bump_apply_state(unsigned id)
+{
+    applyStateBump((RenderCore::framegraph::ApplyPassId)id);
 }
