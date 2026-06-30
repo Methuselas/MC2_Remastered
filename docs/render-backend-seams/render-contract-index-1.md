@@ -122,6 +122,44 @@ emits `glColorMaski` from `PipelineDesc`) or the `GlScopedColorMask` RAII wrappe
   site with file:line + per-file counts (plain vs indexed). Wired into `scripts/check-contracts.sh`
   as `raw_gl_colormask` (right after `raw_gl_depthmask`). Regression-proof: freezes the backlog,
   blocks new bypasses.
+- `check-raw-gl-blendfunc.py` — **RAW-GL-BLENDFUNC-DIFF-GATE-1** (Phase 8 fourth — and last-for-now — enforcement gate). See note below.
+
+#### RAW-GL-BLENDFUNC-DIFF-GATE-1 (`scripts/check-raw-gl-blendfunc.py`)
+
+Exact clone of the color-mask gate above, swapped to the blend FUNC/EQUATION axis. Diff-based static
+check that bans **new** raw blend-func/equation call sites on ADDED lines outside a sanctioned-file
+allowlist; the regex `\bglBlend(Func|FuncSeparate|Equation|EquationSeparate)i?\s*\(` catches the whole
+family: `glBlendFunc`, `glBlendFunci`, `glBlendFuncSeparate`, `glBlendFuncSeparatei`,
+`glBlendEquation`, `glBlendEquationSeparate` (+ `i`). It deliberately does **not** gate
+`glEnable(GL_BLEND)` / `glDisable(GL_BLEND)` — blend on/off is globally managed per the ambient-ledger
+lesson; only the blend FUNC/EQUATION is the meaningful contracted state. Mode A (default) diffs vs a
+base ref (default `merge-base HEAD origin/main`, or `--base`), inspects only ADDED lines, exit 1 naming
+each offender when a non-allowlisted file gains a raw blend-func/equation call. Non-overlapping with the
+descriptive PipelineDesc checks — it bans the raw *call site*, steering blend state through the
+sanctioned emitter (`pipeline_binder.cpp` applyPipeline, which emits `glBlendFunc` from `PipelineDesc`)
+or a scoped blend wrapper (`gl_state_guard.h`).
+
+- **Allowlist rationale:** same shape as the color-mask gate — chokepoint emitter + RAII wrapper
+  sanctioned by design; `debug_renderer.cpp` and `editor/EditorGameOS.cpp` out of the frame loop;
+  `tools/asset_viewer/` and `tests/` out-of-engine / offline (prefix-matched). The **frozen backlog**
+  (existing render TUs: `gameos_graphics.cpp`, `gos_postprocess.cpp`, `gos_particle_bridge.cpp`,
+  `gos_vfx_mesh_bridge.cpp`) is allowlisted by exact file so it doesn't retro-fail; documented as the
+  v1 freeze. Mode B currently reports 35 raw sites across 6 files (gameos_graphics.cpp: 16 Func;
+  pipeline_binder.cpp: 6 Func; gos_particle_bridge.cpp: 6 Func; debug_renderer.cpp: 2 FuncSeparate +
+  2 EquationSeparate; gos_vfx_mesh_bridge.cpp: 2 Func; gos_postprocess.cpp: 1 Func).
+- **v1 = file-level freeze** (backlog files may add raw calls; new files may not) →
+  **v2 tightening = per-file count ceiling** (record per-file baseline counts from Mode B so even
+  backlog files can't ADD raw calls). v1 is intentionally simple.
+- **Run:** Mode A (enforcement, default) `py -3 scripts/check-raw-gl-blendfunc.py [--base REF] [--quiet]`;
+  Mode B (audit, advisory exit 0) `py -3 scripts/check-raw-gl-blendfunc.py --all` lists every raw
+  site with file:line + variant + per-file counts. Wired into `scripts/check-contracts.sh` as
+  `raw_gl_blendfunc` (right after `raw_gl_colormask`). Regression-proof: freezes the backlog, blocks
+  new bypasses.
+- **Last raw-GL axis gate for now.** FBO-bind (`glBindFramebuffer`) gating is intentionally **deferred**
+  per advisor — those call sites are too numerous and context-sensitive (FBO identity is logical, not a
+  simple flag) to gate cleanly at this stage. The four shipped axes — depth-func, depth-mask,
+  color-mask, blend-func/equation — cover the meaningful scalar pipeline-state setters.
+
 - `check-include-firewall.sh`, `check-no-raw-gl-from-game.sh`, `check-vfx-no-objectid.sh`, `check-visibility-log-schema.sh`, `check-unified-projection-retirement.sh`, `check-mlr-leaves-gated.sh`, `check-particles-no-cpu-projection.sh` — RenderWorld-boundary / lane firewalls (PARTIAL contract coverage)
 - `validate_shaders.py` — glslang SPIR-V compile gate; uses `--auto-map-bindings` (compile-only; **does NOT record sampler occupancy** — symptom of the blind spot, not coverage)
 
