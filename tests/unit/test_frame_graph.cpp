@@ -14,6 +14,7 @@
 #include "RenderCore/postprocess_subgraph.h" // POSTPROCESS-SUBGRAPH-1 PostProcessSubpass table
 #include "RenderCore/render_state_desc.h"  // FRAMEGRAPH-STATEPACK-SKELETON-1
 #include "RenderCore/top_level_pass_executor.h" // SAME-ORDER-EXECUTOR-VALIDATE-1
+#include "RenderCore/scheduler_legal_reorder.h" // SCHEDULER-EDGE-CLASSIFY-1
 #include <string>   // PER-PASS-APPLY-COUNTERS-1
 #include <cstring>  // PER-PASS-APPLY-COUNTERS-1
 
@@ -1842,6 +1843,172 @@ TEST_CASE("apply-state-registration (post-process): each PostProcess ApplyPassId
         const IslandContract* ic = findIslandContract(kSubStageState[i].id);
         CHECK(ic != nullptr);
     }
+}
+
+// ---------------------------------------------------------------------------
+// SCHEDULER-EDGE-CLASSIFY-1: GL-free edge classifier + current-order legality
+// baseline (tier-C proof infrastructure; no reorderer, no pass movement).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("edge classify (a): expected HardResource edge set against kFramePassOrder") {
+    using namespace RenderCore::framegraph;
+    PassEdge edges[256];
+    int n = 0;
+    classifyEdges(edges, n);
+    REQUIRE(n > 0);
+
+    auto hasHR = [&](RenderPassId from, RenderPassId to, RenderResourceId via) {
+        for (int i = 0; i < n; ++i) {
+            const PassEdge& e = edges[i];
+            if (e.cls == EdgeClass::HardResource && e.from == from && e.to == to && e.via == via)
+                return true;
+        }
+        return false;
+    };
+
+    // E1-E3: Shadow produces ShadowDynamicMap; the three opaque/terrain consumers read it.
+    // (Shadow is first in kFramePassOrder, so the producer-walk derives these directly.)
+    CHECK(hasHR(RenderPassId::Shadow, RenderPassId::StaticPropOpaque, RenderResourceId::ShadowDynamicMap));
+    CHECK(hasHR(RenderPassId::Shadow, RenderPassId::MechOpaque,       RenderResourceId::ShadowDynamicMap));
+    CHECK(hasHR(RenderPassId::Shadow, RenderPassId::Terrain,          RenderResourceId::ShadowDynamicMap));
+
+    // Downstream consumers of scene depth: last FrameLocal writer of MainDepth before each.
+    // Terrain is the last MainDepth writer before TerrainOverlay/TerrainDecal/Water/Veg/VFX.
+    CHECK(hasHR(RenderPassId::Terrain, RenderPassId::TerrainOverlay, RenderResourceId::MainDepth));
+    CHECK(hasHR(RenderPassId::Terrain, RenderPassId::TerrainDecal,   RenderResourceId::MainDepth));
+    CHECK(hasHR(RenderPassId::Terrain, RenderPassId::Water,          RenderResourceId::MainDepth));
+    CHECK(hasHR(RenderPassId::Terrain, RenderPassId::VegetationCards,RenderResourceId::MainDepth));
+    // VFX (slot 8) reads MainDepth; the LAST in-frame MainDepth writer before it is
+    // VegetationCards (slot 7), not Terrain — proves last-writer (not first) semantics.
+    CHECK(hasHR(RenderPassId::VegetationCards, RenderPassId::VFX,    RenderResourceId::MainDepth));
+
+    // PostProcess reads MainColor, MainDepth, ShadowDynamicMap, MainNormal. Its MainColor
+    // edge comes from the LAST in-frame MainColor writer before it — UI (slot 9), since VFX
+    // (slot 8) and UI both write MainColor and UI is later.
+    CHECK(hasHR(RenderPassId::Shadow, RenderPassId::PostProcess, RenderResourceId::ShadowDynamicMap));
+    CHECK(hasHR(RenderPassId::UI,     RenderPassId::PostProcess, RenderResourceId::MainColor));
+}
+
+TEST_CASE("edge classify (b): isCurrentOrderLegal() == true (no-op identity baseline)") {
+    using namespace RenderCore::framegraph;
+    CHECK(isCurrentOrderLegal() == true);
+}
+
+TEST_CASE("edge classify (c): every lifetime-excluded read is ExternalNonEdge, never HardResource") {
+    using namespace RenderCore::framegraph;
+    // Synthetic table: a single pass that READS an External/Mission/Persistent resource.
+    // The classifier must emit ExternalNonEdge for it (visible exclusion), and must NOT
+    // emit a HardResource edge for it.
+    RenderPassContract synth[1] = {};
+    synth[0].id   = RenderPassId::PostProcess;
+    synth[0].name = "synthExternalReader";
+    synth[0].reads[0] = RenderResourceId::TerrainHeightTexture; // Mission
+    synth[0].reads[1] = RenderResourceId::ShadowStaticMap;      // Persistent
+    synth[0].reads[2] = RenderResourceId::WaterReflectionColor; // External
+    synth[0].reads[3] = RenderResourceId::Unknown;
+
+    const RenderPassId order[1] = { RenderPassId::PostProcess };
+    PassEdge edges[256];
+    int n = 0;
+    classifyEdgesFor(synth, 1, order, 1, edges, n);
+
+    int externalNonEdges = 0, hardFromSynth = 0;
+    for (int i = 0; i < n; ++i) {
+        if (edges[i].cls == EdgeClass::ExternalNonEdge) ++externalNonEdges;
+        if (edges[i].cls == EdgeClass::HardResource &&
+            (edges[i].via == RenderResourceId::TerrainHeightTexture ||
+             edges[i].via == RenderResourceId::ShadowStaticMap ||
+             edges[i].via == RenderResourceId::WaterReflectionColor))
+            ++hardFromSynth;
+    }
+    CHECK(externalNonEdges == 3);  // one per excluded read
+    CHECK(hardFromSynth == 0);     // none promoted to a HardResource edge
+
+    // And the static lifetime classification itself.
+    CHECK(isExternalLifetime(RenderResourceId::TerrainHeightTexture) == true);
+    CHECK(isExternalLifetime(RenderResourceId::ShadowStaticMap)      == true);
+    CHECK(isExternalLifetime(RenderResourceId::WaterReflectionColor) == true);
+    CHECK(isExternalLifetime(RenderResourceId::MainColor)            == false); // FrameLocal
+    CHECK(isExternalLifetime(RenderResourceId::ShadowDynamicMap)     == false); // FrameLocal
+}
+
+TEST_CASE("edge classify (d): LODChunk knownEarly is suppressed, not flagged forbidden") {
+    using namespace RenderCore::framegraph;
+    PassEdge edges[256];
+    int n = 0;
+    classifyEdges(edges, n);
+
+    // A KnownEarly entry for Terrain must exist and must be non-forbidden (a suppression).
+    bool found = false;
+    for (int i = 0; i < n; ++i) {
+        if (edges[i].cls == EdgeClass::KnownEarly && edges[i].to == RenderPassId::Terrain) {
+            found = true;
+            CHECK(edges[i].forbidden == false);   // suppression rule, NOT a violation
+        }
+    }
+    CHECK(found == true);
+    // The presence of a knownEarly Terrain entry must not flip the baseline to illegal.
+    CHECK(isCurrentOrderLegal() == true);
+}
+
+TEST_CASE("edge classify (e): the 3 hand tables are non-empty + well-formed") {
+    using namespace RenderCore::framegraph;
+    CHECK(kContentConditionalEdgeCount > 0);
+    CHECK(kForbiddenReorderEdgeCount   > 0);
+    CHECK(kDeferredSoftStateEdgeCount  > 0);
+
+    auto validPassId = [](RenderPassId id) {
+        return static_cast<unsigned>(id) > 0u &&
+               static_cast<unsigned>(id) < static_cast<unsigned>(RenderPassId::_SentinelLast);
+    };
+
+    // Forbidden edges must reference REAL pass ids on both ends and be flagged forbidden.
+    for (int i = 0; i < kForbiddenReorderEdgeCount; ++i) {
+        CHECK(validPassId(kForbiddenReorderEdges[i].from) == true);
+        CHECK(validPassId(kForbiddenReorderEdges[i].to)   == true);
+        CHECK(kForbiddenReorderEdges[i].forbidden == true);
+    }
+    // Content-conditional edges reference real pass ids and carry contentGated=true.
+    for (int i = 0; i < kContentConditionalEdgeCount; ++i) {
+        CHECK(validPassId(kContentConditionalEdges[i].from) == true);
+        CHECK(validPassId(kContentConditionalEdges[i].to)   == true);
+        CHECK(kContentConditionalEdges[i].contentGated == true);
+        CHECK(kContentConditionalEdges[i].forbidden    == false);
+    }
+    // Deferred soft-state edges are an "unknown hazard" ledger: non-forbidden, have a note.
+    for (int i = 0; i < kDeferredSoftStateEdgeCount; ++i) {
+        CHECK(kDeferredSoftStateEdges[i].forbidden == false);
+        CHECK(kDeferredSoftStateEdges[i].note != nullptr);
+        CHECK(kDeferredSoftStateEdges[i].note[0] != '\0');
+    }
+
+    // edgeClassName covers every enum value (no "?" for declared classes).
+    CHECK(std::string(edgeClassName(EdgeClass::HardResource))       == "HardResource");
+    CHECK(std::string(edgeClassName(EdgeClass::SoftState))          == "SoftState");
+    CHECK(std::string(edgeClassName(EdgeClass::LegacyLatch))        == "LegacyLatch");
+    CHECK(std::string(edgeClassName(EdgeClass::KnownEarly))         == "KnownEarly");
+    CHECK(std::string(edgeClassName(EdgeClass::ContentConditional)) == "ContentConditional");
+    CHECK(std::string(edgeClassName(EdgeClass::ExternalNonEdge))    == "ExternalNonEdge");
+}
+
+TEST_CASE("edge classify (f): SoftState colorMask-reassert + LegacyLatch terrain edges derived from ambient") {
+    using namespace RenderCore::framegraph;
+    PassEdge edges[256];
+    int n = 0;
+    classifyEdges(edges, n);
+
+    bool softReassert = false, legacyLatch = false;
+    for (int i = 0; i < n; ++i) {
+        const PassEdge& e = edges[i];
+        if (e.cls == EdgeClass::SoftState && e.from == RenderPassId::Terrain &&
+            e.to == RenderPassId::PostProcess && e.forbidden)
+            softReassert = true;
+        if (e.cls == EdgeClass::LegacyLatch && e.from == RenderPassId::Terrain &&
+            e.to == RenderPassId::PostProcess && e.forbidden)
+            legacyLatch = true;
+    }
+    CHECK(softReassert == true);
+    CHECK(legacyLatch  == true);
 }
 
 } // TEST_SUITE
