@@ -37,6 +37,20 @@ GATE_COUNTER_MAP: dict[str, str] = {
     "MC2_FRAMEGRAPH_DRYRUN":   "frame_graph_dryrun.frames",
 }
 
+# Known ApplyPassId names that appear in frame_graph.executor_apply_state_by_pass
+# (added by PER-PASS-APPLY-COUNTERS-1, commit 0e0b582a). Used to validate
+# --assert-pass-fired NAME against typos before asserting the counter.
+APPLY_PASS_NAMES: tuple[str, ...] = (
+    "PostProcessEdgeFog",
+    "PostProcessFogOob",
+    "PostProcessShoreline",
+    "PostProcessCloudShadow",
+    "PostProcessScreenShadow",
+    "TerrainDecal",
+    "TerrainOverlay",
+    "StaticPropOpaque",
+)
+
 # Default deploy path for the 0.4c release folder.
 _DEFAULT_EXE = "A:/Games/mc2-opengl/mc2-win64-0.4c/mc2.exe"
 _DEFAULT_MISSIONS = ["mc2_01", "mc2_24"]
@@ -75,6 +89,66 @@ def read_counter(fg: dict, dotted_path: str) -> int:
         return int(val)
     except (TypeError, ValueError):
         return 0
+
+
+def parse_pass_fired_spec(spec: str) -> tuple[str, int]:
+    """Parse a --assert-pass-fired NAME[:MIN] spec into (name, min).
+
+    Raises SystemExit with a clear message on an unknown pass name or a
+    non-integer MIN. Default MIN is 1.
+    """
+    name, _, min_str = spec.partition(":")
+    name = name.strip()
+    if name not in APPLY_PASS_NAMES:
+        valid = ", ".join(APPLY_PASS_NAMES)
+        raise SystemExit(
+            f"[verify_executor_slice] ERROR: unknown pass name {name!r} for "
+            f"--assert-pass-fired.\n  Valid names: {valid}")
+    if min_str.strip() == "":
+        return name, 1
+    try:
+        return name, int(min_str.strip())
+    except ValueError:
+        raise SystemExit(
+            f"[verify_executor_slice] ERROR: --assert-pass-fired MIN must be an "
+            f"integer, got {min_str!r} (in {spec!r})")
+
+
+def assert_passes_fired(
+    fg: dict, specs: list[tuple[str, int]]
+) -> tuple[list[tuple[str, str, str]], bool]:
+    """Assert executor_apply_state_by_pass[NAME] >= MIN for each spec.
+
+    Returns (rows, all_ok). Missing key or value < MIN -> FAIL.
+    """
+    by_pass = fg.get("executor_apply_state_by_pass")
+    rows: list[tuple[str, str, str]] = []
+    all_ok = True
+    if not isinstance(by_pass, dict):
+        for name, mn in specs:
+            rows.append((f"assert_pass_fired:{name}", "FAIL",
+                         "executor_apply_state_by_pass map absent from dump "
+                         "(needs PER-PASS-APPLY-COUNTERS-1 build)"))
+            all_ok = False
+        return rows, all_ok
+    for name, mn in specs:
+        if name not in by_pass:
+            rows.append((f"assert_pass_fired:{name}", "FAIL",
+                         f"key missing from executor_apply_state_by_pass "
+                         f"(expected >= {mn})"))
+            all_ok = False
+            continue
+        try:
+            val = int(by_pass[name])
+        except (TypeError, ValueError):
+            val = 0
+        ok = val >= mn
+        rows.append((f"assert_pass_fired:{name}",
+                     "PASS" if ok else "FAIL",
+                     f"={val} (min={mn})"))
+        if not ok:
+            all_ok = False
+    return rows, all_ok
 
 
 def print_gate_table(rows: list[tuple[str, str, str]]) -> None:
@@ -204,6 +278,34 @@ def check_dryrun_pass(fg: dict) -> list[tuple[str, str, str]]:
     return rows
 
 
+def _read_manifest_src_commit(manifest: Path) -> str | None:
+    """Read the src_commit from .deployed_manifest.csv (manifest v1).
+
+    deploy_payload.py writes src_commit as a PER-ROW column (index 3) of every
+    data row, NOT as a top-level key. Header is:
+        relpath,sha256,bytes,src_commit,timestamp
+    All data rows carry the same commit; we take the first data row's value and
+    assert the remaining rows are uniform. Returns None if not found.
+    """
+    import csv
+
+    with open(manifest, encoding="utf-8", newline="") as fh:
+        reader = csv.reader(fh)
+        seen: set[str] = set()
+        for row in reader:
+            # Skip the manifest_version line and the column-header line.
+            if not row or row[0] in ("manifest_version", "relpath"):
+                continue
+            if len(row) >= 4 and row[3].strip():
+                seen.add(row[3].strip())
+    if not seen:
+        return None
+    if len(seen) > 1:
+        # Non-uniform src_commit -> mixed/partial deploy. Surface it.
+        return "MIXED:" + ",".join(sorted(c[:12] for c in seen))
+    return next(iter(seen))
+
+
 def check_deploy_current(exe: str) -> tuple[str, str, str]:
     """Check deployed exe src_commit matches git HEAD. Returns (name, status, detail)."""
     try:
@@ -213,14 +315,14 @@ def check_deploy_current(exe: str) -> tuple[str, str, str]:
             return ("stale_deploy_check", "WARN",
                     f".deployed_manifest.csv not found at {exe_dir}")
 
-        src_commit: str | None = None
-        for line in manifest.read_text(encoding="utf-8").splitlines():
-            if line.startswith("src_commit,"):
-                src_commit = line.split(",", 1)[1].strip()
-                break
+        src_commit = _read_manifest_src_commit(manifest)
         if not src_commit:
             return ("stale_deploy_check", "WARN",
                     "src_commit not found in .deployed_manifest.csv")
+        if src_commit.startswith("MIXED:"):
+            return ("stale_deploy_check", "WARN",
+                    f"non-uniform src_commit across manifest rows ({src_commit[6:]}) "
+                    "- mixed/partial deploy")
 
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -240,7 +342,10 @@ def check_deploy_current(exe: str) -> tuple[str, str, str]:
         return ("stale_deploy_check", "WARN", f"check skipped: {exc}")
 
 
-def parse_only_mode(dump_path: Path) -> int:
+def parse_only_mode(
+    dump_path: Path,
+    pass_fired_specs: list[tuple[str, int]] | None = None,
+) -> int:
     """--parse-only: validate gate-parsing logic against an existing dump. Returns exit code."""
     print(f"[verify_executor_slice] --parse-only: reading {dump_path}")
     ds = parse_dump(dump_path)
@@ -275,9 +380,27 @@ def parse_only_mode(dump_path: Path) -> int:
         val = read_counter(fg, path)
         rows.append((f"{gate} -> frame_graph.{path}", "INFO", str(val)))
 
+    # Also surface the per-pass apply-state map.
+    by_pass = fg.get("executor_apply_state_by_pass")
+    if isinstance(by_pass, dict):
+        rows.append(("--- executor_apply_state_by_pass ---", "", ""))
+        for k in sorted(by_pass):
+            rows.append((f"apply_state_by_pass.{k}", "INFO", str(by_pass[k])))
+
+    exit_code = 0
+    if pass_fired_specs:
+        rows.append(("--- --assert-pass-fired ---", "", ""))
+        assert_rows, all_ok = assert_passes_fired(fg, pass_fired_specs)
+        rows.extend(assert_rows)
+        if not all_ok:
+            exit_code = 1
+
     print_gate_table(rows)
     print("[verify_executor_slice] --parse-only complete (no smoke run)")
-    return 0
+    if pass_fired_specs:
+        print(f"[verify_executor_slice] --assert-pass-fired: "
+              f"{'PASS' if exit_code == 0 else 'FAIL'}")
+    return exit_code
 
 
 def main() -> int:
@@ -297,10 +420,18 @@ def main() -> int:
     ap.add_argument("--parse-only", metavar="DUMP_JSON",
                     help="Skip smoke; just parse the given latest_render_state.json "
                          "and print executor metrics (for testing without a live run)")
+    ap.add_argument("--assert-pass-fired", action="append", default=[],
+                    metavar="NAME[:MIN]",
+                    help="Assert frame_graph.executor_apply_state_by_pass[NAME] >= MIN "
+                         "(default MIN=1). Repeatable. Reads the per-pass apply-state "
+                         "map (PER-PASS-APPLY-COUNTERS-1). Valid NAMEs: "
+                         + ", ".join(APPLY_PASS_NAMES))
     args = ap.parse_args()
 
+    pass_fired_specs = [parse_pass_fired_spec(s) for s in args.assert_pass_fired]
+
     if args.parse_only:
-        return parse_only_mode(Path(args.parse_only))
+        return parse_only_mode(Path(args.parse_only), pass_fired_specs)
 
     missions = args.mission or _DEFAULT_MISSIONS
     smoke_script = Path(__file__).resolve().parent / "run_smoke.py"
@@ -395,6 +526,25 @@ def main() -> int:
                 all_rows.append(("smoke_DRYRUN_dump", "FAIL",
                                  f"cannot read dump: {exc}"))
                 overall_pass = False
+
+    # -----------------------------------------------------------------------
+    # Step 4: (optional) --assert-pass-fired against the latest dump.
+    # The last smoke run with the executor gate ON populates
+    # executor_apply_state_by_pass; assert the requested passes fired.
+    # -----------------------------------------------------------------------
+    if pass_fired_specs:
+        print("[verify_executor_slice] Step 4: --assert-pass-fired "
+              "(executor_apply_state_by_pass)")
+        try:
+            fg_assert = extract_frame_graph(parse_dump(dump_path))
+            assert_rows, all_ok = assert_passes_fired(fg_assert, pass_fired_specs)
+            all_rows.extend(assert_rows)
+            if not all_ok:
+                overall_pass = False
+        except Exception as exc:
+            all_rows.append(("assert_pass_fired_dump", "FAIL",
+                             f"cannot read dump: {exc}"))
+            overall_pass = False
 
     # -----------------------------------------------------------------------
     # Summary table
