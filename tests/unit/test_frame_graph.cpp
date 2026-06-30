@@ -1388,4 +1388,48 @@ TEST_CASE("apply-state-island (d): all 4 table rows have valid PipelineId (not I
     }
 }
 
+// FRAMEGRAPH-APPLY-STATE-ISLAND-2: FogOob/Shoreline/CloudShadow apply islands now wired.
+// Pure/GL-free — tests confirm the descriptor table rows are correct.
+TEST_CASE("apply-state-island (e): findSubStageState(FogOob) returns PostProcessFogOob + MainColor + MainScene") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const SubStageStateDesc* d = findSubStageState(ExecutorIslandId::FogOob);
+    REQUIRE(d != nullptr);
+    CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(ExecutorIslandId::FogOob));
+    CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::PostProcessFogOob));
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::MainColor));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::MainScene));
+}
+
+TEST_CASE("apply-state-island (f): findSubStageState(Shoreline) returns PostProcessShoreline + MainColor + MainScene") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const SubStageStateDesc* d = findSubStageState(ExecutorIslandId::Shoreline);
+    REQUIRE(d != nullptr);
+    CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(ExecutorIslandId::Shoreline));
+    CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::PostProcessShoreline));
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::MainColor));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::MainScene));
+}
+
+TEST_CASE("apply-state-island (g): findSubStageState(CloudShadow) returns PostProcessCloudShadow + MainColor + MainScene") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const SubStageStateDesc* d = findSubStageState(ExecutorIslandId::CloudShadow);
+    REQUIRE(d != nullptr);
+    CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(ExecutorIslandId::CloudShadow));
+    CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::PostProcessCloudShadow));
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::MainColor));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::MainScene));
+}
+
+TEST_CASE("apply-state-island (h): all 4 apply-island descriptors present (EdgeFog/FogOob/Shoreline/CloudShadow)") {
+    using namespace RenderCore::framegraph;
+    // All 4 sub-stages from ISLAND-1+2 must be in the table.
+    CHECK(findSubStageState(ExecutorIslandId::EdgeFog)     != nullptr);
+    CHECK(findSubStageState(ExecutorIslandId::FogOob)      != nullptr);
+    CHECK(findSubStageState(ExecutorIslandId::Shoreline)   != nullptr);
+    CHECK(findSubStageState(ExecutorIslandId::CloudShadow) != nullptr);
+}
+
 } // TEST_SUITE

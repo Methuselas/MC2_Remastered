@@ -53,6 +53,12 @@ public:
     // This method touches GL; it lives in gos_postprocess.cpp (private member access).
     // Only called when executorEnabled() && executorEdgeFogWillRun() (gate: MC2_FRAMEGRAPH_EXECUTOR).
     void executorApplyEdgeFogState();
+    // FRAMEGRAPH-APPLY-STATE-ISLAND-2: pre-apply declared GL state for FogOob/Shoreline/CloudShadow.
+    // Mirrors executorApplyEdgeFogState(): FBO bind + setSceneDrawBuffers + glViewport + applyPipeline
+    // only; no tex binds, no uniforms. Idempotent (body makes identical calls at entry).
+    void executorApplyFogOobState();
+    void executorApplyShorelineState();
+    void executorApplyCloudShadowState();
 
     float  getSkyYaw()    const { return skyYaw_; }    // WATER-HDRI-REFL-1: cached per-frame
 

@@ -4737,6 +4737,48 @@ void gosPostProcess::executorApplyEdgeFogState()
     ++g_applyStatePasses;
 }
 
+// FRAMEGRAPH-APPLY-STATE-ISLAND-2: pre-apply declared GL state for FogOob.
+// Exactly matches runFogOob() entry (lines 2349-2362): FBO bind + SingleColor + viewport + applyPipeline.
+// No tex binds, no uniforms — those remain body-owned. Idempotent (body re-sets same state).
+void gosPostProcess::executorApplyFogOobState()
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+    glViewport(0, 0, width_, height_);
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessFogOob),
+        "PostProcessFogOob");
+    ++g_applyStatePasses;
+}
+
+// FRAMEGRAPH-APPLY-STATE-ISLAND-2: pre-apply declared GL state for Shoreline.
+// Exactly matches runShoreline() entry (lines 2240-2252): FBO bind + SingleColor + viewport + applyPipeline.
+// No tex binds (sceneDepthTex_/sceneNormalTex_), no uniforms — body-owned. Idempotent.
+void gosPostProcess::executorApplyShorelineState()
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+    glViewport(0, 0, width_, height_);
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessShoreline),
+        "PostProcessShoreline");
+    ++g_applyStatePasses;
+}
+
+// FRAMEGRAPH-APPLY-STATE-ISLAND-2: pre-apply declared GL state for CloudShadow.
+// Exactly matches runCloudShadow() entry (lines 2186-2196): FBO bind + SingleColor + viewport + applyPipeline.
+// No tex binds (sceneDepthTex_), no uniforms — body-owned. Idempotent.
+void gosPostProcess::executorApplyCloudShadowState()
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+    glViewport(0, 0, width_, height_);
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessCloudShadow),
+        "PostProcessCloudShadow");
+    ++g_applyStatePasses;
+}
+
 // --- FRAME-GRAPH-EXECUTOR-ISLAND-2: sub-stage wrappers (EdgeFog + FogOob) ----
 //
 // Each pair gates on executorEnabled(). Begin: if WillRun()==false the sub-pass
@@ -4787,14 +4829,29 @@ static void executorOwnBeginSub(gosPostProcess* pp, RenderCore::framegraph::Exec
             "[EXECUTOR v1] ASSERT island=%s warnIfNoTerrainLatch but WillRun passed — logic error\n", name);
     }
 
-    // FRAMEGRAPH-APPLY-STATE-ISLAND-1: pre-apply declared GL state before the body.
-    // Only EdgeFog is wired this slice; FogOob/Shoreline/CloudShadow are vocabulary-only.
+    // FRAMEGRAPH-APPLY-STATE-ISLAND-1/2: pre-apply declared GL state before the body.
     // findSubStageState() guards: if the island is not in the table, we do nothing.
-    // The pre-apply is idempotent: the body makes identical calls at entry (slice 2 removes them).
+    // The pre-apply is idempotent: the body makes identical calls at entry.
+    // ISLAND-1: EdgeFog wired. ISLAND-2: FogOob/Shoreline/CloudShadow wired.
     if (islandId == ExecutorIslandId::EdgeFog) {
         using namespace RenderCore::framegraph;
         if (findSubStageState(ExecutorIslandId::EdgeFog) != nullptr)
             pp->executorApplyEdgeFogState();
+    }
+    if (islandId == ExecutorIslandId::FogOob) {
+        using namespace RenderCore::framegraph;
+        if (findSubStageState(ExecutorIslandId::FogOob) != nullptr)
+            pp->executorApplyFogOobState();
+    }
+    if (islandId == ExecutorIslandId::Shoreline) {
+        using namespace RenderCore::framegraph;
+        if (findSubStageState(ExecutorIslandId::Shoreline) != nullptr)
+            pp->executorApplyShorelineState();
+    }
+    if (islandId == ExecutorIslandId::CloudShadow) {
+        using namespace RenderCore::framegraph;
+        if (findSubStageState(ExecutorIslandId::CloudShadow) != nullptr)
+            pp->executorApplyCloudShadowState();
     }
 }
 
