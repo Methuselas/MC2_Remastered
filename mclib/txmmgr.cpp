@@ -3245,22 +3245,42 @@ void MC_TextureManager::renderLists (void)
 				}
 			}
 
-			{
+		}
+
+		// MEASURED-REORDER-SPMECH-1 (tier-C reorder EXPERIMENT, default-OFF):
+		// The two opaque flush UNITS below — StaticProp BatcherFlush (+Pass_SpColor
+		// timer) and the Mech block (+Pass_Mechs timer) — are the one legal adjacent
+		// swap the legal-reorder oracle proved. StaticProp PREP + compute_dispatch
+		// (above, inside Render.GpuStaticProps) must stay BEFORE both flushes in
+		// EITHER path; only the two flush units swap order. The OpaqueObject
+		// begin(executorOwnBeginTopLevel @ Render.3DObjects)/end wrapper brackets
+		// both regardless. Gate OFF -> today's order verbatim (byte-identical).
+		// Gate ON -> mech flush, then static-prop flush.
+		static const bool s_reorderSpMech =
+			(getenv("MC2_FRAMEGRAPH_REORDER_SPMECH") != nullptr);
+
+		// Unit A: static-prop batcher flush, scoped by Pass_SpColor. Captured pre-
+		// flush eligibility lives in the extern flags read in Render.GpuStaticProps;
+		// re-read here (same flags) so the flush still respects the GPU-path gate.
+		auto runSpFlushUnit = []() {
+			extern bool g_useGpuStaticProps;
+			extern bool g_useGpuObjects;
+			if (g_useGpuStaticProps || g_useGpuObjects) {
 				ZoneScopedN("GpuSP.BatcherFlush");
 				TracyGpuZone("GpuSP.BatcherFlush");
 				GpuStaticPropBatcher::instance().flush(getLastRenderSnapshot());
 			}
-		}
-		// Pass_SpColor ends BEFORE the GpuMechs block below: GL_TIME_ELAPSED
-		// scopes cannot nest, so mechs get their own disjoint scope.
-		gos_render_pass_timer::End(gos_render_pass_timer::Pass_SpColor);
+			// Pass_SpColor ends after the static-prop flush: GL_TIME_ELAPSED
+			// scopes cannot nest, so mechs get their own disjoint scope.
+			gos_render_pass_timer::End(gos_render_pass_timer::Pass_SpColor);
+		};
 
-		// GPU mech batcher Slice A flush — runs after static-prop flush,
-		// inside renderLists() so terrain has already been emitted by the
+		// Unit B: GPU mech batcher Slice A flush — runs adjacent to the static-prop
+		// flush, inside renderLists() so terrain has already been emitted by the
 		// patch stream and the depth state is set up. Independent of
-		// g_useGpuStaticProps; gated on its own MC2_GPU_MECHS env var
-		// inside the flush itself.
-		{
+		// g_useGpuStaticProps; gated on its own MC2_GPU_MECHS env var inside the
+		// flush itself. Pass_Mechs is a disjoint GL_TIME_ELAPSED scope.
+		auto runMechFlushUnit = []() {
 			ZoneScopedN("Render.GpuMechs");
 			TracyGpuZone("Render.GpuMechs");
 			gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Mechs);
@@ -3282,6 +3302,16 @@ void MC_TextureManager::renderLists (void)
 			}
 			GpuMechBatcher::instance().flush();
 			gos_render_pass_timer::End(gos_render_pass_timer::Pass_Mechs);
+		};
+
+		if (s_reorderSpMech) {
+			// EXPERIMENT (gate-ON): swap the two opaque flush units.
+			runMechFlushUnit();
+			runSpFlushUnit();
+		} else {
+			// Default path: today's order verbatim — static-prop flush, then mechs.
+			runSpFlushUnit();
+			runMechFlushUnit();
 		}
 		render_contract::executorOwnEndTopLevel(render_contract::PassIdentity::OpaqueObject,
 		                                        "renderLists_GpuMechBatcher_flush");

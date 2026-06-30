@@ -1401,7 +1401,12 @@ def main():
                             # SMOKE-GATE-GUARD-1: frame-graph dryrun gate.
                             # Without this in the allowlist Popen drops it and
                             # MC2_FRAMEGRAPH_DRYRUN=1 smoke runs are inert.
-                            "MC2_FRAMEGRAPH_DRYRUN")},
+                            "MC2_FRAMEGRAPH_DRYRUN",
+                            # MEASURED-REORDER-SPMECH-1: tier-C reorder experiment
+                            # gate (default-OFF). Without this in the allowlist
+                            # Popen drops it and MC2_FRAMEGRAPH_REORDER_SPMECH=1
+                            # smoke runs silently run the default (OFF) order.
+                            "MC2_FRAMEGRAPH_REORDER_SPMECH")},
             },
         )
         # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.
