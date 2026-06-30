@@ -1,31 +1,48 @@
 # HANDOFF — Render-frame-graph arc (resume here)
 
-**Date:** 2026-06-29. **Branch:** `claude/nifty-mendeleev` (worktree, canonical).
+**Date:** 2026-06-30 (REBOOT HANDOFF). **Branch:** `claude/nifty-mendeleev` (worktree, canonical).
+**HEAD = `f60b7ea2`** (NOT the orphaned `ecfe38e2` — see INDEX-RACE INCIDENT below; branch off f60b7ea2).
 **Primary task:** continue the FRAME-GRAPH arc. **Do frame-graph first; legacy-terrain
 retirement is SECONDARY (after).**
 
-**▶ RESUME POINTER (latest):** **Top-level VALIDATE is 10/10 COMPLETE** (UI-SAME-ORDER-VALIDATE-1
-`85369151`). ★**PIPELINE-ONLY APPLY-STATE PHASE COMPLETE** — every top-level pass that lifts a SINGLE
-`applyPipeline` is now executor apply-state owned + RUNTIME-PROVEN: PostProcess 6/6 + StaticPropOpaque
-(=1890) + MechOpaque (=1890, APPLY-STATE-MECHOPAQUE-1 `efa73c71`) + Water (=1784, APPLY-STATE-WATER-1
-`2b217ee9`). TerrainDecal/TerrainOverlay stay code-correct-but-content-unexercised (no road/runway map
-+ MC2_DYNAMIC_DECALS not in smoke allowlist); Shadow deferred (needs richer infra → EXTEND); VFX/UI/
-Vegetation/Terrain-main are correctly validate/FBO-only (no single liftable pipeline).
-**NEXT DECISION = build FRAMEGRAPH-APPLY-STATE-EXTEND-1 (design ready, shovel-ready section below) OR
-hold. Shadow apply-state is GATED on EXTEND** (it lifts pipeline + a depth clear, which the current
-single-applyPipeline infra can't express). **Phase 8 = 4 RAW-GL axis gates LIVE** (depthFunc `7339dd90` /
-depthMask `33820a2f` / colormask `ff9fed17` / blendFunc `00c61255`, all wired into
-`scripts/check-contracts.sh`); FBO-bind gate DEFERRED (too numerous/context-sensitive — own recon).
-Per-pass apply counters shipped (PER-PASS-APPLY-COUNTERS-1 `0e0b582a` — `executor_apply_state_by_pass`,
-8-entry ApplyPassId enum, aggregate==sum so no drift).
+**▶ RESUME POINTER (latest — 2026-06-30):** ★**APPLY-STATE OWNABLE SET COMPLETE.** Top-level VALIDATE
+10/10 + apply-state for every ownable pass is now runtime-proven-or-code-correct: PostProcess **6/6**
++ **StaticProp/Mech/Water** runtime-proven sole-setter + **Shadow now FULL render-target-mode owner**
+(FBO+viewport+clear+pipeline, APPLY-STATE-SHADOW-2 `2a3b0967`). TerrainDecal/TerrainOverlay stay
+code-correct-but-CONTENT-UNEXERCISABLE in stock (need a road/runway map + add **MC2_DYNAMIC_DECALS** to
+run_smoke.py's allowlist). The single-applyPipeline limitation is GONE — FRAMEGRAPH-APPLY-STATE-EXTEND-1
+(`6def9bd2`) added `ClearSpec` + the shared GL-free `applyTopLevelGenericAxes(desc,fbo,w,h)` helper
+(FBO→viewport→clear, skip-sentinel, pipeline by caller; header `RenderCore/top_level_apply_axes.h`),
+which unblocked Shadow's pipeline+depth-clear lift.
+★**ENFORCEMENT = 5 RAW-GL axis gates LIVE** (depthFunc `7339dd90` / depthMask `33820a2f` / colormask
+`ff9fed17` / blendFunc `00c61255` / **FBO-bind `8befeaa1`** — the FBO-bind gate is NOT a flat clone:
+HYBRID taxonomy = file allowlist of 7 FBO-owner TUs + `// FBO-OWNER:` comment tag + auto-exempt prev/
+saved-restore pattern; 82 sanctioned sites frozen-forward; all wired into `scripts/check-contracts.sh`).
+**CAPSTONE remaining = RAW-GL-BYPASS-CAPSTONE-1** (meta-gate enumerating all 5 axis gates + asserting no
+un-gated escape).
+★**RESOURCE REGISTRY = terrain + material integrated** (REGISTRY-TERRAIN-SSBO-1 `49921b5b` +
+REGISTRY-MATERIAL-SSBO-1 `f60b7ea2`): live count 6→**10** (default) / 11–12 (cement / MC2_MATERIAL_GPU
+gate). Observe-only metadata, byte-identical. Remaining registry slices in NEXT-STEPS below.
+**NEXT DECISION (tier-b finish order):** (a) RAW-GL-BYPASS-CAPSTONE-1, then (b) remaining RESOURCE-
+REGISTRY slices (branch off f60b7ea2), then (c) tier-b practical 100% → THEN tier-C legal-reorder
+VALIDATOR (recon refresh first; tier-C readiness ~15-20%, DO NOT build yet). See ▶ NEXT-STEPS section.
+Per-pass apply counters: `executor_apply_state_by_pass` map; `get_executor_health` MCP now surfaces it
+per-pass (`447a1de7`).
 
-★**UPDATED APPLY-STATE THREE-STATE CLASSIFICATION (advisor; pipeline-only phase COMPLETE):**
+★★ **TWO OPERATING RULES (read before any parallel work):**
+1. **ONE COMMITTER PER WORKTREE.** Even disjoint file sets race on the shared git INDEX (the INDEX-RACE
+   incident below cost a commit-recovery). Parallel work MUST go in a SEPARATE worktree.
+2. **SPARE-WORKTREE PARALLEL PATTERN VALIDATED** (`docs/build-parallel-and-tooling.md`): spare detached
+   worktree (`mc2-nifty-land`) + spare build64 + spare deploy dir + lease-serialized smoke + cherry-pick
+   the disjoint commits onto nifty. The registry slices proved it (zero races vs the Shadow lane).
+
+★**APPLY-STATE CLASSIFICATION (2026-06-30 — OWNABLE SET COMPLETE):**
 - **Runtime-proven sole-setter:** PostProcess **6/6** islands (EdgeFog/FogOob/Shoreline/CloudShadow/
   ScreenShadow + outer endScene) + **StaticPropOpaque (1890)** + **MechOpaque (1890)** + **Water (1784)**.
-- **Code-correct but stock-content-unexercised:** TerrainDecal, TerrainOverlay (need a road/runway map +
-  MC2_DYNAMIC_DECALS in the run_smoke allowlist).
-- **Deferred (needs richer infra → EXTEND):** Shadow (pipeline + depth clear; single-applyPipeline infra
-  can't express the clear).
+- **FULL render-target-mode owner (FBO+viewport+clear+pipeline), runtime-proven:** **Shadow** (=1608/
+  frame, APPLY-STATE-SHADOW-2 `2a3b0967`; uses the EXTEND `applyTopLevelGenericAxes` helper).
+- **Code-correct but stock-content-unexercisable:** TerrainDecal, TerrainOverlay (need a road/runway map +
+  add MC2_DYNAMIC_DECALS to the run_smoke allowlist; mechanism is StaticProp-proven).
 - **Correctly validate/FBO-only (no single liftable pipeline):** VFX, UI, Vegetation, Terrain-main.
 
 ★**THREE-STATE APPLY-STATE DASHBOARD (advisor — original):**
@@ -693,9 +710,93 @@ shared primary — NOT redeployed this session by convention (we use 0.4c spare)
 single `applyPipeline` is now executor apply-state owned. See the UPDATED THREE-STATE CLASSIFICATION near
 the resume pointer. The remaining apply-state target (Shadow) needs the EXTEND design below.
 
-## ▶ PHASE BOUNDARY: FRAMEGRAPH-APPLY-STATE-EXTEND (design ready, awaiting go — NOT yet built)
-Shovel-ready spec to lift passes whose state is MORE than a single applyPipeline (Shadow = pipeline + a
-depth clear + a distinct viewport/FBO). Current single-applyPipeline infra can't express the clear.
+## ✓ APPLY-STATE-EXTEND + SHADOW FULL-MODE + REGISTRY (entries 49–53) — 2026-06-30 reboot batch
+49. **FRAMEGRAPH-APPLY-STATE-EXTEND-1** (`6def9bd2`) — added `enum ClearSpec{None,DepthForwardZ}` + a
+    `clear` field to `TopLevelStateDesc` + the shared GL-free helper `applyTopLevelGenericAxes(desc,fbo,w,h)`
+    (new header `RenderCore/top_level_apply_axes.h`; def in gameos_graphics.cpp). The helper applies
+    FBO→viewport→clear with a skip-sentinel per step; the pipeline is applied by the caller. ★SELF-PROVEN:
+    re-expressed the StaticPropOpaque row with explicit MainColor/MainScene targets → **fbo_mismatches=0
+    over 11496 samples** == byte-identical to the previous inheritance, +0 destroys, 94 doctests. The other
+    4 pipeline-only consumers stay byte-identical (skip-sentinel defaults). ⇒ unblocks Shadow's
+    pipeline+depth-clear lift.
+50. **get_executor_health per-pass surface** (`447a1de7`) — the render-state MCP tool now surfaces
+    `executor_apply_state_by_pass` per-pass (not just the aggregate).
+51. **APPLY-STATE-SHADOW-1** (`6ea1a42a`; orig `075014bc` pre-rewrite — see INDEX-RACE) — Shadow owns
+    pipeline + forward-Z depth-clear at the DYNAMIC seam (`beginDynamicShadowPass`) via the EXTEND helper.
+    Added `ApplyPassId::Shadow`. Row fboTarget=Unknown / viewport=Inherit (deferred to SHADOW-2).
+    ★Byte-identical shadow render (ON-vs-OFF `MC2_SHADOW_STATE_TRACE` character-identical:
+    clearDepth=0/restored=1/0-leaks), Shadow counter=**1289/frame**, 95 doctests. Also hardened
+    `check-apply-pass-bumped.py` (comment-strip-before-comma-split bug).
+52. **APPLY-STATE-SHADOW-2** (`2a3b0967`) — Shadow is now the FULL render-target-mode owner
+    (FBO+viewport+clear+pipeline). Row fboTarget=**ShadowDynamicMap** / viewport=**ShadowMap**; the helper
+    applies all 4 in order. ★Dispatch at the FBO-bind position, with the AMD-feedback-unbind +
+    `GL_TEXTURE_COMPARE_MODE` flip PRESERVED as a body preamble BEFORE it (shadow-texture state must
+    precede the FBO bind). fbo_mismatches=0, trace character-identical, Shadow=**1608/frame**,
+    byte-identical OFF, all redlines held.
+53. **REGISTRY-TERRAIN-SSBO-1** (`49921b5b`) + **REGISTRY-MATERIAL-SSBO-1** (`f60b7ea2`) — registered the
+    terrain SSBO/atlas ids (TerrainHeightSsbo=13 / TerrainRecipeBuffer=21 / TerrainThinBuffer=2220 /
+    TransitionMaskArray=265 live glNames; CementAtlas on cement maps) + MaterialGpuBuffer (gate
+    MC2_MATERIAL_GPU, glName=876). Registry live count 6→**10** (default) / 11–12 (cement / material-gate).
+    Observe-only metadata, byte-identical. ★PARALLEL-BUILT in the spare worktree `mc2-nifty-land` (separate
+    build64) CONCURRENTLY with the Shadow lane (smokes lease-serialized), then cherry-picked clean onto
+    nifty — see the validated spare-worktree pattern.
+
+## ★★ INDEX-RACE INCIDENT + LESSON (critical — read before any parallel committing)
+Two COMMITTING agents in the SAME nifty worktree (FBO-gate lane + SHADOW-1 lane) raced on the shared git
+INDEX: SHADOW-1's commit (`ecfe38e2`) SWEPT the gate's staged files into itself. Recovery: soft-reset,
+rewrote SHADOW as `075014bc` (verified byte-identical minus the gate files; `ecfe38e2` is now
+ORPHANED/unreachable — DO NOT branch off it), committed the gate separately as `8befeaa1`. (SHADOW-1's
+final on-nifty SHA is `6ea1a42a`.)
+★**LESSON — ONE COMMITTER PER WORKTREE.** Even DISJOINT file sets race on the shared index (a
+`git add`/`commit` in one agent stages+sweeps whatever the other agent left staged). Parallel work MUST
+go in a SEPARATE worktree. The registry slices PROVED the fix: spare `mc2-nifty-land` = separate index =
+zero races. The spare-worktree parallel-build pattern (`docs/build-parallel-and-tooling.md`) is VALIDATED:
+spare detached worktree + spare deploy dir + lease-serialized smoke + cherry-pick disjoint commits onto
+nifty.
+
+## ★ SCHEDULER / TIER-C RECON (SCHEDULER-LEGAL-REORDER-RECON-1, analysis-only — DO NOT build)
+Tier-C (legal reorder/schedule) readiness ~**15-20% (LOW)**. Reorder DAG mapped:
+- **Forbidden edges:** Shadow → all-geometry + PP (ShadowDynamicMap); opaque → blend/PP (MainColor/Depth/
+  Normal); VFX → PP-BoxDecals (SceneDepthCopy); Terrain → overlay/decal + 5 PP sub-stages (sceneHasTerrain
+  latch). **ONLY StaticProp↔Mech is truly reorder-safe.**
+- **Dominant blocker:** the resource registry (was ~35% live; now 10/12 with terrain+material — keep
+  filling it; that is the gating work for tier-C).
+- **Barriers:** mostly tier-D (GL implicit ordering already covers same-FBO reorders).
+- **First tier-C step (FUTURE):** a legal-reorder VALIDATOR (model-before-mutate, like the dry-run), NOT a
+  reorderer. Refresh this recon before building.
+
+## ▶ NEXT-STEPS (precise — reboot resume; tier-b finish order)
+**(a) RAW-GL-BYPASS-CAPSTONE-1** — meta-gate that ENUMERATES all 5 axis gates (depthFunc/depthMask/
+colormask/blendFunc/fbobind) + asserts there is no un-gated escape path. Comes AFTER the FBO gate (now
+shipped). This is where Phase-8 enforcement becomes a single regression-proof capstone.
+
+**(b) Remaining RESOURCE-REGISTRY slices** — ⚠ branch off the NEW nifty HEAD **`f60b7ea2`** (NOT the
+orphaned `ecfe38e2`). The fully-file-disjoint ones (terrain, material) are ALREADY DONE and were the only
+spare-parallelizable ones; the rest SERIALIZE on nifty (they share gos_postprocess.cpp / RenderPassContract.h):
+  - **REGISTRY-MAINCOLOR-1** + **REGISTRY-GBUFFER-1** — register MainColor / MainNormal / SceneObjectId /
+    SsaoOcclusion / SceneDepthCopy / HzbPyramid at `gos_postprocess.cpp` createFBOs. ⚠ shares
+    gos_postprocess.cpp → run ON NIFTY serial, NOT spare.
+  - **REGISTRY-SCENECOLORCOPY-PRODUCER-1** — touches RenderPassContract.h → serialize.
+  - **REGISTRY-COMPUTE-IDS-1** — add 3 enum ids for the cluster / lightgrid / blur compute intermediates.
+  - **REGISTRY-LIFETIME-CLASS-1** — add a FrameLocal/Mission/Persistent/External field — CAPSTONE,
+    touches everything.
+
+**(c)** = tier-b practical 100% ("boring") → **THEN tier-C legal-reorder VALIDATOR** (recon refresh first;
+see the SCHEDULER recon above).
+
+**Minor cleanups (between runs):**
+- `kParticleEffectState` stale blend=Additive → alpha (render_contract.cpp:315).
+- Add **MC2_DYNAMIC_DECALS** to run_smoke.py's allowlist (enables decal/overlay content-exercise on
+  mc2_02 overlay / mc2_17 + combat decal).
+- (optional) viewport validator: an `AmbientSample` `GL_VIEWPORT` sampler.
+
+**Automation now in place (use it):** `verify_executor_slice.py --assert-pass-fired NAME[:MIN]` + the
+fixed `stale_deploy_check`; `scripts/check-apply-pass-bumped.py` (apply-pass-bump completeness gate);
+registration-completeness doctests; `get_executor_health` per-pass surface.
+
+## ▶ (SUPERSEDED) PHASE BOUNDARY: FRAMEGRAPH-APPLY-STATE-EXTEND — ✓ DONE (entries 49–52 above)
+Spec retained for reference. Shovel-ready spec to lift passes whose state is MORE than a single
+applyPipeline (Shadow = pipeline + a depth clear + a distinct viewport/FBO).
 
 **Descriptor** (top_level_pass_executor.h): add `enum ClearSpec { None, DepthForwardZ }` + field
 `ClearSpec clear = None` to `TopLevelStateDesc`. **OMIT depthFunc/depthWrite** (the ambient ledger already
