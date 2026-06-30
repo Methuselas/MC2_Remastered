@@ -9912,6 +9912,25 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
     if (!overlayProg_ || vboGL == 0 || !draws || drawCount <= 0)
         return false;
 
+    // APPLY-STATE-TERRAINOVERLAY-SITE-FIX-1: TerrainOverlay executor validate+apply
+    // hooks live HERE (the LIVE overlay draw on cement/road maps), not in the dormant
+    // drawTerrainOverlays(). When MC2_TERRAIN_INDIRECT_OVERLAY is armed (default-ON since
+    // 2026-05-17) the per-quad producer is skipped, so drawTerrainOverlays() flushes an
+    // empty batch and early-returns BEFORE its own validate wrapper — only THIS function
+    // actually draws overlay content. The two sites are mutually exclusive per frame (the
+    // indirect-overlay gate makes exactly one draw), so both can own PassIdentity::
+    // TerrainOverlay without ever double-owning in a single frame. Placed AFTER the
+    // early-returns above so we only own/apply on a real draw. PIN: additive only — no GL
+    // state change, no reorder; the body sets its own state UNCHANGED between begin and end.
+    render_contract::executorOwnBeginTopLevel(render_contract::PassIdentity::TerrainOverlay,
+                                              "gosRenderer_drawDecalStaticBatch");
+    struct TopLevelGuard_ {
+        ~TopLevelGuard_() {
+            render_contract::executorOwnEndTopLevel(render_contract::PassIdentity::TerrainOverlay,
+                                                    "gosRenderer_drawDecalStaticBatch");
+        }
+    } _tlGuard;
+
     // [TEMP DECAL_GLPROBE] eager-drain probe — env MC2_DECAL_GLPROBE=1.
     // Removed once root cause is pinned. Attributes GL_INVALID_OPERATION to
     // the exact call instead of the deferred CHECK_GL_ERROR drain site.
@@ -9967,8 +9986,20 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
     // Byte-identical to the old hand-set state (+ no-op glFrontFace(CCW)/blendFunc/
     // offset-disable). glProgramName=0 -> applyPipeline SKIPs program; the manual
     // glUseProgram(overlayProg_) below stays.
-    pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainOverlay), "TerrainOverlay");
+    // APPLY-STATE-TERRAINOVERLAY-SITE-FIX-1: relocated apply-state dispatch. When
+    // MC2_FRAMEGRAPH_EXECUTOR is ON and the executor applies state for this pass,
+    // executorApplyTerrainOverlayState() pre-applies the TerrainOverlay pipeline and sets
+    // overlayStateAppliedByExecutor_; the body applyPipeline below is then skipped (one-shot).
+    // Gate OFF -> flag false -> body applies -> byte-identical. Mirrors drawDecals().
+    if (render_contract::isTopLevelExecutorEnabled() &&
+        RenderCore::framegraph::findTopLevelStateDesc(RenderCore::RenderPassId::TerrainOverlay) != nullptr) {
+        executorApplyTerrainOverlayState();
+    }
+    if (!overlayStateAppliedByExecutor_) {
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainOverlay), "TerrainOverlay");
+    }
+    overlayStateAppliedByExecutor_ = false;
 
     DECAL_GLPROBE("after_state_block");
     glUseProgram(overlayProg_->shp_);
