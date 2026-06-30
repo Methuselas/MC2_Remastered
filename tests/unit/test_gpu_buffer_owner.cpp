@@ -53,6 +53,32 @@ TEST_CASE("GpuBufferOwner id and lifetime round-trip the stored fields") {
     CHECK(o.valid());
 }
 
+// TERRAIN-HEIGHT-SSBO-OWNER-1: the LOD-chunk height SSBO (id 14, already-existing,
+// already-registered) is now narrowed behind a GpuBufferOwner like type/cement.
+TEST_CASE("TERRAIN-HEIGHT-SSBO-OWNER-1 height owner round-trips id/lifetime/name and valid->invalid") {
+    GpuBufferOwner o{
+        RenderResourceId::TerrainHeightSsbo,
+        RenderResourceLifetime::Mission,
+        "TerrainHeightSsbo",
+        0u};
+    // Newly-constructed (glName 0) -> not yet allocated -> invalid.
+    CHECK_FALSE(o.valid());
+
+    // After glGen stores a handle -> valid, fields preserved.
+    o.glName = 14u;
+    CHECK((o.id == RenderResourceId::TerrainHeightSsbo));
+    CHECK((o.lifetime == RenderResourceLifetime::Mission));
+    CHECK(std::strcmp(o.debugName, "TerrainHeightSsbo") == 0);
+    CHECK(o.valid());
+
+    // Invalidate-on-destroy (glName cleared) -> invalid again.
+    o.glName = 0u;
+    CHECK_FALSE(o.valid());
+
+    CHECK(std::strcmp(toString(RenderResourceId::TerrainHeightSsbo), "TerrainHeightSsbo") == 0);
+    CHECK(int(RenderResourceId::TerrainHeightSsbo) < int(RenderResourceId::Count));
+}
+
 TEST_CASE("GpuBufferOwner is a trivially-copyable POD") {
     CHECK(std::is_trivially_copyable<GpuBufferOwner>::value);
 }

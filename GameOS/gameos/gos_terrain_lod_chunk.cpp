@@ -47,7 +47,17 @@ namespace gos_terrain_indirect { bool IsFrameSolidArmed(); }
 // Static SSBO state — all GL objects live here, never in mclib/.
 // ---------------------------------------------------------------------------
 
-static GLuint s_heightSsbo = 0;   // GL handle; 0 = not yet allocated
+// TERRAIN-HEIGHT-SSBO-OWNER-1: the LOD-chunk height SSBO (last raw GLuint in the
+// live LOD-chunk terrain renderer) is narrowed behind a GpuBufferOwner identity
+// record (logical id + lifetime + debug name + GLuint value), mirroring the
+// type/cement siblings. GL calls happen at the same sites with the same
+// args/order/flags/slots; the raw handle is reached only via owner.glName.
+// Lifetime Mission: (re-)uploaded per mission load via glBufferData.
+static RenderCore::GpuBufferOwner s_heightSsbo{  // GL handle; glName 0 = not yet allocated
+    RenderCore::RenderResourceId::TerrainHeightSsbo,
+    RenderCore::RenderResourceLifetime::Mission,
+    "TerrainHeightSsbo",
+    0u};
 static GLuint s_visualHeightSsbo = 0; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: 4x visual heightfield (binding 26)
 static int    s_visualSide       = 0; // V = (mapSide-1)*4+1, fine grid side (0 = bake not loaded)
 // TERRAIN-LODCHUNK-SSBO-OWNER-1: the LOD-chunk type/cement SSBOs are no longer
@@ -442,11 +452,15 @@ static GLuint s_patchVao = 0;
 
 void gos_TerrainLodChunk_Init()
 {
-    if (s_heightSsbo != 0)
+    if (s_heightSsbo.glName != 0)
         return; // idempotent
 
-    glGenBuffers(1, &s_heightSsbo);
-    if (s_heightSsbo == 0)
+    {
+        GLuint heightBuf = 0;
+        glGenBuffers(1, &heightBuf);
+        s_heightSsbo.glName = static_cast<uint32_t>(heightBuf);
+    }
+    if (s_heightSsbo.glName == 0)
     {
         fprintf(stderr, "[TerrainLodChunk] glGenBuffers failed for height SSBO\n");
         fflush(stderr);
@@ -606,10 +620,11 @@ void gos_TerrainLodChunk_Destroy()
         glDeleteBuffers(1, &s_visualHeightSsbo);
         s_visualHeightSsbo = 0;
     }
-    if (s_heightSsbo != 0)
+    if (s_heightSsbo.glName != 0)
     {
-        glDeleteBuffers(1, &s_heightSsbo);
-        s_heightSsbo = 0;
+        GLuint heightBuf = static_cast<GLuint>(s_heightSsbo.glName);
+        glDeleteBuffers(1, &heightBuf);
+        s_heightSsbo.glName = 0;
         s_mapSide    = 0;
         s_halfMap    = 0.0f;
 
@@ -657,7 +672,7 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     int                       count)
 {
     if (count == 0) return;
-    if (s_terrainProgram == 0 || s_heightSsbo == 0) return;
+    if (s_terrainProgram == 0 || s_heightSsbo.glName == 0) return;
     if (s_patchVao == 0) return;
 
     // SAME-ORDER-EXECUTOR-VALIDATE-1: top-level validate-only wrapper (gate MC2_FRAMEGRAPH_EXECUTOR).
@@ -775,7 +790,7 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     // is inverted and the opaque heightfield is rendered double-sided.)
 
     // Bind height SSBO (stays bound for all patches this frame).
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, s_heightSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, static_cast<GLuint>(s_heightSsbo.glName));
     // Step 5b: terrainType SSBO (concrete). 0 if never uploaded -> vert reads 0.
     if (s_typeSsbo.glName != 0)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_TYPE_SSBO_BINDING, static_cast<GLuint>(s_typeSsbo.glName));
@@ -1239,7 +1254,7 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
 
 void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
 {
-    if (s_heightSsbo == 0)
+    if (s_heightSsbo.glName == 0)
     {
         fprintf(stderr, "[TerrainLodChunk] UploadHeightFull called before Init\n");
         fflush(stderr);
@@ -1250,9 +1265,10 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
 
     GLsizeiptr bytes = (GLsizeiptr)mapSide * mapSide * sizeof(float);
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_heightSsbo);
+    const GLuint heightBuf = static_cast<GLuint>(s_heightSsbo.glName);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, heightBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, elevations, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, s_heightSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, heightBuf);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     s_mapSide = mapSide;
@@ -1267,8 +1283,8 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
         d.kind      = RenderCore::RenderResourceKind::Buffer;
         d.lifetime  = RenderCore::RenderResourceLifetime::Mission;  // rebuilt per mission load (heightfield upload)
         d.format    = RenderCore::RenderResourceFormat::BufferRaw;
-        d.debugName = "TerrainHeightSsbo";
-        d.glName    = static_cast<uint32_t>(s_heightSsbo);
+        d.debugName = s_heightSsbo.debugName;
+        d.glName    = s_heightSsbo.glName;
         d.sizeBytes = static_cast<uint64_t>(bytes);
         d.valid     = true;
         RenderCore::registerOrUpdateRenderResource(d);
@@ -1278,7 +1294,7 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
     // First-frame readback verify: confirm that the GPU round-trips the first
     // float correctly. glGetBufferSubData is available on all desktop GL >=3.1.
     float firstSample = 0.0f;
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_heightSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_heightSsbo.glName));
     glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(float), &firstSample);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     if (firstSample != elevations[0])
@@ -1391,10 +1407,10 @@ void gos_TerrainLodChunk_UploadHeightPatch(
     int quadCountX, int quadCountY,
     int mapSide)
 {
-    if (s_heightSsbo == 0 || !rowData || mapSide <= 0)
+    if (s_heightSsbo.glName == 0 || !rowData || mapSide <= 0)
         return;
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_heightSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_heightSsbo.glName));
 
     for (int row = 0; row <= quadCountY; ++row)
     {
