@@ -2150,6 +2150,13 @@ void gosPostProcess::runScreenShadow()
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
+    // SCREENSHADOW-TEX-RESTORE-1: unbind the CSM cascade 2D_ARRAY left on unit 3
+    // (csmActive path binds GL_TEXTURE_2D_ARRAY on unit 3; nothing unbinds it at exit,
+    // blocking executor ownership of this pass). Mirror GLSTATE-SHADOWDEBUG-2DARRAY-1.
+    if (csmActive) {
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    }
     glActiveTexture(GL_TEXTURE0);
 }
 
