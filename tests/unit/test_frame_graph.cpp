@@ -2093,20 +2093,21 @@ TEST_CASE("oracle (c): Terrain moved AFTER PostProcess breaks the sceneHasTerrai
     CHECK(latchViolated == true);
 }
 
-TEST_CASE("oracle (d): legalAdjacentSwaps -> exactly one true (StaticProp<->Mech), asserted by index") {
+TEST_CASE("oracle (d): legalAdjacentSwaps -> ZERO true (post MEASURED-REORDER-SPMECH-1)") {
     using namespace RenderCore::framegraph;
+    // ORACLE-STRENGTHEN-1: StaticProp<->Mech was once the single candidate-legal adjacent
+    // swap, but the gated reorder experiment MEASURED-REORDER-SPMECH-1 (@2461d37e) PROVED it
+    // fails parity (pixel diff 3-6x noise; depth-equal ties resolve order-dependently). It is
+    // now a CONCRETE deferred-soft-state pair -> BlockedByDeferredSoftState. The honest
+    // post-experiment state: the shipped baseline has NO clean legal adjacent swap.
     bool swaps[32] = { false };
     legalAdjacentSwaps(swaps, kFramePassOrderCount);
 
-    int trueCount = 0, trueIdx = -1;
+    int trueCount = 0;
     for (int i = 0; i + 1 < kFramePassOrderCount; ++i)
-        if (swaps[i]) { ++trueCount; trueIdx = i; }
+        if (swaps[i]) { ++trueCount; }
 
-    CHECK(trueCount == 1);
-    // The one true must be the adjacent pair (StaticPropOpaque, MechOpaque).
-    REQUIRE(trueIdx >= 0);
-    CHECK(uns(kFramePassOrder[trueIdx])     == uns(RenderPassId::StaticPropOpaque));
-    CHECK(uns(kFramePassOrder[trueIdx + 1]) == uns(RenderPassId::MechOpaque));
+    CHECK(trueCount == 0);
 }
 
 TEST_CASE("oracle (e): forbidden-edges-hold but crosses a deferred soft-state pair -> BlockedByDeferredSoftState") {
@@ -2131,8 +2132,16 @@ TEST_CASE("oracle (e): forbidden-edges-hold but crosses a deferred soft-state pa
     CHECK(blocking.forbidden == false);
 }
 
-TEST_CASE("oracle (f): StaticProp<->Mech swap -> Legal, reported with conservative wording (not 'approved')") {
+TEST_CASE("oracle (f): StaticProp<->Mech swap -> BlockedByDeferredSoftState (depth-tie; MEASURED-REORDER-SPMECH-1)") {
     using namespace RenderCore::framegraph;
+    // ORACLE-STRENGTHEN-1 — the validator LEARNED from the execution experiment.
+    // MEASURED-REORDER-SPMECH-1 (@2461d37e) ran the gated StaticProp<->Mech reorder and
+    // MEASURED a parity FAIL: pixel diff 3-6x above the noise floor. Root cause: the two
+    // opaque passes overlap in screen space and their fragments resolve to a DIFFERENT
+    // winner under depth-EQUAL / coplanar ties when draw order swaps (last-writer-wins is
+    // order-dependent). The resource DAG sees NO hard edge between them ("resource-legal"),
+    // but resource-legal != visually-commutative. So the oracle must now report this swap as
+    // BlockedByDeferredSoftState, NOT Legal — it does not overclaim a clean reorder.
     RenderPassId cand[32];
     const int n = buildShippedOrder(cand);
     const int is = orderIndexOf(RenderPassId::StaticPropOpaque, cand, n);
@@ -2140,16 +2149,22 @@ TEST_CASE("oracle (f): StaticProp<->Mech swap -> Legal, reported with conservati
     REQUIRE(is >= 0); REQUIRE(im >= 0);
     const RenderPassId tmp = cand[is]; cand[is] = cand[im]; cand[im] = tmp;
 
-    PassEdge unused{};
-    const ReorderVerdict v = isReorderLegal(cand, n, &unused);
-    CHECK(uns(v) == uns(ReorderVerdict::Legal));
+    PassEdge blocking{};
+    const ReorderVerdict v = isReorderLegal(cand, n, &blocking);
+    CHECK(uns(v) == uns(ReorderVerdict::BlockedByDeferredSoftState));
+    // The reported blocking edge is the CONCRETE StaticProp<->Mech depth-tie deferred-soft-
+    // state edge (named from/to, non-forbidden ledger entry).
+    CHECK(uns(blocking.from) == uns(RenderPassId::StaticPropOpaque));
+    CHECK(uns(blocking.to)   == uns(RenderPassId::MechOpaque));
+    CHECK(uns(blocking.cls)  == uns(EdgeClass::SoftState));
+    CHECK(blocking.forbidden == false);
 
     // Reporting helper uses the conservative wording — NEVER "approved"/"safe"/"scheduled".
+    // The blocked verdict reports as resource-wise-legal-but-deferred-blocked.
     char buf[256];
-    reportReorderVerdict(v, nullptr, buf, sizeof(buf));
+    reportReorderVerdict(v, &blocking, buf, sizeof(buf));
     const std::string s = buf;
-    CHECK(s.find("candidate legal adjacent swap") != std::string::npos);
-    CHECK(s.find("MEASURED reorder experiment")   != std::string::npos);
+    CHECK(s.find("blocked by a deferred soft-state edge") != std::string::npos);
     CHECK(s.find("approved")  == std::string::npos);
     CHECK(s.find("safe to reorder") == std::string::npos);
     CHECK(s.find("scheduled") == std::string::npos);

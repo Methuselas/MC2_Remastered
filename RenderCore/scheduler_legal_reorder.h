@@ -230,6 +230,15 @@ static constexpr int kForbiddenReorderEdgeCount =
 //     soft-state edge" — so it does NOT overclaim legality. These are NOT classified as
 //     forbidden here (no stable from/to ordering value yet); they are an explicit
 //     "unknown hazard" ledger. Reviewed at change time.
+//     ★ GENERAL PRINCIPLE (ORACLE-STRENGTHEN-1): an entry here may also carry a CONCRETE
+//     from/to pass pair when the deferred hazard is a *visual-commutativity* hazard between
+//     two specific passes — i.e. the resource DAG sees no hard edge, but the two passes can
+//     overlap in SCREEN SPACE and their fragments resolve to an order-dependent winner under
+//     depth-EQUAL / coplanar ties (last-writer-wins is order-sensitive). This is NOT derivable
+//     from reads/writes: two opaque passes that both write MainColor/MainDepth are "resource-
+//     legal to swap" yet NOT visually commutative. Any future candidate pair of overlapping
+//     opaque passes (both writing MainColor+MainDepth, both able to occupy the same pixels)
+//     must get the SAME scrutiny — do not assume "no hard resource edge" == "free to reorder".
 static constexpr PassEdge kDeferredSoftStateEdges[] = {
     { RenderPassId::None, RenderPassId::None, EdgeClass::SoftState,
       RenderResourceId::Unknown, /*forbidden*/ false, /*contentGated*/ false,
@@ -240,6 +249,20 @@ static constexpr PassEdge kDeferredSoftStateEdges[] = {
     { RenderPassId::None, RenderPassId::None, EdgeClass::SoftState,
       RenderResourceId::Unknown, /*forbidden*/ false, /*contentGated*/ false,
       "clip-control/scissor hazard: frame-global / inherited; ambiguous per-pass" },
+    // StaticProp<->Mech depth-tie / visual-commutativity hazard (ORACLE-STRENGTHEN-1).
+    // Concrete from/to: these two opaque passes BOTH write MainColor+MainDepth and overlap
+    // in screen space (a mech can stand in front of / inside a static prop). Resource-wise
+    // there is NO hard edge between them, so the producer-walk reports the swap as legal.
+    // BUT the gated reorder experiment MEASURED-REORDER-SPMECH-1 (2461d37e) PROVED parity
+    // FAILS: pixel diff 3-6x above the noise floor, because overlapping fragments resolve to
+    // a DIFFERENT winner under depth-EQUAL ties when draw order swaps (last-writer-wins is
+    // order-dependent). "No hard resource edge" != "visually commutative". The oracle must
+    // therefore report this swap as BlockedByDeferredSoftState, NOT Legal.
+    { RenderPassId::StaticPropOpaque, RenderPassId::MechOpaque, EdgeClass::SoftState,
+      RenderResourceId::MainColor, /*forbidden*/ false, /*contentGated*/ false,
+      "StaticProp<->Mech depth-tie: overlapping opaque passes; depth-equal ties resolve "
+      "order-dependently — resource-legal but NOT visually commutative "
+      "(proven by MEASURED-REORDER-SPMECH-1 @2461d37e: parity 3-6x above noise)" },
 };
 static constexpr int kDeferredSoftStateEdgeCount =
     sizeof(kDeferredSoftStateEdges) / sizeof(kDeferredSoftStateEdges[0]);
@@ -467,11 +490,18 @@ inline const char* reorderVerdictName(ReorderVerdict v) {
 // the shipped order (terrain re-asserts colorMask, post sub-passes consume the
 // latch, FBO/clip-control churn across the overlay/decal/water/veg/vfx/ui block).
 // Passes STRICTLY BEFORE Terrain in the shipped order (Shadow, the two opaque
-// geometry passes) sit OUTSIDE that hazard region — they are z-tested opaque
-// draws that do not touch the deferred soft-state. So a swap is "deferred-clean"
-// iff BOTH moved passes sit before the deferred-hazard boundary (= Terrain's
-// shipped slot). This is the conservative analog of KnownEarly suppression: it is
-// the ONE region the resource DAG provably does not cover.
+// geometry passes) sit OUTSIDE that hazard region for the FBO/clip/tex-unit
+// hazards — they are z-tested opaque draws that do not touch that deferred
+// soft-state. So a swap is region-clean iff BOTH moved passes sit before the
+// deferred-hazard boundary (= Terrain's shipped slot). This is the conservative
+// analog of KnownEarly suppression: it is the ONE region the resource DAG
+// provably does not cover.
+//   ★ ORACLE-STRENGTHEN-1: region-clean is NECESSARY but NOT SUFFICIENT. Two opaque
+//   passes can both precede Terrain (region-clean) yet still be NOT visually
+//   commutative because they overlap in screen space and resolve depth-equal ties
+//   order-dependently (StaticProp<->Mech, proven by MEASURED-REORDER-SPMECH-1). Such
+//   pairs are listed CONCRETELY in kDeferredSoftStateEdges and blocked additionally
+//   below, so a region-clean-but-visually-order-sensitive swap is NOT reported Legal.
 inline int deferredHazardBoundaryIndex() {
     return orderIndexOf(RenderPassId::Terrain, kFramePassOrder, kFramePassOrderCount);
 }
@@ -505,6 +535,26 @@ inline bool crossesDeferredSoftState(const RenderPassId* candidate, int n,
                     *outDeferred = kDeferredSoftStateEdges[0];
                 return true;
             }
+        }
+    }
+    // ORACLE-STRENGTHEN-1: also block any candidate that REORDERS a CONCRETE-named
+    // deferred-soft-state pair (e.g. StaticProp<->Mech depth-tie). These pairs can sit
+    // ENTIRELY BEFORE the deferred-hazard boundary (both opaque geometry passes precede
+    // Terrain), so the region scan above misses them — but they are still not visually
+    // commutative (proven by MEASURED-REORDER-SPMECH-1). If the candidate has the pair in
+    // a different relative order than the shipped order, refuse to overclaim.
+    for (int k = 0; k < kDeferredSoftStateEdgeCount; ++k) {
+        const PassEdge& d = kDeferredSoftStateEdges[k];
+        if (d.from == RenderPassId::None || d.to == RenderPassId::None) continue;
+        const int sf = orderIndexOf(d.from, kFramePassOrder, kFramePassOrderCount);
+        const int st = orderIndexOf(d.to,   kFramePassOrder, kFramePassOrderCount);
+        const int cf = orderIndexOf(d.from, candidate, n);
+        const int ct = orderIndexOf(d.to,   candidate, n);
+        if (sf < 0 || st < 0 || cf < 0 || ct < 0) continue;
+        // shipped relative order vs candidate relative order: a flip means the pair moved.
+        if ((sf < st) != (cf < ct)) {
+            if (outDeferred) *outDeferred = d;
+            return true;
         }
     }
     return false;
@@ -566,10 +616,14 @@ inline ReorderVerdict isReorderLegal(const RenderPassId* candidate, int n,
 // legalAdjacentSwaps — for each adjacent pair (i, i+1) in kFramePassOrder, build
 // the swapped permutation and run the oracle. out[i] = true IFF the verdict is
 // Legal (NOT merely "forbidden-edges-hold"; a deferred-blocked swap is out[i]=
-// false). On the content-free shipped baseline the ONLY true entry is the
-// StaticPropOpaque<->MechOpaque swap (E6: two opaque, z-tested passes with no
-// hard edge between them, both before the deferred-hazard boundary). Everything
-// else is forbidden or deferred-blocked. `out` must hold (n-1) bools.
+// false). ORACLE-STRENGTHEN-1: on the content-free shipped baseline there are now
+// ZERO true entries. The StaticPropOpaque<->MechOpaque swap was once the single
+// candidate (E6: two opaque z-tested passes with no hard edge between them, both
+// before the deferred-hazard boundary), but MEASURED-REORDER-SPMECH-1 (@2461d37e)
+// PROVED it fails parity (depth-equal ties resolve order-dependently), so it is now
+// a CONCRETE deferred-soft-state pair -> BlockedByDeferredSoftState, not Legal. The
+// honest post-experiment state of the shipped order is: NO clean legal swaps exist.
+// Everything is forbidden or deferred-blocked. `out` must hold (n-1) bools.
 inline void legalAdjacentSwaps(bool* out, int n) {
     for (int i = 0; i + 1 < n; ++i) {
         RenderPassId cand[static_cast<int>(RenderPassId::_SentinelLast)];
