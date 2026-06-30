@@ -5,16 +5,27 @@
 **Primary task:** continue the FRAME-GRAPH arc. **Do frame-graph first; legacy-terrain
 retirement is SECONDARY (after).**
 
-**▶ RESUME POINTER (latest — 2026-06-30, HEAD `fd4cfd54`):** ★★**TIER-C VALIDATOR SHIPPED (proof-only).**
-The graph can now **PROVE which reorders are legal** — **StaticProp↔Mech is the SOLE candidate legal
-adjacent swap**; every other adjacent swap is forbidden or deferred-soft-state-blocked. **EXECUTION
-UNTOUCHED.** Era line: Tier-B practical COMPLETE @ `40e0f5af`; tier-C legal-reorder VALIDATOR @
-`4b4b8c9f`/`fd4cfd54`; **everything still analysis-only — NO execution change since `40e0f5af`** (GL-free
-headers + doctests, zero runtime callers, byte-identical by construction).
-**NEXT GATE (do NOT auto-build):** a **MEASURED reorder experiment** is the first execution-changing step —
-it requires an **explicit decision** + a **parity/capture harness**; the reorderer stays **GATED**.
-★Deferred soft axes (tex-unit/FBO/clip-control the resource DAG can't see) mean a "legal" verdict ≠ license
-to move a pass. See entries 59–60 + the tier-C recon below.
+**▶ RESUME POINTER (latest — 2026-06-30, HEAD `dea90c61`):** ★★**TIER-C LOOP CLOSED — FIRST MEASURED
+REORDER EXPERIMENT RUN, CANDIDATE REJECTED, ORACLE STRENGTHENED.** Cleanups done (full unit suite now
+**240 passed / 0 failed** — the long-standing "4 known-unrelated" red is GONE). The validator predicted
+StaticProp↔Mech was the SOLE legal adjacent swap → a gated execution-changing experiment FALSIFIED it on
+PARITY (depth-EQUAL tie-break between overlapping mech/prop fragments is order-dependent) → the oracle was
+updated to **ZERO clean legal adjacent swaps**. The reorderer is **NOT shipped**; the experiment gate
+`MC2_FRAMEGRAPH_REORDER_SPMECH` stays **default-OFF permanently** (capability artifact, NOT adopted).
+★**DURABLE LESSON (now encoded in the oracle):** "no hard resource edge" ≠ "visually commutative" for
+overlapping opaque passes — depth-equal tie-break is order-dependent. **Legal verdict ≠ adoption; parity
+proof beats armchair reasoning; default-OFF stays OFF.** Era line: Tier-B practical COMPLETE @ `40e0f5af`;
+tier-C VALIDATOR @ `4b4b8c9f`/`fd4cfd54`; first reject-experiment + oracle-strengthen @ `2461d37e`/
+`dea90c61`. See the TIER-C FIRST EXECUTION EXPERIMENT block + entries 61–65 below.
+
+★★ **NEXT-SESSION NORTH-STAR — GPU RESOURCE OWNERSHIP / RAW-GLOBAL MINIMIZATION (GPU-BUFFER-OWNER-RECON-1).**
+The goal is NOT just enumerate/register — it is to **MINIMIZE the ~70% of GPU resources that are raw
+file-static `GLuint` globals** (`s_heightSsbo`, `g_recipeSSBO`, `s_mechMaterialSsbo`, ring buffers, batcher
+instance SSBOs, view UBO, …) by bringing them under registry/owner ownership. **Cheap entry points:**
+(1) the **view-uniforms UBO** (1 clean site); (2) **LOD-chunk type/cement SSBOs** — the SOLE *live* terrain
+renderer's own buffers are conspicuously UNregistered while the DEAD indirect-path buffers ARE registered;
+close that inconsistency first. This maps to the real remaining modernization gap far better than more
+reorder experiments. (This SUPERSEDES "more reorder experiments" as the primary next thrust.)
 
 **(superseded resume pointer — 2026-06-30, HEAD `40e0f5af`):** ★★**TIER-B PRACTICAL COMPLETE.**
 **Tier-B practical same-order frame graph COMPLETE: the graph validates, applies, enforces, and names/
@@ -589,7 +600,8 @@ to screenShadow exit — KEEP it deferred from owned/subgraph-safe until then) �
 SCREENSHADOW-1; **TERRAIN-BRIDGE-BODY-DELETE-2** (4 orphaned helpers); **SHADOW-OBSERVE-3**.
 - **SCREENSHADOW-RESTORE** — add the activeTexture0/2D_ARRAY-unbind restore to screenShadow's exit so it
   becomes a texture-safe ownable island (then ISLAND-4 can own it). Mirror GLSTATE-SHADOWDEBUG-2DARRAY-1.
-- **TERRAIN-BRIDGE-BODY-DELETE-2** — the 4 orphaned flush-exclusive helpers (#29 follow-on).
+- ~~**TERRAIN-BRIDGE-BODY-DELETE-2** — the 4 orphaned flush-exclusive helpers (#29 follow-on).~~
+  ✓ **ALREADY-DONE** (stale line — the orphaned helpers + the now-unreachable LegacyMLR bump are gone).
 - **SHADOW-OBSERVE-3** — observe the per-frame dynamic shadow + fix MechOpaque preamble-note placement.
 - DELETION GATE: keep watching terrain_path counters == 0 across more real playtest/capture/editor
   before deleting the bridge BODIES (deletion gated on runtime 0, not grep — the tripwires now enforce it).
@@ -878,6 +890,48 @@ requires an **explicit decision** + a **parity/capture harness**; the reorderer 
 verdict is NOT a license to move a pass: the deferred soft axes (tex-unit/FBO/clip-control) live outside
 the resource DAG, so even a correct legality verdict is insufficient to actually reorder.
 
+## ✓ CLEANUPS + TIER-C FIRST REORDER EXPERIMENT (entries 61–65) — 2026-06-30, HEAD `dea90c61`
+61. **STATEPACK-TRUTH-REFRESH** (`e2422e1b`) — HYGIENE. Fixed 4 stale `pipelineDescRegistered` tests +
+    stale comments (`render_state_desc.h` / `postprocess_subgraph.h`) to the current 8-true truth + stale
+    `PipelineId::Count_` 5→25. ★**Full unit suite now 240 passed / 0 failed** — the long-standing "4
+    known-unrelated" red is GONE.
+62. **verify-executor-slice fix** (`b7fe89d3`) — `--with-dryrun` + `--assert-pass-fired` now assert against
+    the ON dump (`fg_on`), not the post-dryrun OFF dump (was reading the wrong artifact).
+63. **PARTICLE-CONTRACT-BLEND-FIX-1** (`2b55bbaa`) — `kParticleEffectState` declared blend Additive →
+    **AlphaBlend** (matches live SRC_ALPHA/ONE_MINUS_SRC_ALPHA). Descriptive value, never asserted;
+    byte-identical, smoke 5/5 +0.
+64. ★**MEASURED-REORDER-SPMECH-1** (`2461d37e`) — **FIRST tier-C execution-changing experiment.** Gate
+    `MC2_FRAMEGRAPH_REORDER_SPMECH` (default-OFF; added to run_smoke allowlist). Gate-OFF byte-identical
+    (`out_of_order=0`); gate-ON swap took effect (dryrun `out_of_order=1953`). ★**RESULT: PARITY FAILS** —
+    mc2_24 OFF↔ON pixel diff **0.10–0.32% changed, 3–6× above the established noise floor** (OFF-vs-OFF
+    0.025–0.073%); cause = mech↔prop overlapping fragments resolve order-dependently under **depth-EQUAL
+    ties**. Perf: noise-level (mechs GPU ~0 in mc2_24, no headroom). **VERDICT: resource-legal ≠
+    visually-commutative; candidate REJECTED; gate stays default-OFF permanently (NOT adopted).** Capability
+    proven end-to-end (classify→gate→capture→measure→reject). The gate code is RETAINED default-OFF as the
+    capability artifact; the oracle (entry 65) is the authoritative guard against ever enabling it.
+65. ★**ORACLE-STRENGTHEN-1** (`dea90c61`) — encoded the finding. Added the concrete **StaticProp↔Mech
+    depth-tie edge** to `kDeferredSoftStateEdges` + documented the general overlapping-opaque-depth-tie
+    principle + extended `crossesDeferredSoftState` to catch concrete-named pairs (region-scan alone MISSED
+    it — both passes are before the Terrain boundary). Oracle now: **StaticProp↔Mech → BlockedByDeferred-
+    SoftState (was Legal)**; `legalAdjacentSwaps()` → **0 (was 1)**; `isCurrentOrderLegal()` still true.
+    **109 doctests.** The validator LEARNED from the execution experiment.
+
+## ★★ TIER-C FIRST EXECUTION EXPERIMENT — candidate REJECTED, oracle strengthened (2026-06-30)
+★**THE TIER-C LOOP CLOSED CORRECTLY.** Oracle predicted StaticProp↔Mech legal → gated experiment
+(`MC2_FRAMEGRAPH_REORDER_SPMECH`) FALSIFIED it on PARITY → oracle updated to ZERO clean legal swaps.
+- **The finding (depth-tie):** mc2_24 produced pixel diffs of **0.10–0.32%** between gate-OFF and gate-ON,
+  **3–6× above the OFF-vs-OFF noise floor (0.025–0.073%)**. Root cause: StaticPropOpaque and MechOpaque
+  fragments OVERLAP and resolve **order-dependently under depth-EQUAL tie-break** — swapping the two passes
+  changes which fragment wins the tie. No hard resource edge exists between them, yet the result is NOT
+  visually identical.
+- **The lesson (now durable IN the oracle):** **"no hard resource edge" ≠ "visually commutative"** for
+  overlapping opaque passes. A resource-DAG-legal verdict does NOT license a reorder when two passes share
+  screen-space fragments at equal depth. This is the **mature tier-C posture: legal verdict ≠ adoption;
+  parity proof beats armchair reasoning; default-OFF stays OFF.**
+- **Disposition:** reorderer NOT shipped. Gate `MC2_FRAMEGRAPH_REORDER_SPMECH` retained **default-OFF
+  permanently** as the capability artifact (proves classify→gate→capture→measure→reject works). The oracle
+  (`legalAdjacentSwaps()` → 0) is the authoritative guard against ever enabling it.
+
 ## ★★ INDEX-RACE INCIDENT + LESSON (critical — read before any parallel committing)
 Two COMMITTING agents in the SAME nifty worktree (FBO-gate lane + SHADOW-1 lane) raced on the shared git
 INDEX: SHADOW-1's commit (`ecfe38e2`) SWEPT the gate's staged files into itself. Recovery: soft-reset,
@@ -912,8 +966,22 @@ asserts no un-gated escape + KNOWN_DEFERRED ledger. Enforcement is now a single 
 REGISTRY-COMPUTE-IDS-1 `0d7aa9fe` (entry 56), REGISTRY-SCENECOLORCOPY-PRODUCER-1 `7e407910` (entry 57),
 REGISTRY-LIFETIME-CLASS-1 `40e0f5af` (entry 58, capstone). Registry = 24 ids, all live registrations
 lifetime-classed. ✓ **(c) tier-b practical 100%** — REACHED (see the TIER-B-COMPLETE milestone block).
-**NEXT = tier-C legal-reorder VALIDATOR (proof-only): SCHEDULER-EDGE-CLASSIFY-1 → SCHEDULER-REORDER-ORACLE-1**
-(GL-free/offline/no-reorderer; reorderer GATED — see the tier-C recon above).
+✓ **(d) tier-C legal-reorder VALIDATOR** — DONE `4b4b8c9f`/`fd4cfd54` (entries 59–60). ✓ **(e) FIRST
+measured reorder experiment** — DONE `2461d37e` (entry 64): StaticProp↔Mech → **PARITY-FAILED on depth-tie,
+candidate REJECTED, gate default-OFF permanently** → oracle strengthened to 0 legal swaps `dea90c61`
+(entry 65). ✓ Cleanups DONE (entries 61–63): suite 240/0, verify-slice fix, particle blend.
+★★**NEXT = GPU RESOURCE OWNERSHIP / RAW-GLOBAL MINIMIZATION (GPU-BUFFER-OWNER-RECON-1)** — see the
+NORTH-STAR block below; this SUPERSEDES further reorder experiments as the primary thrust.
+
+## ★★ NEXT-SESSION NORTH-STAR — GPU-BUFFER-OWNER-RECON-1 (raw-global minimization)
+**Goal:** not enumerate/register, but **MINIMIZE the ~70% of GPU resources that are raw file-static `GLuint`
+globals** by bringing them under registry/owner ownership: `s_heightSsbo`, `g_recipeSSBO`,
+`s_mechMaterialSsbo`, ring buffers, batcher instance SSBOs, view UBO, etc.
+- **Cheap entry (1) — view-uniforms UBO:** a single clean site.
+- **Cheap entry (2) — LOD-chunk type/cement SSBOs:** the SOLE **live** terrain renderer's own buffers are
+  conspicuously UNregistered, while the DEAD indirect-path buffers ARE registered — close that
+  inconsistency FIRST.
+This maps to the real remaining modernization gap far better than more reorder experiments.
 
 **(historical original plan — kept for trail):**
 **(a) RAW-GL-BYPASS-CAPSTONE-1** — meta-gate that ENUMERATES all 5 axis gates (depthFunc/depthMask/
@@ -934,11 +1002,13 @@ spare-parallelizable ones; the rest SERIALIZE on nifty (they share gos_postproce
 **(c)** = tier-b practical 100% ("boring") → **THEN tier-C legal-reorder VALIDATOR** (recon refresh first;
 see the SCHEDULER recon above).
 
-**Minor cleanups (between runs):**
-- `kParticleEffectState` stale blend=Additive → alpha (render_contract.cpp:315).
-- Decal/overlay content-exercise: ★deploy to `A:\Games\mc2-opengl\releases\0.5 testing\mc2-win64-v0.5.0`
-  (roads/overlays OFF in v0.4/0.4c, ON in v0.5) + add **MC2_DYNAMIC_DECALS** to run_smoke.py's allowlist,
-  then executor-ON smoke on a road/overlay mission and read the per-pass apply counter.
+**Parked items (current):**
+- ✓ `kParticleEffectState` stale blend — DONE `2b55bbaa` (entry 63).
+- Decal/overlay content-exercise (PARKED): ★deploy to `A:\Games\mc2-opengl\releases\0.5 testing\mc2-win64-v0.5.0`
+  (roads/overlays OFF in v0.4/0.4c, ON in v0.5) + **MC2_DYNAMIC_DECALS** already added to run_smoke.py's
+  allowlist, then executor-ON smoke on a road/overlay mission and read the per-pass apply counter.
+- `kExternalResources` FULL migration to the lifetime field — DEFERRED by design (kept as a
+  consistency-doctest; the External *concept* is broader than the field).
 - (optional) viewport validator: an `AmbientSample` `GL_VIEWPORT` sampler.
 
 **Automation now in place (use it):** `verify_executor_slice.py --assert-pass-fired NAME[:MIN]` + the
