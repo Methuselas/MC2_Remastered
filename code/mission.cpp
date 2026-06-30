@@ -47,6 +47,7 @@ extern void visualTuning_applyProfile(const char*);  // MISSION-VISUAL-TUNING-1
 #include "brain_special_dispatch.h"  // TECHSCRIPT-SPECIAL-DISPATCH-1A: parseBrainSpecialBody
 #include "brain_missionfit_oporbd.h"  // BRAIN-MISSIONFIT-OPORD-CONSUMER-1: declarative mission.fit OPORD parser
 #include "brain_archetype.h"  // BRAIN-ARCHETYPE-1
+#include "det_rng.h"  // DETERMINISTIC-RNG-1: hashMissionName for per-mission reseed
 
 #ifndef COLLSN_H
 #include"collsn.h"
@@ -2253,6 +2254,23 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	GpuMechBatcher::instance().onMapLoad();
 	GameAdapters::StaticProp::beginMissionLate(missionName); // M1 Task 13
 	GameAdapters::Mech::beginMission();              // M2: mech lifecycle
+
+	// DETERMINISTIC-RNG-1: per-mission reseed hook. ONLY under MC2_DETERMINISTIC_RNG.
+	// Seed = hash(missionName), overridable with MC2_RNG_SEED for manual pinning.
+	// Gate OFF: this block is a no-op (no gos_srand call) => OFF byte-identical.
+	{
+		const char* detEnv = getenv("MC2_DETERMINISTIC_RNG");
+		const bool detRng = (detEnv && detEnv[0] != '\0' && detEnv[0] != '0');
+		if (detRng) {
+			uint32_t seed = mc2_det_rng::hashMissionName(missionName);
+			const char* seedEnv = getenv("MC2_RNG_SEED");
+			if (seedEnv && seedEnv[0] != '\0')
+				seed = (uint32_t)strtoul(seedEnv, nullptr, 0);
+			gos_srand(seed);
+			std::fprintf(stderr, "[DET_RNG] mission=%s reseed=0x%08X (MC2_DETERMINISTIC_RNG=1)\n",
+			             missionName ? missionName : "(null)", seed);
+		}
+	}
 
 	neverEndingStory = false;
 	invulnerableON = false;

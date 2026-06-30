@@ -102,6 +102,10 @@ endif()
 # ---------------------------------------------------------------------------
 option(MC2_ASAN "Build with MSVC AddressSanitizer (parallel dev build)" OFF)
 option(MC2_IMGUI "Enable in-game ImGui UI" OFF)
+# DETERMINISTIC-RNG-1: compile-in the per-gos_rand() "RNG" JSONL trace. Default OFF
+# so stock builds pay nothing; runtime still requires MC2_DETERMINISTIC_RNG=1 +
+# MC2_DIAG_TAGS=RNG. Turn ON only for determinism-proof builds.
+option(MC2_RNG_TRACE "Compile the gos_rand RNG diagnostic trace (DETERMINISTIC-RNG-1)" OFF)
 
 if(MC2_ASAN)
     if(NOT MSVC)
@@ -287,6 +291,9 @@ add_subdirectory("./mclib/gosfx" "./out/mclib/gosfx")
 add_subdirectory("./mclib/stuff" "./out/mclib/stuff")
 add_subdirectory("./gui" "./out/gui")
 add_subdirectory("./GameOS/gameos" "./out/GameOS/gameos")
+if(MC2_RNG_TRACE)
+    target_compile_definitions(gameos PRIVATE MC2_RNG_TRACE=1)
+endif()
 
 add_subdirectory("./GameOS/src" "./out/windows")
 add_subdirectory("3rdparty/imgui")

@@ -1035,7 +1035,23 @@ void __stdcall InitializeGameEngine()
 	}
 
 	//Seed the random Number generator.
-	gos_srand(timeGetTime());
+	// DETERMINISTIC-RNG-1: under MC2_DETERMINISTIC_RNG the startup seed must be
+	// pinned too, otherwise pre-mission (menu/startup) gos_rand calls vary per
+	// run and break replay before Mission::init's per-mission reseed lands.
+	// Gate OFF: unchanged wall-clock seed => byte-identical to stock.
+	{
+		const char* detEnv = getenv("MC2_DETERMINISTIC_RNG");
+		const bool detRng = (detEnv && detEnv[0] != '\0' && detEnv[0] != '0');
+		if (detRng) {
+			uint32_t seed = 0xCAFEBABEu;  // fixed startup seed
+			const char* seedEnv = getenv("MC2_RNG_SEED");
+			if (seedEnv && seedEnv[0] != '\0')
+				seed = (uint32_t)strtoul(seedEnv, nullptr, 0);
+			gos_srand(seed);
+		} else {
+			gos_srand(timeGetTime());
+		}
+	}
 
 	if (!SnifferMode)
 	{

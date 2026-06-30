@@ -187,6 +187,19 @@ long RandomNumber (long range)
 //---------------------------------------------------------------------------
 bool RollDice (long percent)
 {
+	// DETERMINISTIC-RNG-1 (RISK#2): stock RollDice calls CRT rand() DIRECTLY,
+	// bypassing gos_rand. Under MC2_DETERMINISTIC_RNG it must share the single
+	// LCG stream, so route through gos_rand() (same 15-bit [0,32767] range as
+	// the legacy `rand()%(1<<15)`, identical shaping). Gate OFF = exact CRT path.
+	static bool s_checked = false;
+	static bool s_det     = false;
+	if (!s_checked) {
+		s_checked = true;
+		const char* v = getenv("MC2_DETERMINISTIC_RNG");
+		s_det = (v && v[0] != '\0' && v[0] != '0');
+	}
+	if (s_det)
+		return (((gos_rand()*100)>>15) < percent);
 	return (((rand()*100)>>15) < percent);			// Optimized the % out
 }
 

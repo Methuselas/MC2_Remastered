@@ -29,6 +29,9 @@
 
 #include "strres.h"
 
+#include "det_rng.h"          // DETERMINISTIC-RNG-1: GL-free LCG kernel
+#include "diagnostic_trace.h" // DETERMINISTIC-RNG-1: optional "RNG" JSONL trace
+
 ////////////////////////////////////////////////////////////////////////////////
 void __stdcall AddDebuggerMenuItem(char const*, bool (__stdcall *)(), void (__stdcall *)(), bool (__stdcall *)(), DWORD (__stdcall *)(char const*, DWORD))
 {
@@ -273,13 +276,47 @@ void __stdcall gos_Free(void* ptr)
 }
 ////////////////////////////////////////////////////////////////////////////////
 
+// DETERMINISTIC-RNG-1: seedable per-process LCG behind gos_rand/gos_srand,
+// gated by MC2_DETERMINISTIC_RNG (default-OFF). When the gate is OFF every line
+// below is the original CRT srand/rand path => byte-identical to stock.
+static bool     s_detRngChecked = false;
+static bool     s_detRngEnabled = false;   // MC2_DETERMINISTIC_RNG=1
+static uint32_t s_lcg_state     = 0u;
+
+static inline bool gos_detRngEnabled()
+{
+    if (!s_detRngChecked) {
+        s_detRngChecked = true;
+        const char* v = getenv("MC2_DETERMINISTIC_RNG");
+        s_detRngEnabled = (v && v[0] != '\0' && v[0] != '0');
+    }
+    return s_detRngEnabled;
+}
+
 void __stdcall gos_srand(unsigned int seed)
 {
+    if (gos_detRngEnabled()) {
+        s_lcg_state = (uint32_t)seed;
+        return;
+    }
     return srand(seed);
 }
 
 int __stdcall gos_rand()
 {
+    if (gos_detRngEnabled()) {
+        const int result = (int)mc2_det_rng::next15(s_lcg_state);
+        // Trace is gated twice: compile-time MC2_RNG_TRACE define AND the
+        // runtime "RNG" tag whitelist. Default builds pay nothing.
+#ifdef MC2_RNG_TRACE
+        if (mc2_diag::tagEnabled("RNG")) {
+            char buf[48];
+            snprintf(buf, sizeof(buf), "{\"v\":%d}", result);
+            mc2_diag::writeEvent("RNG", 1, 0, buf);
+        }
+#endif
+        return result;
+    }
     return rand() % (1<<15);
 }
 ////////////////////////////////////////////////////////////////////////////////

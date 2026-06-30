@@ -41,6 +41,7 @@ const std::unordered_set<std::string>& knownTags() {
         "ANIM_CADENCE",
         "TARGETING",
         "COMBAT",   // COMBAT-TRACE-1: weapon-fire events (attacker/target wid+team). Opt-in.
+        "RNG",      // DETERMINISTIC-RNG-1: per gos_rand() result (compile-gated by MC2_RNG_TRACE). Opt-in.
     };
     return tags;
 }

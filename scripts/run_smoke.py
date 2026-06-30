@@ -1406,7 +1406,13 @@ def main():
                             # gate (default-OFF). Without this in the allowlist
                             # Popen drops it and MC2_FRAMEGRAPH_REORDER_SPMECH=1
                             # smoke runs silently run the default (OFF) order.
-                            "MC2_FRAMEGRAPH_REORDER_SPMECH")},
+                            "MC2_FRAMEGRAPH_REORDER_SPMECH",
+                            # DETERMINISTIC-RNG-1: seedable LCG gate + seed override.
+                            # Without these in the allowlist Popen drops them and the
+                            # gate-ON determinism smoke runs the CRT (gate-OFF) path,
+                            # making the RNG trace non-reproducible.
+                            "MC2_DETERMINISTIC_RNG",
+                            "MC2_RNG_SEED")},
             },
         )
         # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.
