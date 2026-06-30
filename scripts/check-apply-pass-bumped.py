@@ -51,11 +51,14 @@ def parse_enumerators():
               "`enum class ApplyPassId` in %s" % ENUM_HEADER, file=sys.stderr)
         return None
     body = m.group(1)
+    # Strip comments BEFORE splitting on commas: a comma inside a trailing `// ...`
+    # comment would otherwise split mid-comment and swallow the NEXT enumerator name
+    # (APPLY-STATE-SHADOW-1 hit exactly this — a comma in the Water comment dropped Shadow).
+    body = re.sub(r"//.*$", "", body, flags=re.MULTILINE)   # strip line comments
+    body = re.sub(r"/\*.*?\*/", "", body, flags=re.DOTALL)   # strip block comments
     names = []
     for raw in body.split(","):
-        line = re.sub(r"//.*$", "", raw, flags=re.MULTILINE)  # strip line comment(s)
-        line = re.sub(r"/\*.*?\*/", "", line, flags=re.DOTALL)  # strip block comment
-        line = line.strip()
+        line = raw.strip()
         if not line:
             continue
         # enumerator may have an explicit value: "PostProcessEdgeFog = 0"

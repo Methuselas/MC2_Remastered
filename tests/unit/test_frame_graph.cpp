@@ -1437,9 +1437,9 @@ TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount == 0 (UI-SAME-ORDE
 // (GL context required); only the descriptor table shape is asserted.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("top-level apply-state (a): kTopLevelStateDesc has exactly 5 rows (TerrainDecal, TerrainOverlay, StaticPropOpaque, MechOpaque, Water)") {
+TEST_CASE("top-level apply-state (a): kTopLevelStateDesc has exactly 6 rows (TerrainDecal, TerrainOverlay, StaticPropOpaque, MechOpaque, Water, Shadow)") {
     using namespace RenderCore::framegraph;
-    CHECK(kTopLevelStateDescCount == 5u);
+    CHECK(kTopLevelStateDescCount == 6u);  // APPLY-STATE-SHADOW-1: +Shadow (render-target MODE)
 }
 
 TEST_CASE("top-level apply-state (i): findTopLevelStateDesc(MechOpaque) = MechOpaque pipeline, FBO/viewport inherit (not applied)") {
@@ -1487,7 +1487,30 @@ TEST_CASE("top-level apply-state (c): findTopLevelStateDesc returns nullptr for 
     using namespace RenderCore::framegraph;
     // Terrain is validate-owned but the executor does NOT apply its state this slice.
     CHECK(findTopLevelStateDesc(RenderCore::RenderPassId::Terrain) == nullptr);
-    CHECK(findTopLevelStateDesc(RenderCore::RenderPassId::Shadow)  == nullptr);
+    // APPLY-STATE-SHADOW-1: Shadow is NOW an apply consumer (render-target MODE) -> non-null.
+    CHECK(findTopLevelStateDesc(RenderCore::RenderPassId::Shadow)  != nullptr);
+}
+
+// APPLY-STATE-SHADOW-1: Shadow descriptor — first render-target-MODE row.
+// Pipeline = ShadowMech (the BASE caster pipeline; per-caster ShadowStaticProp re-applies in
+// the body). fboTarget/viewport stay Unknown/Inherit this slice (FBO+viewport deferred to
+// SHADOW-2 — body owns them). clear = DepthForwardZ (the SOLE non-None ClearSpec in the table).
+// ★Shadow is intentionally EXEMPT from the "lifted pipeline matches the authoritative
+// kPassRenderState row" invariant: the authoritative Shadow row is PipelineId::Invalid
+// (3 descriptive sub-caster pipelines), so passHasStaticPipeline(Shadow) is false and Shadow
+// is NOT in the registration row table below. This test asserts ShadowMech directly.
+TEST_CASE("top-level apply-state (l): findTopLevelStateDesc(Shadow) = ShadowMech base pipeline, FBO/viewport deferred, clear DepthForwardZ") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const TopLevelStateDesc* d = findTopLevelStateDesc(RenderPassId::Shadow);
+    REQUIRE(d != nullptr);
+    CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(RenderPassId::Shadow));
+    CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::ShadowMech));
+    // FBO/viewport deferred to SHADOW-2 -> skip-sentinels (helper applies ONLY the clear).
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::Unknown));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::Inherit));
+    // First DepthForwardZ consumer.
+    CHECK(static_cast<unsigned>(d->clear)      == static_cast<unsigned>(ClearSpec::DepthForwardZ));
 }
 
 TEST_CASE("top-level apply-state (d): lifted pipelineId matches the authoritative kPassRenderState row") {
@@ -1563,9 +1586,11 @@ TEST_CASE("top-level apply-state (g): findTopLevelStateDesc(StaticPropOpaque) = 
 }
 
 // FRAMEGRAPH-APPLY-STATE-EXTEND-1: the 4 non-self-proof consumers stay byte-identical —
-// fboTarget=Unknown / viewport=Inherit (skip-sentinels) and clear defaults to None on ALL
-// 5 rows. StaticPropOpaque is the SOLE row with explicit FBO/viewport this slice.
-TEST_CASE("top-level apply-state (k): EXTEND — 4 consumers unchanged (Unknown/Inherit); ClearSpec default None on all 5 rows") {
+// fboTarget=Unknown / viewport=Inherit (skip-sentinels) and clear defaults to None.
+// StaticPropOpaque is the SOLE row with explicit FBO/viewport this slice.
+// APPLY-STATE-SHADOW-1: Shadow is the SOLE row with clear=DepthForwardZ (asserted separately
+// in test (l)); it is NOT in this unchanged-consumers loop.
+TEST_CASE("top-level apply-state (k): EXTEND — 4 consumers unchanged (Unknown/Inherit); ClearSpec default None (decal/overlay/mech/water + staticprop)") {
     using namespace RenderCore;
     using namespace RenderCore::framegraph;
     const RenderPassId unchanged[] = {
@@ -1699,12 +1724,13 @@ TEST_CASE("apply-state-island (h): all 5 apply-island descriptors present (EdgeF
 
 TEST_CASE("per-pass-apply-counters-1: ApplyPassId table is complete + names unique/non-Unknown") {
     using namespace RenderCore::framegraph;
-    // Exactly 10 apply paths: 5 PostProcess sub-stages + 5 top-level.
-    CHECK(static_cast<unsigned>(ApplyPassId::Count) == 10u);
+    // Exactly 11 apply paths: 5 PostProcess sub-stages + 6 top-level (APPLY-STATE-SHADOW-1: +Shadow).
+    CHECK(static_cast<unsigned>(ApplyPassId::Count) == 11u);
     // Spot-check representative mappings.
     CHECK(std::string(applyPassName(ApplyPassId::StaticPropOpaque)) == "StaticPropOpaque");
     CHECK(std::string(applyPassName(ApplyPassId::MechOpaque))       == "MechOpaque");
     CHECK(std::string(applyPassName(ApplyPassId::Water))            == "Water");
+    CHECK(std::string(applyPassName(ApplyPassId::Shadow))           == "Shadow");
     // All ids return a non-"Unknown", unique name.
     const char* seen[(int)ApplyPassId::Count] = {nullptr};
     for (int i = 0; i < (int)ApplyPassId::Count; ++i) {
@@ -1727,7 +1753,14 @@ TEST_CASE("apply-state-registration (top-level): each top-level ApplyPassId maps
     using namespace RenderCore;
     using namespace RenderCore::framegraph;
 
-    // name -> RenderPassId mapping for the 5 top-level apply ids (small local switch).
+    // name -> RenderPassId mapping for the top-level apply ids whose pipeline is the
+    // authoritative single pipeline (small local switch).
+    // ★APPLY-STATE-SHADOW-1: ApplyPassId::Shadow is DELIBERATELY EXCLUDED from this invariant.
+    // Shadow's authoritative kPassRenderState row is PipelineId::Invalid (3 descriptive
+    // sub-caster pipelines ShadowTerrain/ShadowMech/ShadowStaticProp), so passHasStaticPipeline
+    // (Shadow) is false and there is no single representative pipeline to match. Shadow's
+    // TopLevelStateDesc lifts the ShadowMech BASE pipeline (per-caster ShadowStaticProp re-applies
+    // in the body); it is asserted directly in test (l), not cross-checked here.
     struct Row { ApplyPassId apply; RenderPassId pass; };
     const Row topLevel[] = {
         { ApplyPassId::TerrainDecal,     RenderPassId::TerrainDecal     },

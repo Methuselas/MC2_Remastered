@@ -167,7 +167,9 @@ struct TopLevelStateDesc {
 };
 
 // Compile-time table of top-level passes whose render-state the executor APPLIES.
-// Consumers: TerrainDecal, TerrainOverlay, StaticPropOpaque, MechOpaque, Water — all pipeline-only lifts.
+// Consumers: TerrainDecal, TerrainOverlay, StaticPropOpaque, MechOpaque, Water (pipeline lifts;
+// StaticProp also self-proofs explicit FBO/viewport) + Shadow (APPLY-STATE-SHADOW-1: first
+// render-target-MODE consumer — pipeline + DepthForwardZ clear; FBO/viewport deferred to SHADOW-2).
 static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     // TerrainDecal — drawDecals(): the sole entry render-state is
     // applyPipeline(TerrainDecal). FBO/drawBuffers/viewport are inherited from
@@ -244,6 +246,27 @@ static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
         /*pipelineId*/ RenderCore::PipelineId::WaterArmed,
         /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
         /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
+    },
+    // APPLY-STATE-SHADOW-1: Shadow — gosRenderer::beginDynamicShadowPass() (dynamic shadow
+    // seam, per-frame; NOT the static once/mission beginShadowPrePass). ★FIRST render-target-MODE
+    // apply consumer (first ClearSpec::DepthForwardZ row): Shadow owns a render-target mode
+    // (pipeline + forward-Z depth clear), not just a pipeline.
+    // SCOPE THIS SLICE (SHADOW-1): pipeline + clear ONLY. fboTarget/viewport are recorded as
+    // Unknown/Inherit (skip-sentinels) so the EXTEND helper applies ONLY the DepthForwardZ clear;
+    // the body keeps the FBO bind (ShadowDynamicMap) + viewport (ShadowMap size). FBO+viewport are
+    // deferred to SHADOW-2 because the AMD feedback-unbind / GL_TEXTURE_COMPARE_MODE-flip ordering
+    // relative to the FBO bind must be proven first.
+    // ★pipelineId=ShadowMech is the BASE caster pipeline only (the authoritative kPassRenderState
+    // Shadow row is intentionally PipelineId::Invalid — Shadow has 3 descriptive sub-caster
+    // pipelines ShadowTerrain/ShadowMech/ShadowStaticProp). Per-caster ShadowStaticProp re-applies
+    // in the body at draw sites. Shadow is therefore EXEMPT from the "top-level apply pipeline
+    // matches the authoritative kPassRenderState row" registration invariant (see test_frame_graph.cpp).
+    {
+        /*id*/         RenderPassId::Shadow,
+        /*pipelineId*/ RenderCore::PipelineId::ShadowMech,
+        /*fboTarget*/  RenderResourceId::Unknown,   // SHADOW-2: lift to ShadowDynamicMap; body owns it this slice
+        /*viewport*/   ViewportKind::Inherit,       // SHADOW-2: lift to ShadowMap; body owns it this slice
+        /*clear*/      ClearSpec::DepthForwardZ,     // forward-Z shadow clear (1.0->clear->0.0; reverse-Z scene protected)
     },
 };
 static constexpr unsigned kTopLevelStateDescCount =
