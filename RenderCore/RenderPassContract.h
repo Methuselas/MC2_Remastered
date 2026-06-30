@@ -170,9 +170,11 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         /*snapshotRowAuthoritative*/ true,
         "StaticProp",
         "MC2_SNAPSHOT_STATIC_PROP_BUILD",
-        "Reference path: snapshot-owned v6 DrawPacket+meta dispatch default-on (STATIC-PROP-V3-FLIP 2a88a5a8).",
+        "Reference path: snapshot-owned v6 DrawPacket+meta dispatch default-on (STATIC-PROP-V3-FLIP 2a88a5a8). "
+        "POSTPROCESS-SCENEOBJECTID-RESOURCE-1: SceneObjectId write is conditional on RenderWorld::IsObjectIdBufferEnabled() "
+        "(static_prop.frag layout location=2 out uint v_objectId; only emitted when MRT 3-entry draw-buffer set is active).",
         /* reads[4]    */ { RenderResourceId::ShadowDynamicMap },
-        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth, RenderResourceId::MainNormal },
+        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth, RenderResourceId::MainNormal, RenderResourceId::SceneObjectId },
         /* barrierAfter */ BarrierKind::Framebuffer
     },
     {
@@ -199,9 +201,11 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "Mech",
         "MC2_SNAPSHOT_MECH_EXTRACT",
         "Wired through PipelineId::MechOpaque (MECH-PIPELINEDESC-1, applyPipeline) "
-        "+ ViewUniforms UBO consumer default-on (MECH-VIEWUNIFORMS).",
+        "+ ViewUniforms UBO consumer default-on (MECH-VIEWUNIFORMS). "
+        "POSTPROCESS-SCENEOBJECTID-RESOURCE-1: SceneObjectId write is conditional on RenderWorld::IsObjectIdBufferEnabled() "
+        "(mech.frag layout location=2 out uint v_objectId; only emitted when MRT 3-entry draw-buffer set is active).",
         /* reads[4]    */ { RenderResourceId::ShadowDynamicMap },
-        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth, RenderResourceId::MainNormal },
+        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth, RenderResourceId::MainNormal, RenderResourceId::SceneObjectId },
         /* barrierAfter */ BarrierKind::Framebuffer
     },
     {

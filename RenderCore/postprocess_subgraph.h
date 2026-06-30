@@ -139,14 +139,18 @@ static constexpr PostProcessSubpass kPostProcessSubpasses[] = {
     //    Reads sceneColorTex_ (MainColor, unit 0). Writes FBO 0 / Backbuffer.
     //    SUBGRAPH OUTPUT EDGE: the sole FBO-0 bind in endScene().
     //
-    //    NOTE: recon table listed reads={MainColor, Backbuffer} — CORRECTED to
-    //    {MainColor} only. Composite does NOT sample Backbuffer; it overwrites it.
-    //    sceneObjectIdTex_ (unit 2, optional debug) has no RenderResourceId yet.
+    //    POSTPROCESS-SCENEOBJECTID-RESOURCE-1: also reads sceneObjectIdTex_ (unit 2,
+    //    GL_R32UI, COLOR_ATTACHMENT2) when effectiveMode==1 (objectId debug view,
+    //    RenderWorld::IsObjectIdBufferEnabled() && sceneObjectIdTex_!=0).
+    //    SceneObjectId is produced upstream by MechOpaque+StaticPropOpaque geometry
+    //    passes (external to this PP subgraph). Declared in reads[] and in the
+    //    external set so the subgraph validator sees the read satisfied externally.
     // -----------------------------------------------------------------------
     {
         /*id*/             ExecutorIslandId::Composite,
         /*name*/           "Composite",
         /*reads*/          { RenderResourceId::MainColor,
+                             RenderResourceId::SceneObjectId,  // POSTPROCESS-SCENEOBJECTID-RESOURCE-1: unit2, conditional effectiveMode==1 / IsObjectIdBufferEnabled
                              RenderResourceId::Unknown },
         /*writes*/         { RenderResourceId::Backbuffer,
                              RenderResourceId::Unknown },
@@ -157,7 +161,10 @@ static constexpr PostProcessSubpass kPostProcessSubpasses[] = {
                            "Binds FBO 0 at :2489; full-screen quad blits sceneFBO_.COLOR0 -> "
                            "backbuffer with FXAA/exposure/viewmode/LOWLIGHT. Always runs. "
                            "CORRECTION vs recon: reads={MainColor} not {MainColor,Backbuffer}; "
-                           "Composite writes Backbuffer, it does not sample it.",
+                           "Composite writes Backbuffer, it does not sample it. "
+                           "POSTPROCESS-SCENEOBJECTID-RESOURCE-1: reads SceneObjectId (unit2) "
+                           "when effectiveMode==1 (IsObjectIdBufferEnabled && sceneObjectIdTex_!=0); "
+                           "produced externally by MechOpaque+StaticPropOpaque geometry passes.",
     },
     // -----------------------------------------------------------------------
     // 6. ShadowDebugOverlay (call-site :2653)
@@ -292,6 +299,10 @@ inline PostProcessValidationResult validatePostProcessSubgraph(
 //   SceneDepthCopy   — POSTPROCESS-SCENEDEPTHCOPY-RESOURCE-1: produced by VFX pass
 //                      (copySceneDepthForParticles, gos_particle_bridge.cpp:1068), cross-boundary.
 //                      BoxDecals (SUBGRAPH-2) will consume it for soft-depth reject.
+//   SceneObjectId    — POSTPROCESS-SCENEOBJECTID-RESOURCE-1: GBuffer2 (sceneObjectIdTex_,
+//                      COLOR_ATTACHMENT2); produced externally by MechOpaque+StaticPropOpaque
+//                      geometry passes (conditional on IsObjectIdBufferEnabled); read by
+//                      Composite (unit2, effectiveMode==1).
 inline PostProcessValidationResult validateShippedPostProcessSubgraph() {
     static const RenderResourceId kExternal[] = {
         RenderResourceId::MainColor,
@@ -300,9 +311,10 @@ inline PostProcessValidationResult validateShippedPostProcessSubgraph() {
         RenderResourceId::ShadowStaticMap,
         RenderResourceId::ShadowDynamicMap,
         RenderResourceId::SceneDepthCopy,  // POSTPROCESS-SCENEDEPTHCOPY-RESOURCE-1: VFX producer, BoxDecals (SUBGRAPH-2) consumer
+        RenderResourceId::SceneObjectId,   // POSTPROCESS-SCENEOBJECTID-RESOURCE-1: MechOpaque+StaticPropOpaque producer, Composite consumer
         RenderResourceId::Unknown,
     };
-    constexpr int kExternalCount = 6;  // excludes the Unknown terminator
+    constexpr int kExternalCount = 7;  // excludes the Unknown terminator
     return validatePostProcessSubgraph(kExternal, kExternalCount);
 }
 

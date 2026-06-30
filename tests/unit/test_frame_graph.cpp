@@ -719,17 +719,19 @@ TEST_CASE("postprocess subgraph (f): order regression — Composite before a Mai
     using namespace RenderCore::framegraph;
 
     // External set WITHOUT MainColor (simulates reordering Composite to slot 0
-    // before any writer has run).
+    // before any writer has run). POSTPROCESS-SCENEOBJECTID-RESOURCE-1: SceneObjectId
+    // must be present (Composite also reads it; it is produced externally by geometry passes).
     const RenderResourceId noMainColor[] = {
         RenderResourceId::MainDepth,
         RenderResourceId::MainNormal,
         RenderResourceId::ShadowStaticMap,
         RenderResourceId::ShadowDynamicMap,
+        RenderResourceId::SceneObjectId,  // POSTPROCESS-SCENEOBJECTID-RESOURCE-1: Composite reads it externally
     };
     // In the shipped order, CloudShadow (row 0) reads MainDepth (present in external),
     // then writes MainColor — which then satisfies Composite's read. So the shipped
     // table must still pass even without MainColor in external.
-    const PostProcessValidationResult r = validatePostProcessSubgraph(noMainColor, 4);
+    const PostProcessValidationResult r = validatePostProcessSubgraph(noMainColor, 5);
     // CloudShadow writes MainColor first; Composite reads it -> ok.
     CHECK(r.ok == true);
 
@@ -888,13 +890,97 @@ TEST_CASE("SceneDepthCopy: synthetic PP subpass reading it validates ONLY becaus
             RenderResourceId::MainNormal,
             RenderResourceId::ShadowStaticMap,
             RenderResourceId::ShadowDynamicMap,
+            RenderResourceId::SceneObjectId,  // POSTPROCESS-SCENEOBJECTID-RESOURCE-1: Composite reads it; must be external
             // SceneDepthCopy intentionally omitted
         };
-        const PostProcessValidationResult r2 = validatePostProcessSubgraph(extWithout, 5);
+        const PostProcessValidationResult r2 = validatePostProcessSubgraph(extWithout, 6);
         // Shipped Slice-1 rows don't read SceneDepthCopy -> still ok without it in external.
         // This confirms that SceneDepthCopy in external is forward-only (load-bearing for SUBGRAPH-2).
         CHECK(r2.ok == true);
     }
+}
+
+// ---------------------------------------------------------------------------
+// POSTPROCESS-SCENEOBJECTID-RESOURCE-1: offline tests for SceneObjectId
+// logical resource identity — GBuffer2 COLOR_ATTACHMENT2 object-id RT.
+// Pure / GL-free. No smoke required.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("SceneObjectId: MechOpaque and StaticPropOpaque declare it in writes[]") {
+    // Ground-truth: mech.frag and static_prop.frag emit layout(location=2) out uint v_objectId
+    // when the MRT 3-entry draw-buffer set is active (IsObjectIdBufferEnabled).
+    // Both geometry passes must declare the conditional write in their contract rows.
+    bool mechWrites   = false;
+    bool staticWrites = false;
+    for (int i = 0; i < kRenderPassContractCount; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            if (kRenderPassContracts[i].writes[j] != RenderResourceId::SceneObjectId)
+                continue;
+            if (kRenderPassContracts[i].id == RenderPassId::MechOpaque)
+                mechWrites = true;
+            if (kRenderPassContracts[i].id == RenderPassId::StaticPropOpaque)
+                staticWrites = true;
+        }
+    }
+    CHECK(mechWrites   == true);
+    CHECK(staticWrites == true);
+}
+
+TEST_CASE("SceneObjectId: Composite subpass reads it (closes the SUBGRAPH-1 gap)") {
+    // POSTPROCESS-SUBGRAPH-1 flagged sceneObjectIdTex_ (unit 2) as id-less.
+    // After POSTPROCESS-SCENEOBJECTID-RESOURCE-1 the Composite row's reads[] must
+    // include SceneObjectId so the subgraph validator sees the read declared.
+    using namespace RenderCore::framegraph;
+    const PostProcessSubpass* composite = findPostProcessSubpass(ExecutorIslandId::Composite);
+    REQUIRE(composite != nullptr);
+    bool compositeReads = false;
+    for (int i = 0; i < 5; ++i) {
+        if (composite->reads[i] == RenderResourceId::SceneObjectId)
+            compositeReads = true;
+    }
+    CHECK(compositeReads == true);
+}
+
+TEST_CASE("SceneObjectId: validateShippedFrameGraph still ok (geometry pass writes don't strand anything)") {
+    // Adding SceneObjectId to MechOpaque+StaticPropOpaque writes[] must not break the
+    // shipped frame-graph DAG validation — SceneObjectId is consumed by PostProcess
+    // (via the PP subgraph external set), so the write is never an orphan.
+    const ValidationResult r = validateShippedFrameGraph();
+    CHECK(r.ok == true);
+    CHECK(static_cast<unsigned>(r.offendingPass)    == 0u);
+    CHECK(static_cast<unsigned>(r.missingResource)  == 0u);
+}
+
+TEST_CASE("SceneObjectId: validateShippedPostProcessSubgraph ok (Composite read satisfied as external)") {
+    // SceneObjectId is produced externally (geometry passes, upstream of the PP subgraph).
+    // It must appear in the external set so the subgraph validator accepts Composite's read.
+    using namespace RenderCore::framegraph;
+    const PostProcessValidationResult r = validateShippedPostProcessSubgraph();
+    CHECK(r.ok == true);
+    CHECK(static_cast<unsigned>(r.offendingSubpass) == static_cast<unsigned>(ExecutorIslandId::Count));
+    CHECK(static_cast<unsigned>(r.missingResource)  == static_cast<unsigned>(RenderResourceId::Unknown));
+}
+
+TEST_CASE("SceneObjectId: external entry is load-bearing for Composite read") {
+    // Prove that SceneObjectId in the external set is the ONLY thing satisfying Composite's
+    // read. Strip SceneObjectId from the external set and the subgraph validator must flag
+    // Composite as having an unsatisfied read.
+    using namespace RenderCore::framegraph;
+
+    // External set without SceneObjectId — Composite's reads[SceneObjectId] is now unsatisfied.
+    const RenderResourceId extWithout[] = {
+        RenderResourceId::MainColor,
+        RenderResourceId::MainDepth,
+        RenderResourceId::MainNormal,
+        RenderResourceId::ShadowStaticMap,
+        RenderResourceId::ShadowDynamicMap,
+        RenderResourceId::SceneDepthCopy,
+        // SceneObjectId intentionally omitted
+    };
+    const PostProcessValidationResult r = validatePostProcessSubgraph(extWithout, 6);
+    CHECK(r.ok == false);
+    CHECK(static_cast<unsigned>(r.offendingSubpass) == static_cast<unsigned>(ExecutorIslandId::Composite));
+    CHECK(static_cast<unsigned>(r.missingResource)  == static_cast<unsigned>(RenderResourceId::SceneObjectId));
 }
 
 } // TEST_SUITE
