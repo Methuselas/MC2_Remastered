@@ -81,6 +81,7 @@
 #include "../GameOS/gameos/gos_render_pass_timer.h"
 #include "../GameOS/gameos/gos_terrain_bridge.h"   // [TERRAIN_SURFACE] PR-2 surface validation draw
 #include "../RenderCore/terrain_path_telemetry.h"  // LEGACY-MLR-DELETE-1: tripwire noteTerrainPath(LegacyMLR)
+#include "../RenderCore/top_level_pass_executor.h"  // APPLY-STATE-MECHOPAQUE-1: findTopLevelStateDesc
 #include "../GameOS/gameos/gos_terrain_mask_dispatch.h"  // B4 Stage 1b: mask-SOLID draw
 #include "../GameOS/gameos/gpu_cull_compute.h"  // C1b: compute_dispatch() moved here from mission.cpp
 #include "../GameOS/gameos/gpu_cull_substrate.h"
@@ -3270,6 +3271,15 @@ void MC_TextureManager::renderLists (void)
 			// state established by terrain/static-prop passes above).
 			render_contract::noteRenderPass(render_contract::PassIdentity::OpaqueObject,
 			                               "GpuMechBatcher_flush(submit)");
+			// APPLY-STATE-MECHOPAQUE-1: when MC2_FRAMEGRAPH_EXECUTOR is ON and a
+			// kTopLevelStateDesc row exists, the executor pre-applies the MechOpaque
+			// pipeline here (at the real flush call site, NOT the begin seam which wraps
+			// non-mech draws too); flush()'s body then skips its own applyPipeline.
+			// Gate OFF -> not called -> body applies -> byte-identical.
+			if (render_contract::isTopLevelExecutorEnabled() &&
+			    RenderCore::framegraph::findTopLevelStateDesc(RenderCore::RenderPassId::MechOpaque) != nullptr) {
+				GpuMechBatcher::instance().executorApplyMechOpaqueState();
+			}
 			GpuMechBatcher::instance().flush();
 			gos_render_pass_timer::End(gos_render_pass_timer::Pass_Mechs);
 		}

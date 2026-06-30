@@ -196,6 +196,12 @@ public:
     // CPU-fallback (mechShape->Render(true)) this frame when false.
     [[nodiscard]] bool submitActor(const GpuMechSubmitDesc& desc);
 
+    // APPLY-STATE-MECHOPAQUE-1: executor-driven pre-apply of the MechOpaque pipeline
+    // (program + fixed-function depth/blend/cull). Called from txmmgr renderLists() at
+    // the flush call site when MC2_FRAMEGRAPH_EXECUTOR is ON; flush()'s body then skips
+    // its own applyPipeline (one-shot). No-op behaviour when gate OFF (never called).
+    void executorApplyMechOpaqueState();
+
     // Post-renderLists() draw flush.
     void flush();
     // Phase 1: draws the previous-frame (already-fenced) mech instance set into the dynamic

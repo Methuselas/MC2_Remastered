@@ -156,7 +156,7 @@ struct TopLevelStateDesc {
 };
 
 // Compile-time table of top-level passes whose render-state the executor APPLIES.
-// Consumers: TerrainDecal, TerrainOverlay, StaticPropOpaque — all pipeline-only lifts.
+// Consumers: TerrainDecal, TerrainOverlay, StaticPropOpaque, MechOpaque — all pipeline-only lifts.
 static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     // TerrainDecal — drawDecals(): the sole entry render-state is
     // applyPipeline(TerrainDecal). FBO/drawBuffers/viewport are inherited from
@@ -190,6 +190,21 @@ static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     {
         /*id*/         RenderPassId::StaticPropOpaque,
         /*pipelineId*/ RenderCore::PipelineId::StaticPropOpaque,
+        /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
+        /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
+    },
+    // APPLY-STATE-MECHOPAQUE-1: MechOpaque — GpuMechBatcher::flush(): the SOLE entry
+    // render-state is applyPipeline(getPipelineDesc(MechOpaque)) (~gos_mech_batcher.cpp:2152).
+    // Like StaticPropOpaque, MechOpaque runs EVERY tier1 frame, so the ON-path body-skip is
+    // runtime-exercised (provable via the per-pass apply counter). flush() has no
+    // glBindFramebuffer/glDrawBuffers/glViewport — FBO/MRT/objectId(loc2)/viewport are all
+    // inherited from the preceding Terrain/StaticProp passes. objectId is an SSBO per-instance
+    // + shader #define, not a body drawBuffers call. MVP is a view-UBO uniform (binding=3),
+    // NOT pipeline state -> pin-safe. flushShadow() (the SEPARATE Shadow pass) is NOT lifted.
+    // FBO/MRT/viewport deliberately recorded as Unknown/Inherit (same honesty shape as above).
+    {
+        /*id*/         RenderPassId::MechOpaque,
+        /*pipelineId*/ RenderCore::PipelineId::MechOpaque,
         /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
         /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
     },

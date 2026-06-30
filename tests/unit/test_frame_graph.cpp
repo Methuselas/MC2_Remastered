@@ -1437,9 +1437,23 @@ TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount == 0 (UI-SAME-ORDE
 // (GL context required); only the descriptor table shape is asserted.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("top-level apply-state (a): kTopLevelStateDesc has exactly 3 rows (TerrainDecal, TerrainOverlay, StaticPropOpaque)") {
+TEST_CASE("top-level apply-state (a): kTopLevelStateDesc has exactly 4 rows (TerrainDecal, TerrainOverlay, StaticPropOpaque, MechOpaque)") {
     using namespace RenderCore::framegraph;
-    CHECK(kTopLevelStateDescCount == 3u);
+    CHECK(kTopLevelStateDescCount == 4u);
+}
+
+TEST_CASE("top-level apply-state (i): findTopLevelStateDesc(MechOpaque) = MechOpaque pipeline, FBO/viewport inherit (not applied)") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const TopLevelStateDesc* d = findTopLevelStateDesc(RenderPassId::MechOpaque);
+    REQUIRE(d != nullptr);
+    CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(RenderPassId::MechOpaque));
+    CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::MechOpaque));
+    // Only the pipeline is lifted; FBO/viewport honestly NOT applied (body inherits).
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::Unknown));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::Inherit));
+    // MechOpaque runs every tier1 frame -> the ON-path body-skip is runtime-exercised.
+    REQUIRE(passHasStaticPipeline(RenderPassId::MechOpaque));
 }
 
 TEST_CASE("top-level apply-state (b): findTopLevelStateDesc(TerrainDecal) = TerrainDecal pipeline, FBO/viewport inherit (not applied)") {
@@ -1644,10 +1658,11 @@ TEST_CASE("apply-state-island (h): all 5 apply-island descriptors present (EdgeF
 
 TEST_CASE("per-pass-apply-counters-1: ApplyPassId table is complete + names unique/non-Unknown") {
     using namespace RenderCore::framegraph;
-    // Exactly 8 apply paths: 5 PostProcess sub-stages + 3 top-level.
-    CHECK(static_cast<unsigned>(ApplyPassId::Count) == 8u);
-    // Spot-check a representative mapping.
+    // Exactly 9 apply paths: 5 PostProcess sub-stages + 4 top-level.
+    CHECK(static_cast<unsigned>(ApplyPassId::Count) == 9u);
+    // Spot-check representative mappings.
     CHECK(std::string(applyPassName(ApplyPassId::StaticPropOpaque)) == "StaticPropOpaque");
+    CHECK(std::string(applyPassName(ApplyPassId::MechOpaque))       == "MechOpaque");
     // All 8 ids return a non-"Unknown", unique name.
     const char* seen[(int)ApplyPassId::Count] = {nullptr};
     for (int i = 0; i < (int)ApplyPassId::Count; ++i) {
@@ -1661,8 +1676,8 @@ TEST_CASE("per-pass-apply-counters-1: ApplyPassId table is complete + names uniq
     CHECK(std::string(applyPassName(ApplyPassId::Count)) == "Unknown");
 }
 
-// APPLY-STATE-REGISTRATION-CHECK-1 (Part A.3): each of the 3 TOP-LEVEL apply
-// passes (TerrainDecal / TerrainOverlay / StaticPropOpaque) maps to a RenderPassId
+// APPLY-STATE-REGISTRATION-CHECK-1 (Part A.3): each of the 4 TOP-LEVEL apply
+// passes (TerrainDecal / TerrainOverlay / StaticPropOpaque / MechOpaque) maps to a RenderPassId
 // whose kPassRenderState[] row declares a CONCRETE (non-Invalid) pipelineId. You
 // must not declare a top-level apply on a multi-pipeline / Invalid pass — the
 // executor cannot pre-apply a pipeline that doesn't statically exist.
@@ -1670,12 +1685,13 @@ TEST_CASE("apply-state-registration (top-level): each top-level ApplyPassId maps
     using namespace RenderCore;
     using namespace RenderCore::framegraph;
 
-    // name -> RenderPassId mapping for the 3 top-level apply ids (small local switch).
+    // name -> RenderPassId mapping for the 4 top-level apply ids (small local switch).
     struct Row { ApplyPassId apply; RenderPassId pass; };
     const Row topLevel[] = {
         { ApplyPassId::TerrainDecal,     RenderPassId::TerrainDecal     },
         { ApplyPassId::TerrainOverlay,   RenderPassId::TerrainOverlay   },
         { ApplyPassId::StaticPropOpaque, RenderPassId::StaticPropOpaque },
+        { ApplyPassId::MechOpaque,       RenderPassId::MechOpaque       },
     };
     for (const Row& r : topLevel) {
         // The ApplyPassId name and the RenderPassId name must agree (no silent skew).

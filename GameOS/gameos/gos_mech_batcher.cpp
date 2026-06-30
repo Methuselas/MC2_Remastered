@@ -8,6 +8,7 @@
 #include "../../RenderCore/RenderDebugView.h"  // MECH-DEBUG-VIEWS-1
 #include "../../RenderCore/PipelineRegistry.h"  // MECH-PIPELINEDESC-1
 #include "pipeline_binder.h"                     // MECH-PIPELINEDESC-1 applyPipeline
+#include "../../RenderCore/frame_executor.h"     // APPLY-STATE-MECHOPAQUE-1: ApplyPassId
 // M2.5: IsObjectIdBufferEnabled() drives the GLSL prefix that gates the
 // mech.frag layout(location=2) write. Mirrors the include shipped by M1.5
 // at gos_static_prop_batcher.cpp:3. GameOS/ is outside the firewall
@@ -40,6 +41,19 @@
 // Language-linkage declarations must be at file scope -- not inside a
 // function body. Avoids a new header.
 extern "C" uint64_t consumeAndResetMlrMechDraws();
+
+// APPLY-STATE-MECHOPAQUE-1: cross-TU apply-state counter bump (defined in
+// gos_postprocess.cpp). Bumps the same g_applyStatePasses aggregate used by the
+// PostProcess apply-state islands + the TerrainDecal/TerrainOverlay/StaticProp
+// top-level applies (single increment per apply, no double-count).
+extern "C" void mc2_framegraph_executor_bump_apply_state(unsigned id);
+
+// APPLY-STATE-MECHOPAQUE-1: file-static flag mirroring s_staticPropStateAppliedByExecutor.
+// When MC2_FRAMEGRAPH_EXECUTOR is ON, executorApplyMechOpaqueState() pre-applies the
+// MechOpaque pipeline (at the flush call site in txmmgr renderLists) and sets this;
+// flush()'s body then skips its own applyPipeline (one-shot reset). Gate OFF -> flag
+// stays false -> body applies as before -> byte-identical.
+static bool s_opaqueStateAppliedByExecutor = false;
 
 // MECH_RING_FRAMES must equal STATIC_PROP_RING_FRAMES so the parity SSBO
 // ring and the mech fence ring share the same depth.
@@ -1774,6 +1788,21 @@ bool GpuMechBatcher::submitActor(const GpuMechSubmitDesc& desc) {
 // ---------------------------------------------------------------------------
 // flush (Task 7) — bucket-sorted compaction + draw loop
 // ---------------------------------------------------------------------------
+// APPLY-STATE-MECHOPAQUE-1: executor-driven pre-apply of the MechOpaque pipeline.
+// Called from the flush call site in txmmgr renderLists() when MC2_FRAMEGRAPH_EXECUTOR
+// is ON and a kTopLevelStateDesc row exists. Applies ONLY the pipeline (program +
+// fixed-function depth/blend/cull); FBO/MRT/objectId(loc2)/viewport are inherited from
+// the preceding passes and are NOT touched here (kTopLevelStateDesc records them as
+// Unknown/Inherit). MVP is a view-UBO uniform (binding=3), not pipeline state -> pin-safe.
+// Idempotent: flush()'s body makes the identical call when the flag is false.
+void GpuMechBatcher::executorApplyMechOpaqueState() {
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::MechOpaque),
+        "MechOpaque");
+    mc2_framegraph_executor_bump_apply_state((unsigned)RenderCore::framegraph::ApplyPassId::MechOpaque);
+    s_opaqueStateAppliedByExecutor = true;
+}
+
 void GpuMechBatcher::flush() {
     finalizePending();
 
@@ -2149,8 +2178,14 @@ void GpuMechBatcher::flush() {
     // replacing the prior hand-set glUseProgram/glEnable/glDepthFunc/... block.
     // applyPipeline also does glUseProgram(desc.glProgramName) (= s_mechProgram via
     // bindProgram at link). Sampler + VAO/IBO stay manual (not PipelineDesc fields).
+    // APPLY-STATE-MECHOPAQUE-1: skip when the executor already applied the pipeline
+    // (MC2_FRAMEGRAPH_EXECUTOR ON). Reset one-shot before draw. Gate OFF -> flag false ->
+    // body applies -> byte-identical. flushShadow() (separate Shadow pass) is untouched.
+    if (!s_opaqueStateAppliedByExecutor) {
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::MechOpaque));
+    }
+    s_opaqueStateAppliedByExecutor = false;
 
     glBindVertexArray(s_sharedVao);
     // Explicit IBO rebind: mirrors flushShadow() pattern. GL_ELEMENT_ARRAY_BUFFER
