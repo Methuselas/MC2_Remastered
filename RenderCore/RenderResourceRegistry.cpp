@@ -60,6 +60,9 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::MainNormal:           return "MainNormal";
         case RenderResourceId::SceneDepthCopy:       return "SceneDepthCopy";
         case RenderResourceId::SceneObjectId:        return "SceneObjectId";
+        case RenderResourceId::HzbPyramid:           return "HzbPyramid";
+        case RenderResourceId::SsaoOcclusion:        return "SsaoOcclusion";
+        case RenderResourceId::SceneColorCopy:       return "SceneColorCopy";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";

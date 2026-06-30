@@ -625,9 +625,10 @@ TEST_CASE("executor island (g): findIslandContract(Count) returns nullptr (out-o
 // Pure constexpr declaration checks — no GL, no engine, no smoke.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("postprocess subgraph (a): kPostProcessSubpassCount == 6") {
+TEST_CASE("postprocess subgraph (a): kPostProcessSubpassCount == 14") {
     using namespace RenderCore::framegraph;
-    CHECK(kPostProcessSubpassCount == 6u);
+    // POSTPROCESS-SUBGRAPH-2: 14 total rows (6 Slice-1 + 8 Slice-2).
+    CHECK(kPostProcessSubpassCount == 14u);
 }
 
 TEST_CASE("postprocess subgraph (b): findPostProcessSubpass non-null for Composite and ShadowDebugOverlay") {
@@ -657,8 +658,9 @@ TEST_CASE("postprocess subgraph (c): validateShippedPostProcessSubgraph().ok == 
     CHECK(static_cast<unsigned>(r.missingResource)   == static_cast<unsigned>(RenderResourceId::Unknown));
 }
 
-TEST_CASE("postprocess subgraph (d): owned flags match spec (4 sceneFBO_ passes + Composite owned; ShadowDebugOverlay not owned)") {
+TEST_CASE("postprocess subgraph (d): owned flags match spec (5 executor-owned; all SUBGRAPH-2 + ShadowDebugOverlay not owned)") {
     using namespace RenderCore::framegraph;
+    // The 5 owned rows (unchanged from Slice-1).
     const ExecutorIslandId ownedIds[] = {
         ExecutorIslandId::CloudShadow,
         ExecutorIslandId::Shoreline,
@@ -671,25 +673,49 @@ TEST_CASE("postprocess subgraph (d): owned flags match spec (4 sceneFBO_ passes 
         REQUIRE(sp != nullptr);
         CHECK(sp->ownedByExecutor == true);
     }
-    const PostProcessSubpass* dbg = findPostProcessSubpass(ExecutorIslandId::ShadowDebugOverlay);
-    REQUIRE(dbg != nullptr);
-    CHECK(dbg->ownedByExecutor == false);
+    // All 8 new Slice-2 rows + ShadowDebugOverlay must be NOT owned.
+    const ExecutorIslandId notOwnedIds[] = {
+        ExecutorIslandId::ShadowDebugOverlay,
+        ExecutorIslandId::HzbReduce,
+        ExecutorIslandId::HzbProbe,
+        ExecutorIslandId::ClusterDepthPyramid,
+        ExecutorIslandId::LightgridBuild,
+        ExecutorIslandId::PostprocessComputeBlur,
+        ExecutorIslandId::ScreenShadow,
+        ExecutorIslandId::Ssao,
+        ExecutorIslandId::BoxDecals,
+    };
+    for (int i = 0; i < 9; ++i) {
+        const PostProcessSubpass* sp = findPostProcessSubpass(notOwnedIds[i]);
+        REQUIRE(sp != nullptr);
+        CHECK(sp->ownedByExecutor == false);
+    }
 }
 
-TEST_CASE("postprocess subgraph (e): Composite is unconditional; all others are conditional") {
+TEST_CASE("postprocess subgraph (e): Composite is unconditional; all 13 others are conditional") {
     using namespace RenderCore::framegraph;
     const PostProcessSubpass* composite = findPostProcessSubpass(ExecutorIslandId::Composite);
     REQUIRE(composite != nullptr);
     CHECK(composite->conditional == false);
 
+    // All 13 non-Composite rows must be conditional (gated by env-var, member, or terrain latch).
     const ExecutorIslandId conditionalIds[] = {
         ExecutorIslandId::CloudShadow,
         ExecutorIslandId::Shoreline,
         ExecutorIslandId::EdgeFog,
         ExecutorIslandId::FogOob,
         ExecutorIslandId::ShadowDebugOverlay,
+        // POSTPROCESS-SUBGRAPH-2 additions:
+        ExecutorIslandId::HzbReduce,
+        ExecutorIslandId::HzbProbe,
+        ExecutorIslandId::ClusterDepthPyramid,
+        ExecutorIslandId::LightgridBuild,
+        ExecutorIslandId::PostprocessComputeBlur,
+        ExecutorIslandId::ScreenShadow,
+        ExecutorIslandId::Ssao,
+        ExecutorIslandId::BoxDecals,
     };
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 13; ++i) {
         const PostProcessSubpass* sp = findPostProcessSubpass(conditionalIds[i]);
         REQUIRE(sp != nullptr);
         CHECK(sp->conditional == true);
@@ -718,34 +744,144 @@ TEST_CASE("postprocess subgraph (f): order regression — Composite before a Mai
     // validation fails with offendingSubpass != Count.
     using namespace RenderCore::framegraph;
 
-    // External set WITHOUT MainColor (simulates reordering Composite to slot 0
-    // before any writer has run). POSTPROCESS-SCENEOBJECTID-RESOURCE-1: SceneObjectId
-    // must be present (Composite also reads it; it is produced externally by geometry passes).
+    // External set WITHOUT MainColor. POSTPROCESS-SUBGRAPH-2: row 0 is now HzbReduce
+    // (reads MainDepth, writes HzbPyramid). Subsequent rows that write MainColor (ScreenShadow,
+    // CloudShadow, etc.) do so before Composite reads it — so the shipped table must still pass.
+    // Also include SsaoOcclusion (self-loop external for Ssao single-row model) and SceneDepthCopy
+    // (BoxDecals cross-boundary external) and SceneObjectId (Composite).
     const RenderResourceId noMainColor[] = {
         RenderResourceId::MainDepth,
         RenderResourceId::MainNormal,
         RenderResourceId::ShadowStaticMap,
         RenderResourceId::ShadowDynamicMap,
-        RenderResourceId::SceneObjectId,  // POSTPROCESS-SCENEOBJECTID-RESOURCE-1: Composite reads it externally
+        RenderResourceId::SceneObjectId,    // POSTPROCESS-SCENEOBJECTID-RESOURCE-1
+        RenderResourceId::SceneDepthCopy,   // BoxDecals cross-boundary external
+        RenderResourceId::SsaoOcclusion,    // Ssao self-loop external
     };
-    // In the shipped order, CloudShadow (row 0) reads MainDepth (present in external),
-    // then writes MainColor — which then satisfies Composite's read. So the shipped
-    // table must still pass even without MainColor in external.
-    const PostProcessValidationResult r = validatePostProcessSubgraph(noMainColor, 5);
-    // CloudShadow writes MainColor first; Composite reads it -> ok.
+    // In the shipped order, ScreenShadow (row 6, first non-isCompute writer) writes MainColor.
+    // Subsequent rows (CloudShadow, Shoreline, etc.) also write it before Composite reads it.
+    // So the table must still pass even without MainColor in external.
+    const PostProcessValidationResult r = validatePostProcessSubgraph(noMainColor, 7);
+    // ScreenShadow/CloudShadow/etc. write MainColor before Composite reads it -> ok.
     CHECK(r.ok == true);
 
     // Now prove the validator bites when the ONLY write of MainColor is removed from
     // external and also not produced by any prior subpass — we do this by providing
-    // an empty external set. In the shipped table CloudShadow (row 0) reads MainDepth
-    // which is no longer in external, so CloudShadow itself is flagged unsatisfied.
+    // an empty external set. In the shipped table HzbReduce (row 0, not isCompute) reads
+    // MainDepth which is no longer in external, so HzbReduce is flagged unsatisfied.
     const PostProcessValidationResult r2 = validatePostProcessSubgraph(nullptr, 0);
     CHECK(r2.ok == false);
-    // CloudShadow is the first row and reads MainDepth which is not in the empty external.
+    // HzbReduce is the first non-isCompute row (row 0) and reads MainDepth not in empty external.
     CHECK(static_cast<unsigned>(r2.offendingSubpass) ==
-          static_cast<unsigned>(ExecutorIslandId::CloudShadow));
+          static_cast<unsigned>(ExecutorIslandId::HzbReduce));
     CHECK(static_cast<unsigned>(r2.missingResource) ==
           static_cast<unsigned>(RenderResourceId::MainDepth));
+}
+
+// ---------------------------------------------------------------------------
+// POSTPROCESS-SUBGRAPH-2: offline tests for the 8 new sub-stage rows.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("postprocess subgraph (g): SUBGRAPH-2 rows are all findable by id") {
+    using namespace RenderCore::framegraph;
+    const ExecutorIslandId slice2Ids[] = {
+        ExecutorIslandId::HzbReduce,
+        ExecutorIslandId::HzbProbe,
+        ExecutorIslandId::ClusterDepthPyramid,
+        ExecutorIslandId::LightgridBuild,
+        ExecutorIslandId::PostprocessComputeBlur,
+        ExecutorIslandId::ScreenShadow,
+        ExecutorIslandId::Ssao,
+        ExecutorIslandId::BoxDecals,
+    };
+    for (int i = 0; i < 8; ++i) {
+        const PostProcessSubpass* sp = findPostProcessSubpass(slice2Ids[i]);
+        CHECK(sp != nullptr);
+    }
+}
+
+TEST_CASE("postprocess subgraph (h): isCompute flagged correctly (3 compute, rest false)") {
+    using namespace RenderCore::framegraph;
+    // Only ClusterDepthPyramid, LightgridBuild, PostprocessComputeBlur are compute dispatches.
+    const ExecutorIslandId computeIds[] = {
+        ExecutorIslandId::ClusterDepthPyramid,
+        ExecutorIslandId::LightgridBuild,
+        ExecutorIslandId::PostprocessComputeBlur,
+    };
+    for (int i = 0; i < 3; ++i) {
+        const PostProcessSubpass* sp = findPostProcessSubpass(computeIds[i]);
+        REQUIRE(sp != nullptr);
+        CHECK(sp->isCompute == true);
+    }
+    // All draw-pass rows must have isCompute=false.
+    const ExecutorIslandId drawIds[] = {
+        ExecutorIslandId::HzbReduce,
+        ExecutorIslandId::HzbProbe,
+        ExecutorIslandId::ScreenShadow,
+        ExecutorIslandId::CloudShadow,
+        ExecutorIslandId::Shoreline,
+        ExecutorIslandId::Ssao,
+        ExecutorIslandId::BoxDecals,
+        ExecutorIslandId::EdgeFog,
+        ExecutorIslandId::FogOob,
+        ExecutorIslandId::Composite,
+        ExecutorIslandId::ShadowDebugOverlay,
+    };
+    for (int i = 0; i < 11; ++i) {
+        const PostProcessSubpass* sp = findPostProcessSubpass(drawIds[i]);
+        REQUIRE(sp != nullptr);
+        CHECK(sp->isCompute == false);
+    }
+}
+
+TEST_CASE("postprocess subgraph (i): BoxDecals reads SceneDepthCopy (cross-boundary external)") {
+    using namespace RenderCore::framegraph;
+    const PostProcessSubpass* sp = findPostProcessSubpass(ExecutorIslandId::BoxDecals);
+    REQUIRE(sp != nullptr);
+    bool readsDepthCopy = false;
+    for (int i = 0; i < 5; ++i) {
+        if (sp->reads[i] == RenderResourceId::SceneDepthCopy)
+            readsDepthCopy = true;
+    }
+    CHECK(readsDepthCopy == true);
+    // BoxDecals must NOT be executor-owned.
+    CHECK(sp->ownedByExecutor == false);
+}
+
+TEST_CASE("postprocess subgraph (j): validateShippedPostProcessSubgraph still ok with 14 rows") {
+    // The complete 14-row table + updated external set must still validate.
+    using namespace RenderCore::framegraph;
+    const PostProcessValidationResult r = validateShippedPostProcessSubgraph();
+    CHECK(r.ok == true);
+    CHECK(static_cast<unsigned>(r.offendingSubpass) == static_cast<unsigned>(ExecutorIslandId::Count));
+    CHECK(static_cast<unsigned>(r.missingResource)  == static_cast<unsigned>(RenderResourceId::Unknown));
+}
+
+TEST_CASE("postprocess subgraph (k): HzbReduce writes HzbPyramid; HzbProbe reads it (draw-pass chain)") {
+    using namespace RenderCore::framegraph;
+    const PostProcessSubpass* reduce = findPostProcessSubpass(ExecutorIslandId::HzbReduce);
+    const PostProcessSubpass* probe  = findPostProcessSubpass(ExecutorIslandId::HzbProbe);
+    REQUIRE(reduce != nullptr);
+    REQUIRE(probe  != nullptr);
+    // HzbReduce writes HzbPyramid.
+    bool reduceWrites = false;
+    for (int i = 0; i < 3; ++i) {
+        if (reduce->writes[i] == RenderResourceId::HzbPyramid)
+            reduceWrites = true;
+    }
+    CHECK(reduceWrites == true);
+    // HzbProbe reads HzbPyramid.
+    bool probeReads = false;
+    for (int i = 0; i < 5; ++i) {
+        if (probe->reads[i] == RenderResourceId::HzbPyramid)
+            probeReads = true;
+    }
+    CHECK(probeReads == true);
+    // Neither is executor-owned; neither is compute.
+    CHECK(reduce->ownedByExecutor == false);
+    CHECK(probe->ownedByExecutor  == false);
+    CHECK(reduce->isCompute       == false);
+    CHECK(probe->isCompute        == false);
 }
 
 // ---------------------------------------------------------------------------
@@ -877,12 +1013,10 @@ TEST_CASE("SceneDepthCopy: synthetic PP subpass reading it validates ONLY becaus
         (void)extWith;        // explicitly included; validated transitively via shipped function.
     }
 
-    // External set WITHOUT SceneDepthCopy -> if any subpass reads it, the validator rejects.
-    // The shipped Slice-1 subpasses do NOT read SceneDepthCopy yet, so the shipped table
-    // still passes even without it; but the regression here is: if SceneDepthCopy is in the
-    // external set AND is removed, a future BoxDecals reader would be caught.
-    // We prove that the shipped table passes without it (no current consumer) — meaning the
-    // ONLY thing making a future BoxDecals reader valid is the external entry.
+    // External set WITHOUT SceneDepthCopy -> BoxDecals (SUBGRAPH-2 row) reads it, so
+    // the validator must now flag BoxDecals as having an unsatisfied read.
+    // POSTPROCESS-SUBGRAPH-2: BoxDecals is now in the table and reads SceneDepthCopy.
+    // Removing SceneDepthCopy from external causes BoxDecals to fail validation.
     {
         const RenderResourceId extWithout[] = {
             RenderResourceId::MainColor,
@@ -890,13 +1024,17 @@ TEST_CASE("SceneDepthCopy: synthetic PP subpass reading it validates ONLY becaus
             RenderResourceId::MainNormal,
             RenderResourceId::ShadowStaticMap,
             RenderResourceId::ShadowDynamicMap,
-            RenderResourceId::SceneObjectId,  // POSTPROCESS-SCENEOBJECTID-RESOURCE-1: Composite reads it; must be external
+            RenderResourceId::SceneObjectId,   // POSTPROCESS-SCENEOBJECTID-RESOURCE-1
+            RenderResourceId::SsaoOcclusion,   // Ssao self-loop external
             // SceneDepthCopy intentionally omitted
         };
-        const PostProcessValidationResult r2 = validatePostProcessSubgraph(extWithout, 6);
-        // Shipped Slice-1 rows don't read SceneDepthCopy -> still ok without it in external.
-        // This confirms that SceneDepthCopy in external is forward-only (load-bearing for SUBGRAPH-2).
-        CHECK(r2.ok == true);
+        const PostProcessValidationResult r2 = validatePostProcessSubgraph(extWithout, 7);
+        // SUBGRAPH-2: BoxDecals reads SceneDepthCopy; without it in external, validation fails.
+        CHECK(r2.ok == false);
+        CHECK(static_cast<unsigned>(r2.offendingSubpass) ==
+              static_cast<unsigned>(ExecutorIslandId::BoxDecals));
+        CHECK(static_cast<unsigned>(r2.missingResource) ==
+              static_cast<unsigned>(RenderResourceId::SceneDepthCopy));
     }
 }
 
@@ -968,6 +1106,8 @@ TEST_CASE("SceneObjectId: external entry is load-bearing for Composite read") {
     using namespace RenderCore::framegraph;
 
     // External set without SceneObjectId — Composite's reads[SceneObjectId] is now unsatisfied.
+    // POSTPROCESS-SUBGRAPH-2: must also include SsaoOcclusion (Ssao self-loop) and SceneDepthCopy
+    // (BoxDecals cross-boundary) so those rows don't trip the validator before Composite.
     const RenderResourceId extWithout[] = {
         RenderResourceId::MainColor,
         RenderResourceId::MainDepth,
@@ -975,9 +1115,10 @@ TEST_CASE("SceneObjectId: external entry is load-bearing for Composite read") {
         RenderResourceId::ShadowStaticMap,
         RenderResourceId::ShadowDynamicMap,
         RenderResourceId::SceneDepthCopy,
+        RenderResourceId::SsaoOcclusion,   // Ssao self-loop external; needed to reach Composite
         // SceneObjectId intentionally omitted
     };
-    const PostProcessValidationResult r = validatePostProcessSubgraph(extWithout, 6);
+    const PostProcessValidationResult r = validatePostProcessSubgraph(extWithout, 7);
     CHECK(r.ok == false);
     CHECK(static_cast<unsigned>(r.offendingSubpass) == static_cast<unsigned>(ExecutorIslandId::Composite));
     CHECK(static_cast<unsigned>(r.missingResource)  == static_cast<unsigned>(RenderResourceId::SceneObjectId));

@@ -26,6 +26,9 @@ enum class RenderResourceId : uint16_t {
     MainNormal           = 15,  // POSTPROCESS-SUBGRAPH-1: GBuffer1 (sceneNormalTex_, COLOR_ATTACHMENT1 of sceneFBO_); read by Shoreline, ScreenShadow, SSAO, BoxDecals
     SceneDepthCopy       = 16,  // POSTPROCESS-SCENEDEPTHCOPY-RESOURCE-1: depth-copy RT (sceneDepthCopyTex_); produced by copySceneDepthForParticles() in the VFX/particle path (cross-boundary); read by projected/box decals + particles soft-depth
     SceneObjectId        = 17,  // POSTPROCESS-SCENEOBJECTID-RESOURCE-1: GBuffer2 object-id RT (sceneObjectIdTex_, GL_R32UI, COLOR_ATTACHMENT2 of sceneFBO_); gated RenderWorld::IsObjectIdBufferEnabled(); written by MechOpaque+StaticPropOpaque (layout location=2 when MRT+objectId enabled); read by Composite (unit2, effectiveMode==1 / objectId debug mode)
+    HzbPyramid           = 18,  // POSTPROCESS-SUBGRAPH-2: Hi-Z pyramid mip chain (hzbLevelTex_[0..N], R32F); produced by HzbReduce (draw pass via hzbFBO_); read by HzbProbe (CPU diagnostic). Frame-persistent (survives mission reload).
+    SsaoOcclusion        = 19,  // POSTPROCESS-SUBGRAPH-2: half-res AO result (ssaoColorTex_, R8/RGBA8); produced by SSAO pass1 (ssaoFBO_); consumed by SSAO pass2/apply (sceneFBO_). Transient within endScene.
+    SceneColorCopy       = 20,  // POSTPROCESS-SUBGRAPH-2: feedback-safe scene color copy (sceneColorCopyTex_, RGBA16F); producer not yet modeled; consumed by PostprocessComputeBlur (substrate only, default-OFF).
     Count
 };
 
