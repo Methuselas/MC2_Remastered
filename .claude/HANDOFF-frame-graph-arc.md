@@ -5,14 +5,23 @@
 **Primary task:** continue the FRAME-GRAPH arc. **Do frame-graph first; legacy-terrain
 retirement is SECONDARY (after).**
 
-**▶ RESUME POINTER (latest — 2026-06-30, HEAD `40e0f5af`):** ★★**TIER-B PRACTICAL COMPLETE.**
+**▶ RESUME POINTER (latest — 2026-06-30, HEAD `fd4cfd54`):** ★★**TIER-C VALIDATOR SHIPPED (proof-only).**
+The graph can now **PROVE which reorders are legal** — **StaticProp↔Mech is the SOLE candidate legal
+adjacent swap**; every other adjacent swap is forbidden or deferred-soft-state-blocked. **EXECUTION
+UNTOUCHED.** Era line: Tier-B practical COMPLETE @ `40e0f5af`; tier-C legal-reorder VALIDATOR @
+`4b4b8c9f`/`fd4cfd54`; **everything still analysis-only — NO execution change since `40e0f5af`** (GL-free
+headers + doctests, zero runtime callers, byte-identical by construction).
+**NEXT GATE (do NOT auto-build):** a **MEASURED reorder experiment** is the first execution-changing step —
+it requires an **explicit decision** + a **parity/capture harness**; the reorderer stays **GATED**.
+★Deferred soft axes (tex-unit/FBO/clip-control the resource DAG can't see) mean a "legal" verdict ≠ license
+to move a pass. See entries 59–60 + the tier-C recon below.
+
+**(superseded resume pointer — 2026-06-30, HEAD `40e0f5af`):** ★★**TIER-B PRACTICAL COMPLETE.**
 **Tier-B practical same-order frame graph COMPLETE: the graph validates, applies, enforces, and names/
 lifetimes all ownable current-order render work.** (NOT scheduler, NOT backend, NOT Vulkan-ready, NOT
 renderer-fully-optimized — tier-B = same-order ownership is boring + enforced.) Registry complete (24
 ids, lifetimes on all 14 live registrations), enforcement = 5 raw-GL axis gates + the capstone meta-gate,
-apply-state ownable set complete. **NEXT = tier-C legal-reorder VALIDATOR (proof-only): SCHEDULER-EDGE-
-CLASSIFY-1 → SCHEDULER-REORDER-ORACLE-1, both GL-free/offline/no-reorderer** (see the TIER-B-COMPLETE
-milestone block + the tier-C recon below — reorderer + any pass movement stay GATED). See entries 54–58.
+apply-state ownable set complete. (NEXT was tier-C VALIDATOR — now SHIPPED, see entries 59–60.) See entries 54–58.
 
 **(superseded resume pointer — 2026-06-30 reboot, kept for trail):** ★**APPLY-STATE OWNABLE SET COMPLETE.** Top-level VALIDATE
 10/10 + apply-state for every ownable pass is now runtime-proven-or-code-correct: PostProcess **6/6**
@@ -798,7 +807,7 @@ registry, all live registrations lifetime-classed, validator fails on Unset.
 - `kParticleEffectState` stale blend=Additive vs live alpha-blend (render_contract.cpp:315).
 - Optional **viewport validator** (`GL_VIEWPORT` AmbientSample sampler).
 
-## ★ TIER-C SCHEDULER RECON (SCHEDULER-LEGAL-REORDER-VALIDATOR-RECON-1 — analysis-only, BANKED, NOT built)
+## ★ TIER-C SCHEDULER RECON (SCHEDULER-LEGAL-REORDER-VALIDATOR-RECON-1 — ✓ NOW BUILT, see entries 59–60)
 ★Supersedes the old "~15-20% LOW" read below. **Validator readiness ~60-65%** — NOT because we can
 reorder, but because the lifetime field + the ambient/terrain/dryrun tables already model most edges.
 The legal-reorder **VALIDATOR** is buildable: GL-free, offline, **no reorderer**.
@@ -820,6 +829,31 @@ sufficient to actually reorder. **60-65% ready to build the VALIDATOR, NOT 60-65
 - identity = legal; known-bad = illegal WITH the first-violated edge named.
 - StaticProp↔Mech = "candidate legal **adjacent swap**" (NOT "approved reorder").
 - the oracle distinguishes "resource-wise legal BUT blocked by a deferred soft-state edge".
+
+## ✓ TIER-C LEGAL-REORDER VALIDATOR SHIPPED (entries 59–60) — 2026-06-30, HEAD `fd4cfd54`
+★PROOF-ONLY: GL-free headers + doctests, **zero runtime callers, EXECUTION UNTOUCHED, byte-identical by
+construction.** The reorderer + ANY pass movement + a runtime scheduler stay GATED.
+59. **SCHEDULER-EDGE-CLASSIFY-1** (`4b4b8c9f`) — new GL-free `RenderCore/scheduler_legal_reorder.h`:
+    `enum EdgeClass{HardResource,SoftState,LegacyLatch,KnownEarly,ContentConditional,ExternalNonEdge}` +
+    `classifyEdges()` (producer-walk = last-in-frame FrameLocal writer; lifetime∈{Mission,Persistent,
+    External} reads emitted as **ExternalNonEdge**, NOT real in-frame edges; KnownEarly LOD-chunk Gamecam
+    suppression) + 3 hand-declared tables (`kContentConditionalEdges` / `kForbiddenReorderEdges` /
+    `kDeferredSoftStateEdges` = the tex-unit/FBO/clip-control edges the resource DAG cannot see) +
+    `isCurrentOrderLegal()` no-op baseline. ★CORRECTNESS: **last-writer semantics** (Vegetation produces
+    VFX's MainDepth; UI produces PostProcess's MainColor). **103 doctests.**
+60. **SCHEDULER-REORDER-ORACLE-1** (`fd4cfd54`) — 3-state `ReorderVerdict{Legal, ForbiddenEdgeViolated,
+    BlockedByDeferredSoftState}` + `isReorderLegal(permutation, firstViolated)` + `legalAdjacentSwaps()`.
+    ★RESULT: **exactly ONE legal adjacent swap = StaticPropOpaque↔MechOpaque**; all others forbidden or
+    deferred-blocked. Known-bad rejected WITH the first-violated edge (StaticProp-before-Shadow → Shadow→
+    StaticProp via ShadowDynamicMap; Terrain-after-PP → sceneHasTerrain latch). Deferred-soft-state pairs
+    return BlockedByDeferredSoftState (no overclaim). ★Conservative wording enforced: "candidate legal
+    adjacent swap (eligible for a future MEASURED reorder experiment)" — NEVER "approved"/"safe"/
+    "scheduled". **109 doctests.** Byte-identical by construction (GL-free header + doctests, zero callers).
+
+★★ **NEXT GATE (do NOT auto-build): a MEASURED reorder experiment** is the FIRST execution-changing step —
+requires an **explicit decision** + a **parity/capture harness**; the reorderer stays GATED. A "legal"
+verdict is NOT a license to move a pass: the deferred soft axes (tex-unit/FBO/clip-control) live outside
+the resource DAG, so even a correct legality verdict is insufficient to actually reorder.
 
 ## ★★ INDEX-RACE INCIDENT + LESSON (critical — read before any parallel committing)
 Two COMMITTING agents in the SAME nifty worktree (FBO-gate lane + SHADOW-1 lane) raced on the shared git
