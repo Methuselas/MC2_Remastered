@@ -36,6 +36,7 @@
 #include "../GameOS/gameos/gpu_cull_readback.h"        // C3: per-actor GPU visibility snapshot
 #include "../GameOS/gameos/gos_static_prop_registry.h" // Task 5: mission-load bulk registration
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
+#include "object_walk_trace.h"  // OBJECT-WALK-FACTS-1 (gated, default-OFF)
 #include "frame_jobs.h"  // FRAME-JOBS-1: parallelForRange worker pool
 #include "brain_special_dispatch.h"  // BRAIN-COMMIT-PHASE-1: commitAllBrainIntents
 #include "warrior.h"                 // BRAIN-COMMIT-PHASE-1: MechWarrior, getBrainRuntime
@@ -309,6 +310,9 @@ static bool s_inViewConflationEnabled = (getenv("MC2_INVIEW_CONFLATION_TRACE") !
 // Hysteresis floor for sim_cand (Stage 0 tunable knob per spec §9 Q3).
 // Default 4 frames matches conservative recommendation.
 static const uint8_t s_inViewConflationHysteresisN = 4u;
+
+// OBJECT-WALK-FACTS-1: TU-local accumulator for the framesSinceActive sweep.
+namespace mc2_object_walk_trace { Counters g_counters = {}; }
 
 // Pairwise XOR accumulators (frame-actor counts).
 static unsigned long long g_invConfActorFrames      = 0ULL;
@@ -2325,10 +2329,22 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 	// manager owns. Uses the three virtual accessors added on GameObject base.
 	{
 		ZoneScopedN("GOM.framesSinceActive sweep");
+		// OBJECT-WALK-FACTS-1: gated, default-OFF sweep telemetry. objWalk
+		// caches the gate bool once (dtor emits one "OBJWALK" frame event);
+		// the hot loop only touches plain longs when objWalkOn. OFF = one
+		// predicted branch, no counter writes, byte-identical.
+		mc2_object_walk_trace::SweepScope objWalk;
+		const bool objWalkOn = objWalk.active;
 		const long maxObjs = getMaxObjects();
+		if (objWalkOn) mc2_object_walk_trace::g_counters.objectsWalked = maxObjs;
 		for (long i = 1; i <= maxObjs; i++) {
 			GameObjectPtr obj = objList[i];
 			if (!obj) continue;
+			if (objWalkOn) {
+				mc2_object_walk_trace::Counters& oc = mc2_object_walk_trace::g_counters;
+				++oc.liveObjects;
+				if (obj->isMover()) ++oc.moversWalked; else ++oc.staticsWalked;
+			}
 			bool activeThisFrame_instr;
 			if (s_gpuCullLifecycle && gpu_cull::readback_isEnabled()) {
 				// C3: GPU visibility gates the lifecycle accumulator.
@@ -2346,8 +2362,12 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 			}
 			if (activeThisFrame_instr) {
 				obj->framesSinceActive = 0;
-			} else if (obj->framesSinceActive < 255) {
-				obj->framesSinceActive++;
+				if (objWalkOn) ++mc2_object_walk_trace::g_counters.activeThisFrame;
+			} else {
+				if (obj->framesSinceActive < 255) {
+					obj->framesSinceActive++;
+				}
+				if (objWalkOn) ++mc2_object_walk_trace::g_counters.agedThisFrame;
 			}
 
 			// alpha-Stage 1 §5 Stage 0 probe: compute 4 candidate
