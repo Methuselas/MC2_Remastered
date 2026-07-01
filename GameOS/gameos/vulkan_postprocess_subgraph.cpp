@@ -609,12 +609,25 @@ bool build_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s, int W, int H) 
         sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         sub.colorAttachmentCount = 1;
         sub.pColorAttachments = &ref;
+        // External dependency: order the render pass' implicit final layout transition
+        // (COLOR_ATTACHMENT_OPTIMAL -> TRANSFER_SRC, a WRITE performed at vkCmdEndRenderPass)
+        // before the following vkCmdCopyImageToBuffer transfer read. Without this the
+        // transition-write vs transfer-read is a sync-validation READ_AFTER_WRITE hazard.
+        VkSubpassDependency dep{};
+        dep.srcSubpass = 0;
+        dep.dstSubpass = VK_SUBPASS_EXTERNAL;
+        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dep.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         VkRenderPassCreateInfo rpci{};
         rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         rpci.attachmentCount = 1;
         rpci.pAttachments = &att;
         rpci.subpassCount = 1;
         rpci.pSubpasses = &sub;
+        rpci.dependencyCount = 1;
+        rpci.pDependencies = &dep;
         r = vkCreateRenderPass(s->device, &rpci, nullptr, &s->rpass);
         if (r != VK_SUCCESS) { vlog("vkCreateRenderPass failed (%d).", (int)r); return false; }
 
@@ -994,7 +1007,9 @@ void gosPostProcess::runPostprocessSubgraph()
     vkCmdDraw(s->cbuf, 3, 1, 0, 0);
     vkCmdEndRenderPass(s->cbuf);
 
-    // color image is now TRANSFER_SRC -> copy to readback buffer.
+    // color image is now TRANSFER_SRC (via the render pass' external subpass dependency,
+    // which orders the implicit final layout-transition WRITE before the transfer read)
+    // -> copy to readback buffer.
     vkCmdCopyImageToBuffer(s->cbuf, s->colorImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s->colorReadback, 1, &colorRegion);
 
     if (vkEndCommandBuffer(s->cbuf) != VK_SUCCESS) return;

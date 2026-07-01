@@ -2179,12 +2179,24 @@ bool mc2_vulkan_probe_edgefog_fixture(const char* spvDir) {
         sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         sub.colorAttachmentCount = 1;
         sub.pColorAttachments = &ref;
+        // External dependency so the implicit final transition to TRANSFER_SRC orders the
+        // color writes before the following vkCmdCopyImageToBuffer transfer read (fixes the
+        // sync-validation READ_AFTER_WRITE hazard on the color readback).
+        VkSubpassDependency dep{};
+        dep.srcSubpass = 0;
+        dep.dstSubpass = VK_SUBPASS_EXTERNAL;
+        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dep.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         VkRenderPassCreateInfo rpci{};
         rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         rpci.attachmentCount = 1;
         rpci.pAttachments = &att;
         rpci.subpassCount = 1;
         rpci.pSubpasses = &sub;
+        rpci.dependencyCount = 1;
+        rpci.pDependencies = &dep;
         r = vkCreateRenderPass(device, &rpci, nullptr, &rpass);
         if (r != VK_SUCCESS) { log("edgefog-fixture: vkCreateRenderPass failed (%d). fail-soft.", (int)r); goto done; }
 
@@ -2827,12 +2839,24 @@ bool mc2_vulkan_probe_oobfog_fixture(const char* spvDir) {
         sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         sub.colorAttachmentCount = 1;
         sub.pColorAttachments = &ref;
+        // External dependency so the implicit final transition to TRANSFER_SRC orders the
+        // color writes before the following vkCmdCopyImageToBuffer transfer read (fixes the
+        // sync-validation READ_AFTER_WRITE hazard on the color readback).
+        VkSubpassDependency dep{};
+        dep.srcSubpass = 0;
+        dep.dstSubpass = VK_SUBPASS_EXTERNAL;
+        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dep.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         VkRenderPassCreateInfo rpci{};
         rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         rpci.attachmentCount = 1;
         rpci.pAttachments = &att;
         rpci.subpassCount = 1;
         rpci.pSubpasses = &sub;
+        rpci.dependencyCount = 1;
+        rpci.pDependencies = &dep;
         r = vkCreateRenderPass(device, &rpci, nullptr, &rpass);
         if (r != VK_SUCCESS) { log("oobfog-fixture: vkCreateRenderPass failed (%d). fail-soft.", (int)r); goto done; }
 
