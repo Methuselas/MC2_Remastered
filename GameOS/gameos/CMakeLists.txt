@@ -65,6 +65,7 @@ set(SOURCES ${SOURCES}
     dbg_asset_globals.cpp
     diagnostic_trace.cpp
     visual_tuning_profile.cpp
+    terrain_material_lib.cpp
 
     utils/stream.cpp
     utils/camera.cpp

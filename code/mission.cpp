@@ -43,6 +43,7 @@
 #endif
 
 extern void visualTuning_applyProfile(const char*);  // MISSION-VISUAL-TUNING-1
+extern void terrainMaterials_apply(const char*);     // TERRAIN-MATERIAL-LIB-1
 
 #include "brain_special_dispatch.h"  // TECHSCRIPT-SPECIAL-DISPATCH-1A: parseBrainSpecialBody
 #include "brain_missionfit_oporbd.h"  // BRAIN-MISSIONFIT-OPORD-CONSUMER-1: declarative mission.fit OPORD parser
@@ -2999,6 +3000,9 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	}
 
 	visualTuning_applyProfile(missionScriptName);  // MISSION-VISUAL-TUNING-1
+	terrainMaterials_apply(missionScriptName);     // TERRAIN-MATERIAL-LIB-1: applied AFTER
+	                                                // visual_tuning.json so it wins on any
+	                                                // overlapping terrain material key.
 
 	FullPathFileName brainFileName;
 	brainFileName.init(missionPath, missionScriptName, ".abl");

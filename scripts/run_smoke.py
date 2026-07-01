@@ -1068,6 +1068,11 @@ def main():
                             # drops it and the gate-ON smoke does nothing.
                             "MC2_TERRAIN_CONTROLMAP",
                             "MC2_TERRAIN_CONTROLMAP_FILE",
+                            # TERRAIN-MATERIAL-LIB-1 — data-defined terrain material
+                            # tuning (default OFF). Must be allowlisted or Popen
+                            # drops it and the gate-ON smoke does nothing.
+                            "MC2_TERRAIN_MATERIAL_LIB",
+                            "MC2_TERRAIN_MATERIAL_LIB_FILE",
                             # Mask-dispatch (pre-bake-terrain merge)
                             "MC2_TERRAIN_MASK_DISPATCH",
                             "MC2_TERRAIN_MASK_DISPATCH_PARITY",

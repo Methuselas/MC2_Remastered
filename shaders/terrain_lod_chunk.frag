@@ -151,8 +151,20 @@ uniform vec4  detailNormalStrength; // .x = overall detail-normal strength
 uniform vec3  tintRock;             // default (0.36, 0.37, 0.40)
 uniform vec3  tintGrass;            // default (0.35, 0.42, 0.25)
 uniform vec3  tintDirt;             // default (0.48, 0.42, 0.33)
+// TERRAIN-MATERIAL-LIB-1: these two were frag-literal consts; promoted to
+// uniforms so terrain_materials.json can cover them. Driver always uploads
+// them (no gate); default values are the EXACT former literals, so behavior
+// is unchanged unless the JSON edits them.
+uniform vec3  tintConcrete;         // default (0.55, 0.53, 0.50)
+uniform vec3  tintSnow;             // default (0.75, 0.78, 0.84)
 uniform float tintStrengthScale;   // 0 = colormap passthrough, 1 = full tint
 uniform float snowBrightnessDampen; // <1 darkens detected snow (snowWeight-gated); default 0.78
+// TERRAIN-MATERIAL-LIB-1: per-layer roughness/AO scalars (rock,grass,dirt,concrete).
+// Neutral (1,1,1,1) defaults. Only consumed when u_useMaterialLib != 0 -- gate
+// OFF -> driver uploads u_useMaterialLib=0 -> branch never taken -> byte-identical.
+uniform vec4  matRoughness;
+uniform vec4  matAO;
+uniform int   u_useMaterialLib;
 
 // Remaining legacy tunables (copied with legacy defaults; driver replicates the
 // env gates so default == legacy default). cellBombParams is a DEAD uniform in
@@ -712,8 +724,8 @@ void main() {
     // TERRAIN-TINT-UI-1). Concrete tile colour blend needs per-vertex TerrainType
     // (deferred) so concreteColorBlend=0 here. ---
     const vec3  kLumaWeights = vec3(0.299, 0.587, 0.114);
-    const vec3  tintConcrete = vec3(0.55, 0.53, 0.50);
-    const vec3  tintSnow     = vec3(0.75, 0.78, 0.84);
+    // TERRAIN-MATERIAL-LIB-1: tintConcrete/tintSnow promoted to uniforms above
+    // (were const vec3 literals here); default upload == these exact values.
     vec3  materialTint = tintRock * matWeights.x + tintGrass * matWeights.y
                        + tintDirt * matWeights.z + tintConcrete * matWeights.w
                        + tintSnow * snowWeight;
@@ -893,6 +905,20 @@ void main() {
     if (u_edgeFeather != 0 && u_halfMap > 0.0) {
         float haze = edgeHazeAmount(v_worldPos.xy, u_halfMap) * u_edgeFeatherStrength;
         lit = mix(lit, EDGE_HAZE_SKY, clamp(haze, 0.0, 1.0));
+    }
+
+    // TERRAIN-MATERIAL-LIB-1: per-layer roughness/AO scalars, weighted by the
+    // same matWeights used for tint/detail. Branch-gated (not a bare multiply)
+    // because a *1.0 expression is not guaranteed bit-identical in all compiler
+    // paths -- default OFF (u_useMaterialLib==0) takes the untouched `lit` path,
+    // exactly reproducing pre-slice output. Neutral (1,1,1,1) JSON defaults ON
+    // also reduce to weightedAO==weightedRoughness==1.0 -> lit unchanged.
+    if (u_useMaterialLib != 0) {
+        float weightedRoughness = dot(matWeights, matRoughness);
+        float weightedAO        = dot(matWeights, matAO);
+        // Rougher surfaces scatter more of the direct term into ambient-like
+        // falloff (cheap non-PBR approximation); AO is a straight multiplier.
+        lit *= mix(1.0, 0.85, clamp(weightedRoughness - 1.0, 0.0, 1.0)) * weightedAO;
     }
 
     fragColor = vec4(lit, 1.0);                                     // alpha forced 1.0

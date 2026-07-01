@@ -227,6 +227,16 @@ static bool terrainNormalArrayEnabled() {
     return enabled;
 }
 
+// TERRAIN-MATERIAL-LIB-1: default OFF. Drives u_useMaterialLib (chunk-path
+// roughness/AO branch). Evaluated once (static) -- matches terrainNormalArrayEnabled().
+static bool terrainMaterialLibEnabled() {
+    static const bool enabled = []() {
+        const char* v = std::getenv("MC2_TERRAIN_MATERIAL_LIB");
+        return v && v[0] && v[0] != '0';
+    }();
+    return enabled;
+}
+
 gosRenderer* getGosRenderer() {
     return g_gos_renderer;
 }
@@ -1931,6 +1941,11 @@ class gosRenderer {
         void getTerrainClassDirt(float* v) const   { memcpy(v, terrain_class_dirt_,  4 * sizeof(float)); }
         void  setTerrainTintStrengthScale(float s) { terrain_tint_strength_scale_ = s; }
         float getTerrainTintStrengthScale() const   { return terrain_tint_strength_scale_; }
+        // TERRAIN-MATERIAL-LIB-1: no setter existed prior (member only had an
+        // env-read static initializer); added so the JSON reader can apply it
+        // when MC2_TERRAIN_SNOW_BRIGHTNESS_DAMPEN is unset (env still wins).
+        void  setTerrainSnowBrightnessDampen(float v) { terrain_snow_brightness_dampen_ = v; }
+        float getTerrainSnowBrightnessDampen() const  { return terrain_snow_brightness_dampen_; }
         // TERRAIN-TINT-UI-1
         void setTerrainTintRock(float r, float g, float b)  { terrain_tint_rock_[0]=r; terrain_tint_rock_[1]=g; terrain_tint_rock_[2]=b; }
         void getTerrainTintRock(float* r, float* g, float* b) const { *r=terrain_tint_rock_[0]; *g=terrain_tint_rock_[1]; *b=terrain_tint_rock_[2]; }
@@ -1938,6 +1953,28 @@ class gosRenderer {
         void getTerrainTintGrass(float* r, float* g, float* b) const { *r=terrain_tint_grass_[0]; *g=terrain_tint_grass_[1]; *b=terrain_tint_grass_[2]; }
         void setTerrainTintDirt(float r, float g, float b)  { terrain_tint_dirt_[0]=r; terrain_tint_dirt_[1]=g; terrain_tint_dirt_[2]=b; }
         void getTerrainTintDirt(float* r, float* g, float* b) const { *r=terrain_tint_dirt_[0]; *g=terrain_tint_dirt_[1]; *b=terrain_tint_dirt_[2]; }
+        // TERRAIN-MATERIAL-LIB-1: promoted frag-literal tints (concrete/snow).
+        void setTerrainTintConcrete(float r, float g, float b) { terrain_tint_concrete_[0]=r; terrain_tint_concrete_[1]=g; terrain_tint_concrete_[2]=b; }
+        void getTerrainTintConcrete(float* r, float* g, float* b) const { *r=terrain_tint_concrete_[0]; *g=terrain_tint_concrete_[1]; *b=terrain_tint_concrete_[2]; }
+        void setTerrainTintSnow(float r, float g, float b) { terrain_tint_snow_[0]=r; terrain_tint_snow_[1]=g; terrain_tint_snow_[2]=b; }
+        void getTerrainTintSnow(float* r, float* g, float* b) const { *r=terrain_tint_snow_[0]; *g=terrain_tint_snow_[1]; *b=terrain_tint_snow_[2]; }
+        // TERRAIN-MATERIAL-LIB-1: per-layer roughness/AO scalars (rock,grass,dirt,concrete).
+        void setTerrainMatRoughness(float rock, float grass, float dirt, float concrete) {
+            terrain_mat_roughness_[0]=rock; terrain_mat_roughness_[1]=grass;
+            terrain_mat_roughness_[2]=dirt; terrain_mat_roughness_[3]=concrete;
+        }
+        void getTerrainMatRoughness(float* rock, float* grass, float* dirt, float* concrete) const {
+            *rock=terrain_mat_roughness_[0]; *grass=terrain_mat_roughness_[1];
+            *dirt=terrain_mat_roughness_[2]; *concrete=terrain_mat_roughness_[3];
+        }
+        void setTerrainMatAO(float rock, float grass, float dirt, float concrete) {
+            terrain_mat_ao_[0]=rock; terrain_mat_ao_[1]=grass;
+            terrain_mat_ao_[2]=dirt; terrain_mat_ao_[3]=concrete;
+        }
+        void getTerrainMatAO(float* rock, float* grass, float* dirt, float* concrete) const {
+            *rock=terrain_mat_ao_[0]; *grass=terrain_mat_ao_[1];
+            *dirt=terrain_mat_ao_[2]; *concrete=terrain_mat_ao_[3];
+        }
         void  setTerrainNormalsFromHeightStrength(float s) { terrain_nfh_strength_ = s; }
         float getTerrainNormalsFromHeightStrength() const  { return terrain_nfh_strength_; }
         void  setTerrainLightingV1Strength(float s) { terrain_lighting_v1_strength_ = s; }
@@ -2423,6 +2460,18 @@ class gosRenderer {
         float terrain_tint_rock_[3]  = { 0.36f, 0.37f, 0.40f };
         float terrain_tint_grass_[3] = { 0.35f, 0.42f, 0.25f };
         float terrain_tint_dirt_[3]  = { 0.48f, 0.42f, 0.33f };
+        // TERRAIN-MATERIAL-LIB-1: the two tint constants that were frag literals
+        // (terrain_lod_chunk.frag:715-716 / gos_terrain.frag:787-788) promoted to
+        // uniforms so terrain_materials.json can cover them. Defaults are the
+        // EXACT literal values -- byte-identity requirement.
+        float terrain_tint_concrete_[3] = { 0.55f, 0.53f, 0.50f };
+        float terrain_tint_snow_[3]     = { 0.75f, 0.78f, 0.84f };
+        // Per-layer roughness/AO scalars (rock, grass, dirt, concrete). Neutral
+        // 1.0 defaults so u_useMaterialLib==0 (gate OFF) skips the branch that
+        // would consume them, and gate-ON with defaults reproduces current
+        // lighting exactly (dot(weights, 1.0) == 1.0).
+        float terrain_mat_roughness_[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        float terrain_mat_ao_[4]        = { 1.0f, 1.0f, 1.0f, 1.0f };
         // TERRAIN-TUNING-UI-1: per-frame multiplier on the additive height-
         // derived normal term in gos_terrain.frag. 1.0 = full slope tilt
         // (current behavior; byte-equivalent to pre-slice). 0.0 = no slope
@@ -2484,6 +2533,12 @@ class gosRenderer {
             GLint terrainLightingV1Strength = -1; // float, 0=off; effective only when env gate ON
             // TERRAIN-LIGHTING-2
             GLint terrainLightingV2ShadowFillFloor = -1; // float, 1=V1 (no shadow influence)
+            // TERRAIN-MATERIAL-LIB-1
+            GLint tintConcrete = -1;              // promoted frag-literal (vec3)
+            GLint tintSnow     = -1;               // promoted frag-literal (vec3)
+            GLint matRoughness = -1;               // per-layer roughness scalar (vec4)
+            GLint matAO        = -1;               // per-layer AO scalar (vec4)
+            GLint useMaterialLib = -1;             // 0=off (byte-identical); 1=roughness/AO term applied
             GLuint program = 0;
         } terrainLocs_;
 
@@ -2529,6 +2584,15 @@ class gosRenderer {
             GLint terrainLightingV1Strength = -1;
             // TERRAIN-LIGHTING-2
             GLint terrainLightingV2ShadowFillFloor = -1;
+            // TERRAIN-MATERIAL-LIB-1: shares gosRenderer members with the chunk
+            // path (see file header); these locs stay -1 on gos_terrain.frag
+            // until the uniforms are declared there too, so the upload calls
+            // below are no-ops (>= 0 guarded) and this path is unaffected.
+            GLint tintConcrete = -1;
+            GLint tintSnow     = -1;
+            GLint matRoughness = -1;
+            GLint matAO        = -1;
+            GLint useMaterialLib = -1;
             GLuint program = 0;
         } thinTerrainLocs_;
 
@@ -2616,6 +2680,12 @@ class gosRenderer {
             // TERRAIN-LIGHTING-2
             terrainLocs_.terrainLightingV2ShadowFillFloor =
                 glGetUniformLocation(shp, "terrainLightingV2ShadowFillFloor");
+            // TERRAIN-MATERIAL-LIB-1
+            terrainLocs_.tintConcrete   = glGetUniformLocation(shp, "tintConcrete");
+            terrainLocs_.tintSnow       = glGetUniformLocation(shp, "tintSnow");
+            terrainLocs_.matRoughness   = glGetUniformLocation(shp, "matRoughness");
+            terrainLocs_.matAO          = glGetUniformLocation(shp, "matAO");
+            terrainLocs_.useMaterialLib = glGetUniformLocation(shp, "u_useMaterialLib");
         }
 
         void cacheThinTerrainUniformLocations(GLuint shp) {
@@ -6860,6 +6930,16 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     if (tl.tintDirt  >= 0)            glUniform3fv(tl.tintDirt,  1, terrain_tint_dirt_);
     if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
     if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
+    // TERRAIN-MATERIAL-LIB-1: promoted tints always upload (they replace what
+    // were frag literals, so there is no gate-OFF skip for these -- the shader
+    // now always reads a uniform, and the default member value is the exact
+    // former literal). Roughness/AO + the branch flag ARE gated (byte-identity
+    // requires the u_useMaterialLib==0 branch to be taken by default).
+    if (tl.tintConcrete >= 0)         glUniform3fv(tl.tintConcrete, 1, terrain_tint_concrete_);
+    if (tl.tintSnow     >= 0)         glUniform3fv(tl.tintSnow,     1, terrain_tint_snow_);
+    if (tl.matRoughness  >= 0)        glUniform4fv(tl.matRoughness, 1, terrain_mat_roughness_);
+    if (tl.matAO         >= 0)        glUniform4fv(tl.matAO,        1, terrain_mat_ao_);
+    if (tl.useMaterialLib >= 0)       glUniform1i(tl.useMaterialLib, terrainMaterialLibEnabled() ? 1 : 0);
     if (tl.time >= 0) {
         float elapsed = SmokeMode::fixedTimestepEnabled()
                         ? (float)SmokeMode::fixedClockSeconds()
@@ -9650,6 +9730,13 @@ void gos_SetTerrainTintStrengthScale(float s) {
 float gos_GetTerrainTintStrengthScale() {
     return g_gos_renderer ? g_gos_renderer->getTerrainTintStrengthScale() : 1.0f;
 }
+// TERRAIN-MATERIAL-LIB-1
+void gos_SetTerrainSnowBrightnessDampen(float v) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainSnowBrightnessDampen(v);
+}
+float gos_GetTerrainSnowBrightnessDampen() {
+    return g_gos_renderer ? g_gos_renderer->getTerrainSnowBrightnessDampen() : 0.78f;
+}
 // TERRAIN-TINT-UI-1
 void gos_SetTerrainTintRock(float r, float g, float b) {
     if (g_gos_renderer) g_gos_renderer->setTerrainTintRock(r, g, b);
@@ -9671,6 +9758,35 @@ void gos_SetTerrainTintDirt(float r, float g, float b) {
 void gos_GetTerrainTintDirt(float* r, float* g, float* b) {
     if (g_gos_renderer) g_gos_renderer->getTerrainTintDirt(r, g, b);
     else { *r = 0.48f; *g = 0.42f; *b = 0.33f; }
+}
+// TERRAIN-MATERIAL-LIB-1: promoted frag-literal tints + roughness/AO scalars.
+void gos_SetTerrainTintConcrete(float r, float g, float b) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainTintConcrete(r, g, b);
+}
+void gos_GetTerrainTintConcrete(float* r, float* g, float* b) {
+    if (g_gos_renderer) g_gos_renderer->getTerrainTintConcrete(r, g, b);
+    else { *r = 0.55f; *g = 0.53f; *b = 0.50f; }
+}
+void gos_SetTerrainTintSnow(float r, float g, float b) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainTintSnow(r, g, b);
+}
+void gos_GetTerrainTintSnow(float* r, float* g, float* b) {
+    if (g_gos_renderer) g_gos_renderer->getTerrainTintSnow(r, g, b);
+    else { *r = 0.75f; *g = 0.78f; *b = 0.84f; }
+}
+void gos_SetTerrainMatRoughness(float rock, float grass, float dirt, float concrete) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainMatRoughness(rock, grass, dirt, concrete);
+}
+void gos_GetTerrainMatRoughness(float* rock, float* grass, float* dirt, float* concrete) {
+    if (g_gos_renderer) g_gos_renderer->getTerrainMatRoughness(rock, grass, dirt, concrete);
+    else { *rock = 1.0f; *grass = 1.0f; *dirt = 1.0f; *concrete = 1.0f; }
+}
+void gos_SetTerrainMatAO(float rock, float grass, float dirt, float concrete) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainMatAO(rock, grass, dirt, concrete);
+}
+void gos_GetTerrainMatAO(float* rock, float* grass, float* dirt, float* concrete) {
+    if (g_gos_renderer) g_gos_renderer->getTerrainMatAO(rock, grass, dirt, concrete);
+    else { *rock = 1.0f; *grass = 1.0f; *dirt = 1.0f; *concrete = 1.0f; }
 }
 // TERRAIN-TUNING-UI-1
 void gos_SetTerrainNormalsFromHeightStrength(float s) {
