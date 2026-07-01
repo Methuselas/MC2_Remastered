@@ -42,6 +42,7 @@ enum class RenderResourceId : uint16_t {
     TerrainLightVertexInputSsbo = 31,  // TERRAIN-LIGHTING-SSBO-OWNER-1: terrain-lighting compute vertex-input SSBO (s_vertexInputSsbo, GL binding 0, gos_terrain_lighting.cpp); Mission lifetime (created mission_init, destroyed mission_shutdown). LIVE default-ON (MC2_TERRAIN_LIGHTING_GPU); feeds the Terrain pass via compute dispatch. Staging ring is Tier-2, NOT owned. GL binding 0 unrelated to id numbering.
     TerrainLightInputSsbo = 32,  // TERRAIN-LIGHTING-SSBO-OWNER-1: terrain-lighting compute per-light SSBO (s_lightInputSsbo, GL binding 1, gos_terrain_lighting.cpp); Mission lifetime. LIVE default-ON. GL binding 1 unrelated to id numbering.
     TerrainLightComputeOutputSsbo = 33,  // TERRAIN-LIGHTING-SSBO-OWNER-1: terrain-lighting compute output SSBO (s_computeOutputSsbo, GL binding 2, gos_terrain_lighting.cpp); Mission lifetime. LIVE default-ON; VRAM output the Terrain pass + water/mask consumers read. GL binding 2 unrelated to id numbering.
+    LightDataSsbo        = 34,  // LIGHTDATA-SSBO-OWNER-1: per-frame light-data SSBO (s_lightDataSsbo, GL binding LIGHT_DATA_SSBO_BINDING, gameos_graphics.cpp); LIVE default-path, grow-once/realloc (handle recreated on grow → re-registered). Persistent lifetime (lazy-created on first upload, destroyed in txmmgr.cpp mcTextureManager teardown). GL binding unrelated to id numbering.
     Count
 };
 

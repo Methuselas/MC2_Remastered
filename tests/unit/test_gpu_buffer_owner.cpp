@@ -219,6 +219,30 @@ TEST_CASE("TERRAIN-LIGHTING-SSBO-OWNER-1 the 3 compute SSBO owners round-trip id
     CHECK((RenderResourceId::TerrainLightComputeOutputSsbo != RenderResourceId::TerrainCementSsbo));
 }
 
+TEST_CASE("LIGHTDATA-SSBO-OWNER-1 light-data owner round-trips id/lifetime/name and valid->invalid (Persistent, grow-once)") {
+    // Persistent lifetime: lazy-created on first upload, destroyed at renderer teardown.
+    GpuBufferOwner o{ RenderResourceId::LightDataSsbo, RenderResourceLifetime::Persistent,
+                      "LightDataSsbo", 0u };
+    CHECK_FALSE(o.valid());                       // glName 0 -> unallocated
+    o.glName = 34u;                               // glGen stores a handle
+    CHECK((o.id == RenderResourceId::LightDataSsbo));
+    CHECK((o.lifetime == RenderResourceLifetime::Persistent));
+    CHECK(std::strcmp(o.debugName, "LightDataSsbo") == 0);
+    CHECK(o.valid());
+    // Grow-once: handle recreated -> glName updated, still valid, id/name preserved.
+    o.glName = 77u;
+    CHECK(o.valid());
+    CHECK((o.id == RenderResourceId::LightDataSsbo));
+    // Invalidate-on-destroy.
+    o.glName = 0u;
+    CHECK_FALSE(o.valid());
+    // Registered id + matching toString label, strictly below Count, distinct.
+    CHECK(std::strcmp(toString(RenderResourceId::LightDataSsbo), "LightDataSsbo") == 0);
+    CHECK(int(RenderResourceId::LightDataSsbo) < int(RenderResourceId::Count));
+    CHECK((RenderResourceId::LightDataSsbo != RenderResourceId::TerrainLightComputeOutputSsbo));
+    CHECK((RenderResourceId::LightDataSsbo != RenderResourceId::TerrainHeightSsbo));
+}
+
 TEST_CASE("GpuBufferOwner is a trivially-copyable POD") {
     CHECK(std::is_trivially_copyable<GpuBufferOwner>::value);
 }

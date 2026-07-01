@@ -76,6 +76,7 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::TerrainLightVertexInputSsbo:   return "TerrainLightVertexInputSsbo";
         case RenderResourceId::TerrainLightInputSsbo:         return "TerrainLightInputSsbo";
         case RenderResourceId::TerrainLightComputeOutputSsbo: return "TerrainLightComputeOutputSsbo";
+        case RenderResourceId::LightDataSsbo:        return "LightDataSsbo";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";

@@ -93,6 +93,8 @@ extern int g_terrainMaterialProfile;
 // scripts/check-object-mvp-currency.py.
 #include "gos_object_draw_mvp.h"
 #include "../../RenderCore/terrain_path_telemetry.h"  // TERRAIN-PATH-TELEMETRY-1
+#include "../../RenderCore/RenderResourceRegistry.h"  // LIGHTDATA-SSBO-OWNER-1: registry + ids
+#include "../../RenderCore/GpuBufferOwner.h"           // LIGHTDATA-SSBO-OWNER-1: owner record
 extern const float*     gos_GetTerrainMVPMat4();
 
 static const DWORD INVALID_TEXTURE_ID = 0;
@@ -8741,8 +8743,41 @@ void __stdcall gos_SetRenderMaterialSamplerUnit(HGOSRENDERMATERIAL material, con
 // (vulkan-prep): callers do NOT touch GL directly.
 // See docs/superpowers/plans/2026-05-17-lightsdata-ubo-to-ssbo.md
 // ===================================================================
-static GLuint     s_lightDataSsbo      = 0;
+// LIGHTDATA-SSBO-OWNER-1: the live default-path light-data SSBO is narrowed behind
+// a GpuBufferOwner identity record (logical id + lifetime + debug name + GLuint
+// value). Every gen/bind/bufferData/subdata/delete/guard site reaches the raw
+// handle ONLY via s_lightDataOwner.glName; GL args/binding-slot/flags/order are
+// unchanged. Persistent lifetime: lazy-created on first upload, destroyed in
+// gos_LightDataSsbo_Destroy (txmmgr.cpp mcTextureManager teardown). Grow-once:
+// on grow the handle is deleted+regenerated, so the owner is RE-REGISTERED on the
+// new handle (registerLightDataSsbo helper) and invalidated on destroy.
+static RenderCore::GpuBufferOwner s_lightDataOwner{
+    RenderCore::RenderResourceId::LightDataSsbo,
+    RenderCore::RenderResourceLifetime::Persistent,
+    "LightDataSsbo",
+    0u};
+#define s_lightDataSsbo (s_lightDataOwner.glName)
 static GLsizeiptr s_lightDataSsboBytes = 0;
+
+// LIGHTDATA-SSBO-OWNER-1: (re)register the owner in the resource registry at every
+// create/grow site (observe-only metadata; never read by the draw/upload path).
+static void registerLightDataSsbo(GLsizeiptr bytes) {
+    RenderCore::RenderResourceDesc d;
+    d.id        = RenderCore::RenderResourceId::LightDataSsbo;
+    d.kind      = RenderCore::RenderResourceKind::Buffer;
+    d.lifetime  = RenderCore::RenderResourceLifetime::Persistent;
+    d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+    d.debugName = "LightDataSsbo";
+    d.glName    = static_cast<GLuint>(s_lightDataOwner.glName);
+    d.sizeBytes = static_cast<uint64_t>(bytes);
+    d.valid     = true;
+    RenderCore::registerOrUpdateRenderResource(d);
+}
+static void invalidateLightDataSsbo() {
+    RenderCore::RenderResourceDesc invalid;
+    invalid.id = RenderCore::RenderResourceId::LightDataSsbo;
+    RenderCore::registerOrUpdateRenderResource(invalid);
+}
 static const bool s_lightSsboTrace =
 	(getenv("MC2_LIGHTSSBO_TRACE") != nullptr);
 
@@ -8791,6 +8826,7 @@ static bool gos_LightDataSsbo_UploadGrowOnce(const void* data, size_t bytes)
 		MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, want, data);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+		registerLightDataSsbo(s_lightDataSsboBytes);  // LIGHTDATA-SSBO-OWNER-1: register at create
 		if (s_lightSsboTrace) {
 			std::fprintf(stderr,
 			    "[LIGHTSSBO v1] event=growonce_create binding=%d capBytes=%td liveBytes=%zu\n",
@@ -8821,6 +8857,7 @@ static bool gos_LightDataSsbo_UploadGrowOnce(const void* data, size_t bytes)
 		MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, want, data);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+		registerLightDataSsbo(s_lightDataSsboBytes);  // LIGHTDATA-SSBO-OWNER-1: handle recreated on grow -> re-register
 		if (s_lightSsboTrace) {
 			std::fprintf(stderr,
 			    "[LIGHTSSBO v1] event=growonce_grow oldCap=%td newCap=%td liveBytes=%zu\n",
@@ -8855,6 +8892,7 @@ void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
 		s_lightDataSsboBytes = (GLsizeiptr)bytes;
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+		registerLightDataSsbo(s_lightDataSsboBytes);  // LIGHTDATA-SSBO-OWNER-1: register at create (legacy path)
 		if (s_lightSsboTrace) {
 			std::fprintf(stderr, "[LIGHTSSBO v1] event=enabled binding=%d bytes=%zu\n",
 			             LIGHT_DATA_SSBO_BINDING, bytes);
@@ -8877,6 +8915,7 @@ void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
 			std::fflush(stderr);
 		}
 		s_lightDataSsboBytes = (GLsizeiptr)bytes;
+		registerLightDataSsbo(s_lightDataSsboBytes);  // LIGHTDATA-SSBO-OWNER-1: storage realloc'd (same handle) -> refresh size
 	} else {
 		// LIGHTSSBO-ORPHAN-1: buffer orphaning eliminates the implicit GPU pipeline
 		// sync stall on NVIDIA. glBufferSubData on a buffer that the GPU is still
@@ -8961,6 +9000,7 @@ void __stdcall gos_LightDataSsbo_Destroy()
 		glDeleteBuffers(1, &s_lightDataSsbo);
 		s_lightDataSsbo      = 0;
 		s_lightDataSsboBytes = 0;
+		invalidateLightDataSsbo();  // LIGHTDATA-SSBO-OWNER-1: mark registry slot unavailable on teardown
 	}
 }
 
