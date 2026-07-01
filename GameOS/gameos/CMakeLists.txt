@@ -89,6 +89,9 @@ if(MC2_VULKAN)
     list(APPEND SOURCES vulkan_backend_skeleton.cpp)
     # VK-BOOTSTRAP-INTEGRATE-1: swapchain probe TU + vendored vk-bootstrap impl.
     list(APPEND SOURCES vulkan_swapchain_probe.cpp)
+    # VULKAN-SWAPCHAIN-PRESENT-1: Layer-5 swapchain PRESENT path (own window +
+    # swapchain, present 16 frames, resize, fail-soft). Same MC2_VULKAN gate.
+    list(APPEND SOURCES vulkan_swapchain_present.cpp)
     list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/3rdparty/vk_bootstrap/VkBootstrap.cpp")
     # VULKAN-VMA-INTEGRATION-1: single VMA_IMPLEMENTATION TU (header-only lib).
     list(APPEND SOURCES vma_impl.cpp)

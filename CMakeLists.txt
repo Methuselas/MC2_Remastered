@@ -149,6 +149,8 @@ if(MC2_VULKAN)
         GameOS/gameos/vulkan_backend_skeleton.cpp
         # VK-BOOTSTRAP-INTEGRATE-1: swapchain probe TU + vendored vk-bootstrap impl.
         GameOS/gameos/vulkan_swapchain_probe.cpp
+        # VULKAN-SWAPCHAIN-PRESENT-1: Layer-5 swapchain PRESENT path.
+        GameOS/gameos/vulkan_swapchain_present.cpp
         3rdparty/vk_bootstrap/VkBootstrap.cpp
         # VULKAN-VMA-INTEGRATION-1: single VMA_IMPLEMENTATION TU.
         GameOS/gameos/vma_impl.cpp

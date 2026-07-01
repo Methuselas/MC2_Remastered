@@ -1525,7 +1525,17 @@ def main():
                             # allowlist Popen drops it and the island's validation
                             # layer never loads, so validation_errors stays 0 by
                             # omission rather than by being genuinely clean.
-                            "MC2_VULKAN_VALIDATION")},
+                            "MC2_VULKAN_VALIDATION",
+                            # VULKAN-SWAPCHAIN-PRESENT-1: Layer-5 gate. MC2_VULKAN_PROBE
+                            # runs the one-shot Vulkan probe suite at startup;
+                            # MC2_VULKAN_SWAPCHAIN_PRESENT additionally runs the
+                            # swapchain PRESENT path (own window, 16 frames, resize);
+                            # _HIDDEN makes that window headless for CI. Without these
+                            # in the allowlist Popen drops them and the present probe
+                            # never runs (no [VK_SWAPCHAIN_PRESENT_HEALTH] line).
+                            "MC2_VULKAN_PROBE",
+                            "MC2_VULKAN_SWAPCHAIN_PRESENT",
+                            "MC2_VULKAN_SWAPCHAIN_PRESENT_HIDDEN")},
             },
         )
         # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.

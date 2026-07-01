@@ -3328,13 +3328,21 @@ bool mc2_vulkan_probe_if_env() {
     bool imgOk = mc2_vulkan_probe_sampled_image();
     // VK-BOOTSTRAP-INTEGRATE-1: swapchain probe (create+query+destroy, no present).
     bool swOk = mc2_vulkan_probe_swapchain();
+    // VULKAN-SWAPCHAIN-PRESENT-1: Layer-5 -- own a swapchain + PRESENT 16 frames
+    // (with a mid-loop resize), fail-soft to GL. Opt-in via a SEPARATE env var so
+    // the visible present window only appears when explicitly requested; the
+    // capability/headless probes above stay the default MC2_VULKAN_PROBE path.
+    bool presentOk = true;
+    if (std::getenv("MC2_VULKAN_SWAPCHAIN_PRESENT")) {
+        presentOk = mc2_vulkan_probe_swapchain_present(spvDir ? spvDir : "shaders/vulkan");
+    }
     // VULKAN-EDGEFOG-SYNTHETIC-FIXTURE-1: shader-math oracle for the edge-fog port.
     bool efOk = mc2_vulkan_probe_edgefog_fixture(spvDir ? spvDir : "shaders/vulkan");
     // VULKAN-OOB-FOG-ISLAND-1: shader-math oracle for the OOB-fog port.
     bool obOk = mc2_vulkan_probe_oobfog_fixture(spvDir ? spvDir : "shaders/vulkan");
-    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d descriptors=%d sampled_image=%d swapchain=%d edgefog_fixture=%d oobfog_fixture=%d",
-        ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0, descOk ? 1 : 0, imgOk ? 1 : 0, swOk ? 1 : 0, efOk ? 1 : 0, obOk ? 1 : 0);
-    return ok && shOk && triOk && descOk && imgOk && swOk && efOk && obOk;
+    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d descriptors=%d sampled_image=%d swapchain=%d swapchain_present=%d edgefog_fixture=%d oobfog_fixture=%d",
+        ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0, descOk ? 1 : 0, imgOk ? 1 : 0, swOk ? 1 : 0, presentOk ? 1 : 0, efOk ? 1 : 0, obOk ? 1 : 0);
+    return ok && shOk && triOk && descOk && imgOk && swOk && presentOk && efOk && obOk;
 }
 
 #endif // MC2_VULKAN

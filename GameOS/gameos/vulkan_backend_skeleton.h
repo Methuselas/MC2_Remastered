@@ -109,6 +109,21 @@ bool mc2_vulkan_probe_oobfog_fixture(const char* spvDir);
 // path too). Defined in vulkan_swapchain_probe.cpp (compiled only under MC2_VULKAN).
 bool mc2_vulkan_probe_swapchain();
 
+// VULKAN-SWAPCHAIN-PRESENT-1: Layer-5 -- the engine OWNS a Vulkan swapchain and
+// PRESENTS a controlled frame safely, fail-soft to GL. Creates a SEPARATE visible
+// SDL Vulkan window (default SHOWN; MC2_VULKAN_SWAPCHAIN_PRESENT_HIDDEN -> hidden
+// for headless CI) distinct from the GL window (shares NO GL context), owns its
+// own VkInstance/surface/device/swapchain, presents 16 frames (clear to teal +
+// fullscreen triangle), handles a mid-loop resize (frame 8) via OUT_OF_DATE ->
+// recreate, tears everything down in reverse, and emits a
+// [VK_SWAPCHAIN_PRESENT_HEALTH] line. NO game render pass routed through it, NO
+// renderer migration. Fail-soft at every step (log + return false, never crash --
+// this is also the no-Vulkan-runtime path). Returns true iff all 16 frames
+// presented VK_SUCCESS with zero validation errors and no fallback. Defined in
+// vulkan_swapchain_present.cpp (compiled only under MC2_VULKAN). spvDir = dir
+// holding the compiled fullscreen.*.spv.
+bool mc2_vulkan_probe_swapchain_present(const char* spvDir);
+
 // Returns true if a VkInstance was created, at least one physical device was
 // enumerated, and the capability dump completed. Fail-soft: logs + returns
 // false on any error.
