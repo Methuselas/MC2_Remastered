@@ -324,6 +324,39 @@ std::vector<char> read_pipeline_cache_file(const std::filesystem::path& p) {
     return bytes;
 }
 
+// VULKAN-VMA-VALIDATION-COVERAGE-1: one-shot VMA allocator creation shared by
+// the triangle + descriptor probes. Fail-soft: on any failure logs via `tag`
+// and returns false with *outAlloc left VK_NULL_HANDLE. Vulkan is loaded
+// dynamically by volk (VMA_STATIC_VULKAN_FUNCTIONS=0), so the allocator MUST be
+// handed volk-resolved fn pointers via vmaImportVulkanFunctionsFromVolk(); the
+// device table it reads requires a prior volkLoadDevice(device) by the caller.
+bool create_vma_allocator(const char* tag, VkInstance instance,
+                          VkPhysicalDevice phys, VkDevice device,
+                          VmaAllocator* outAlloc) {
+    *outAlloc = VK_NULL_HANDLE;
+    VmaAllocatorCreateInfo aci{};
+    aci.physicalDevice   = phys;
+    aci.device           = device;
+    aci.instance         = instance;
+    aci.vulkanApiVersion = VK_API_VERSION_1_1; // matches probe app.apiVersion
+
+    VmaVulkanFunctions vkFuncs{};
+    VkResult r = vmaImportVulkanFunctionsFromVolk(&aci, &vkFuncs);
+    if (r != VK_SUCCESS) {
+        log("%s: vmaImportVulkanFunctionsFromVolk failed (%d). fail-soft.", tag, (int)r);
+        return false;
+    }
+    aci.pVulkanFunctions = &vkFuncs;
+
+    r = vmaCreateAllocator(&aci, outAlloc);
+    if (r != VK_SUCCESS) {
+        log("%s: vmaCreateAllocator failed (%d). fail-soft.", tag, (int)r);
+        *outAlloc = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool mc2_vulkan_probe_triangle(const char* spvDir) {
@@ -461,26 +494,10 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
     // a VmaVulkanFunctions from volk's instance globals + this device's table
     // (volkLoadDevice() above). Without this the allocator would deref null fn
     // pointers and crash.
-    {
-        VmaAllocatorCreateInfo aci{};
-        aci.physicalDevice   = phys;
-        aci.device           = device;
-        aci.instance         = instance;
-        aci.vulkanApiVersion = VK_API_VERSION_1_1; // matches app.apiVersion above
-
-        VmaVulkanFunctions vkFuncs{};
-        r = vmaImportVulkanFunctionsFromVolk(&aci, &vkFuncs);
-        if (r != VK_SUCCESS) {
-            log("triangle-probe: vmaImportVulkanFunctionsFromVolk failed (%d). fail-soft.", (int)r);
-            goto done;
-        }
-        aci.pVulkanFunctions = &vkFuncs;
-
-        r = vmaCreateAllocator(&aci, &allocator);
-        if (r != VK_SUCCESS) {
-            log("triangle-probe: vmaCreateAllocator failed (%d). fail-soft.", (int)r);
-            goto done;
-        }
+    // VULKAN-VMA-VALIDATION-COVERAGE-1: allocator setup factored into the shared
+    // create_vma_allocator() helper (reused by the descriptor probe).
+    if (!create_vma_allocator("triangle-probe", instance, phys, device, &allocator)) {
+        goto done;
     }
 
     // ---- Shader modules -----------------------------------------------------
@@ -1011,10 +1028,22 @@ bool mc2_vulkan_probe_descriptors() {
     VkDescriptorSetLayout layout = VK_NULL_HANDLE;
     VkDescriptorPool      pool   = VK_NULL_HANDLE;
     VkDescriptorSet       set    = VK_NULL_HANDLE; // freed with the pool
-    VkBuffer       ubo     = VK_NULL_HANDLE;
-    VkDeviceMemory uboMem  = VK_NULL_HANDLE;
-    VkBuffer       ssbo    = VK_NULL_HANDLE;
-    VkDeviceMemory ssboMem = VK_NULL_HANDLE;
+    // VULKAN-VMA-VALIDATION-COVERAGE-1: the UBO+SSBO buffers are VMA-owned so a
+    // VMA allocation runs under the live validation layer here (the triangle
+    // probe's VMA path does NOT enable validation). VMA holds the backing memory
+    // (no separate VkDeviceMemory handles).
+    VmaAllocator   allocator = VK_NULL_HANDLE;
+    VkBuffer       ubo      = VK_NULL_HANDLE;
+    VmaAllocation  uboAlloc = VK_NULL_HANDLE;
+    VkBuffer       ssbo     = VK_NULL_HANDLE;
+    VmaAllocation  ssboAlloc = VK_NULL_HANDLE;
+
+    // ---- VMA allocator (shared helper) --------------------------------------
+    // VULKAN-VMA-VALIDATION-COVERAGE-1: created before the first `goto done` so
+    // the epilogue's vmaDestroyAllocator is always well-defined.
+    if (!create_vma_allocator("desc-probe", instance, phys, device, &allocator)) {
+        goto done;
+    }
 
     // ---- Descriptor set layout: binding0=UBO, binding1=SSBO (Set-0 shape) ---
     {
@@ -1063,33 +1092,28 @@ bool mc2_vulkan_probe_descriptors() {
 
     // ---- Small UBO + SSBO buffers (host-visible for simplicity) -------------
     {
+        // VULKAN-VMA-VALIDATION-COVERAGE-1: VMA creates the buffer + host-visible
+        // memory + binds them in one call (replaces vkCreateBuffer +
+        // vkGetBufferMemoryRequirements + vkAllocateMemory + vkBindBufferMemory).
+        // HOST_ACCESS_RANDOM_BIT makes VMA pick a HOST_VISIBLE|HOST_COHERENT
+        // memtype, preserving the prior host-visible/coherent semantics.
         auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage,
-                               VkBuffer* outBuf, VkDeviceMemory* outMem) -> bool {
+                               VkBuffer* outBuf, VmaAllocation* outAlloc) -> bool {
             VkBufferCreateInfo bci{};
             bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
             bci.size  = size;
             bci.usage = usage;
-            VkResult rr = vkCreateBuffer(device, &bci, nullptr, outBuf);
-            if (rr != VK_SUCCESS) { log("desc-probe: vkCreateBuffer failed (%d). fail-soft.", (int)rr); return false; }
-            VkMemoryRequirements mr{};
-            vkGetBufferMemoryRequirements(device, *outBuf, &mr);
-            uint32_t mt = find_mem_type(phys, mr.memoryTypeBits,
-                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            if (mt == UINT32_MAX) { log("desc-probe: no host-visible memtype. fail-soft."); return false; }
-            VkMemoryAllocateInfo mai{};
-            mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            mai.allocationSize  = mr.size;
-            mai.memoryTypeIndex = mt;
-            rr = vkAllocateMemory(device, &mai, nullptr, outMem);
-            if (rr != VK_SUCCESS) { log("desc-probe: vkAllocateMemory failed (%d). fail-soft.", (int)rr); return false; }
-            vkBindBufferMemory(device, *outBuf, *outMem, 0);
+            VmaAllocationCreateInfo aci{};
+            aci.usage = VMA_MEMORY_USAGE_AUTO;
+            aci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+            VkResult rr = vmaCreateBuffer(allocator, &bci, &aci, outBuf, outAlloc, nullptr);
+            if (rr != VK_SUCCESS) { log("desc-probe: vmaCreateBuffer failed (%d). fail-soft.", (int)rr); return false; }
             return true;
         };
 
         // 144B mirrors ViewUniformsUbo POD (2x mat4 + vec4); 256B storage.
-        if (!make_buffer(144, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &ubo, &uboMem)) goto done;
-        if (!make_buffer(256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &ssbo, &ssboMem)) goto done;
+        if (!make_buffer(144, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &ubo, &uboAlloc)) goto done;
+        if (!make_buffer(256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &ssbo, &ssboAlloc)) goto done;
     }
 
     // ---- Bind buffers to the set via vkUpdateDescriptorSets -----------------
@@ -1122,12 +1146,13 @@ bool mc2_vulkan_probe_descriptors() {
     }
 
 done:
-    if (ssboMem) vkFreeMemory(device, ssboMem, nullptr);
-    if (ssbo)    vkDestroyBuffer(device, ssbo, nullptr);
-    if (uboMem)  vkFreeMemory(device, uboMem, nullptr);
-    if (ubo)     vkDestroyBuffer(device, ubo, nullptr);
+    // VULKAN-VMA-VALIDATION-COVERAGE-1: VMA-owned buffers destroyed with their
+    // allocations; the allocator is torn down last, before the device.
+    if (ssbo)    vmaDestroyBuffer(allocator, ssbo, ssboAlloc);
+    if (ubo)     vmaDestroyBuffer(allocator, ubo, uboAlloc);
     if (pool)    vkDestroyDescriptorPool(device, pool, nullptr); // frees the set
     if (layout)  vkDestroyDescriptorSetLayout(device, layout, nullptr);
+    if (allocator) vmaDestroyAllocator(allocator);
     vkDestroyDevice(device, nullptr);
     if (messenger) {
         auto d = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
