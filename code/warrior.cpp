@@ -114,6 +114,20 @@
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
 #include "brain_tactic_select.h"  // TACTIC-WEIGHTS-A: Wang-hash deterministic tactic selection
 #include"terrain_runtime.h"  // TERRAIN-RUNTIME-CONSUMER-GROUNDING-1
+#include "abl_trace.h"  // ABL-VM-FACTS-1: per-frame ABL VM statement/depth/us telemetry
+
+// ABL-VM-FACTS-1: TU-local definitions for the abl_trace externs.
+namespace mc2_abl_trace {
+	int g_peakCallDepth = 0;
+	FrameCounters g_frame = {0, 0, 0, 0, 0.0};
+}
+
+// NumStateTransitions lives in mclib/ablenv.cpp; read at fire exit.
+extern int32_t NumStateTransitions;
+
+// ABL-VM-FACTS-1: hook called from mclib/ablxstmt.cpp CallStackLevel++ site.
+// Forwards to the gated inline tracker (byte-identical no-op when OFF).
+void mc2AblNotePeakDepth(int level) { mc2_abl_trace::notePeakDepth(level); }
 
 // MC2_BRAIN_TASKQ gate — checked once at first runBrain call
 static bool s_brainTaskQEnabled     = false;
@@ -2357,7 +2371,11 @@ long MechWarrior::runBrain (void) {
 	long brainErr = 0;
 	if (!enhancedApply) {
 		// ── Legacy ABL path ──────────────────────────────────────────────────────────
-		brain->execute();
+		// ABL-VM-FACTS-1: time the fire, read stmts (execute() return) + state
+		// transitions at exit. Byte-identical when the ABL diag tag is OFF.
+		mc2_abl_trace::FireScope ablFire("warrior", (int)vehicleWID);
+		long ablStmts = brain->execute();
+		ablFire.record(ablStmts, NumStateTransitions);
 		//--------------------------------------------------------------
 		// Well, we'll just set it every frame so it doesn't screw up :)
 		setUseGoalPlan(!MPlayer && (getCommander() != Commander::home));

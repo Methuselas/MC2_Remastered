@@ -343,6 +343,9 @@ extern bool 			invulnerableON;		//Used for tutorials so mechs can take damage, b
 #include "brain_task_queue.h"    // BRAIN-RUNTIME-1B: BrainTaskType
 #include "brain_tactic_select.h" // TACTIC-WEIGHTS-A: tacticName, applyPilotModulation (no mutation at load)
 #include "tacordr.h"             // TACTIC-WEIGHTS-A: TacticType enum + NUM_TACTICS
+#include "abl_trace.h"           // ABL-VM-FACTS-1: mission-brain fire + per-frame flush
+#include "brain_order_intent.h"  // ABL-VM-FACTS-1: getBrainTickIndex()
+extern int32_t NumStateTransitions;  // ABL-VM-FACTS-1: read at mission-brain fire exit
 namespace {
 	static const bool s_misSplit = (getenv("MC2_MISSION_SPLIT") != nullptr);
 	enum { MS_LAND_UPDATE=0, MS_PATHMGR, MS_CLEAR_BLOCKS, MS_CLEAR_VERTS,
@@ -891,7 +894,11 @@ long Mission::update (void)
 		{
 			if ( !missionInterface->isPaused() || MPlayer )
 			{
-				{ ZoneScopedN("GameLogic.AI.BrainExecute"); missionBrain->execute(); }
+				// ABL-VM-FACTS-1: time the mission-brain fire; byte-identical when OFF.
+				mc2_abl_trace::FireScope ablFire("mission", -1);
+				long ablStmts;
+				{ ZoneScopedN("GameLogic.AI.BrainExecute"); ablStmts = missionBrain->execute(); }
+				ablFire.record(ablStmts, NumStateTransitions);
 				long missionResult = missionBrain->getInteger();
 				if (missionResult == 9999)
 					return(terminationResult = 9999);
@@ -899,6 +906,10 @@ long Mission::update (void)
 					terminationResult = missionResult;
 			}
 		}
+
+		// ABL-VM-FACTS-1: once/frame boundary -- flush aggregated per-frame ABL VM
+		// facts (all warrior fires + the mission fire above). No-op when OFF.
+		mc2_abl_trace::flushFrame(g_mc2FrameCounter, getBrainTickIndex());
 
 		// Runtime-bridge v0: emit [MOVER v2] mover.state to stdout (env-gated,
 		// throttled to MC2_BRIDGE_MOVER_PERIOD_SEC). Read-only; no-op unless

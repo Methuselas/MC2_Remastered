@@ -40,6 +40,11 @@
 #include"abldbug.h"
 #endif
 
+// ABL-VM-FACTS-1: peak call-depth hook, defined in code/warrior.cpp. Bare
+// forward decl keeps mclib free of the code/ + GameOS diag layer. The impl
+// is byte-identical (no-op) when the ABL diag tag is OFF.
+void mc2AblNotePeakDepth(int level);
+
 //***************************************************************************
 
 //----------
@@ -327,6 +332,7 @@ TypePtr execDeclaredRoutineCall (SymTableNodePtr routineIdPtr, bool skipOrder) {
 	long oldLevel = level;						// level of caller
 	long newLevel = routineIdPtr->level + 1;	// level of callee
 	CallStackLevel++;
+	mc2AblNotePeakDepth(CallStackLevel);  // ABL-VM-FACTS-1 (no-op when OFF)
 
 	//-------------------------------------------
 	// First, set up the stack frame of callee...
