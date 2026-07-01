@@ -154,6 +154,7 @@ void ensureBuffers(int tileW, int tileH) {
     const int nTiles = tileW * tileH;
 
     if (s_sphereSsbo == 0) {
+        // TIER2-EXCLUDED: substrate-gated
         glGenBuffers(1, &s_sphereSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sphereSsbo);
         glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)kSphereStride * kMaxLights,

@@ -812,6 +812,7 @@ static void ensureRingCapacity(size_t neededInstances, size_t neededBones) {
 
     const GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
 
+    // TIER2-EXCLUDED: ring
     glGenBuffers(1, &s_instanceSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_instanceSsbo);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
@@ -820,6 +821,7 @@ static void ensureRingCapacity(size_t neededInstances, size_t neededBones) {
     s_instanceMap = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
         (GLsizeiptr)(MECH_RING_FRAMES * s_instanceCapacity * sizeof(GpuMechInstance)), flags);
 
+    // TIER2-EXCLUDED: ring
     glGenBuffers(1, &s_boneSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_boneSsbo);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,

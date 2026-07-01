@@ -379,6 +379,7 @@ void ensureInitialized() {
 
 void ensureSsboCapacity(GLsizei needRecords) {
     if (s_ssbo == 0) {
+        // TIER2-EXCLUDED: substrate-gated
         glGenBuffers(1, &s_ssbo);
     }
     if (needRecords > s_ssboCapacity) {

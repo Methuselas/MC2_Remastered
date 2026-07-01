@@ -119,11 +119,13 @@ bool Init(int32_t mapSide) {
 
     // Allocate GL SSBOs at worst-case size (never reallocated per mission)
     const GLsizeiptr maskBytes = (GLsizeiptr)(kMaskWords * sizeof(uint32_t));
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_solidMaskSSBO);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_solidMaskSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER, maskBytes, nullptr, GL_DYNAMIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_waterMaskSSBO);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_waterMaskSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER, maskBytes, nullptr, GL_DYNAMIC_DRAW);

@@ -1391,6 +1391,7 @@ void BuildDenseRecipe() {
     PopulateRecipeCementWords();
 
     // Full GPU upload on mission load — includes _wp3 cement words from above.
+    // TIER2-EXCLUDED: dead-path
     if (g_recipeSSBO == 0) glGenBuffers(1, &g_recipeSSBO);
     // Pre-upload audit: dumps how many recipes have a non-zero _wp3 (i.e.,
     // valid cement word) in the CPU memory glBufferData is about to upload.
@@ -1953,6 +1954,7 @@ static bool ResourcesReady() {
 
     // Thin-record SSBO: triple-buffered, GL_STREAM_DRAW.
     if (g_thinRecordSSBO == 0) {
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &g_thinRecordSSBO);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinRecordSSBO);
         MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
@@ -2341,6 +2343,7 @@ static uint32_t UploadTerrainHandleLUT() {
     constexpr GLsizeiptr kLutBytes = MC_MAXTEXTURES * sizeof(uint32_t);
 
     if (g_terrainHandleLutSSBO == 0) {
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &g_terrainHandleLutSSBO);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_terrainHandleLutSSBO);
         MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, kLutBytes, nullptr, GL_DYNAMIC_DRAW);
@@ -2429,6 +2432,7 @@ static uint32_t BuildSolidQuadWindowSSBO(int* outUseWindow) {
     if (g_solidQuadWindowSsbo == 0) {
         const uint32_t cap =
             (uint32_t)(kMaxThinRecords * sizeof(uint32_t));
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &g_solidQuadWindowSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidQuadWindowSsbo);
         MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr,
@@ -2866,6 +2870,7 @@ void ComputeDispatch() {
     // diagnostic tracing is requested.  Default-off: zero allocation, zero
     // per-frame work, zero binding.
     if (s_bucketHeaderTrace && g_solidBucketHeaderSsbo == 0) {
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &g_solidBucketHeaderSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
         MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
@@ -2875,6 +2880,7 @@ void ComputeDispatch() {
     // Probe 6 + 7a: lazy-allocate canary SSBO — 2*kMaxThinRecords uints,
     // never bound by the bridge.  Compute writes [recipeIdx, flags] per record.
     if (g_thinCanarySSBO == 0) {
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &g_thinCanarySSBO);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinCanarySSBO);
         MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,

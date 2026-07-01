@@ -147,6 +147,7 @@ void substrate_init(uint32_t maxActors) {
     const GLbitfield storageFlags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
     const GLbitfield mapFlags     = storageFlags;
 
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_instanceSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_instanceSsbo);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, totalBytes, nullptr, storageFlags);

@@ -445,6 +445,7 @@ bool compute_init() {
     }
     const GLsizeiptr debugSsboBytes =
         static_cast<GLsizeiptr>(2 * sizeof(uint32_t) + s_maxActors * sizeof(uint32_t));
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_debugSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_debugSsbo);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, debugSsboBytes, nullptr, GL_DYNAMIC_STORAGE_BIT);
@@ -452,6 +453,7 @@ bool compute_init() {
 
     // --- Staging SSBO ---
     s_stagingBytes = sizeof(GpuActorRecordHeader) + s_maxActors * sizeof(GpuActorRecord);
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_stagingSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_stagingSsbo);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
@@ -461,6 +463,7 @@ bool compute_init() {
     // --- Frustum UBO (binding 2) ---
     // Layout (std140): mat4 viewProj (64 B) + 4× uint slot info (16 B) +
     //                  4× float dilation block (16 B) = 96 B total.
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_frustumUbo);
     glBindBuffer(GL_UNIFORM_BUFFER, s_frustumUbo);
     glBufferStorage(GL_UNIFORM_BUFFER, 96, nullptr, GL_DYNAMIC_STORAGE_BIT);

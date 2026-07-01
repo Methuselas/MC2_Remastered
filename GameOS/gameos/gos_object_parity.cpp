@@ -272,6 +272,7 @@ GLuint EnsureParityOutputSSBO(size_t bytesPerSlot) {
     }
 
     if (s_paritySSBO == 0) {
+        // TIER2-EXCLUDED: substrate-gated
         glGenBuffers(1, &s_paritySSBO);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_paritySSBO);
         // glBufferStorage with DYNAMIC_STORAGE makes the buffer eligible

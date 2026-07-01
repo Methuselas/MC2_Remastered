@@ -1052,6 +1052,7 @@ static void allocPermutationSsboAsIdentity(uint32_t typeCount) {
     if (typeCount == 0) return;
     std::vector<uint32_t> identity(typeCount);
     for (uint32_t i = 0; i < typeCount; ++i) identity[i] = i;
+    // TIER2-EXCLUDED: dead-path
     if (s_permutationSsbo == 0) glGenBuffers(1, &s_permutationSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_permutationSsbo);
     MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
@@ -1587,6 +1588,7 @@ void ensureRingCapacity(size_t neededInstances, size_t neededColorEntries) {
     const GLbitfield storageFlags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
     const GLbitfield mapFlags     = storageFlags;
 
+    // TIER2-EXCLUDED: ring
     glGenBuffers(1, &s_instanceSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_instanceSsbo);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
@@ -1596,6 +1598,7 @@ void ensureRingCapacity(size_t neededInstances, size_t neededColorEntries) {
                     static_cast<GLsizeiptr>(RING_FRAMES * s_instanceCapacity * sizeof(GpuStaticPropInstance)),
                     mapFlags);
 
+    // TIER2-EXCLUDED: ring
     glGenBuffers(1, &s_colorSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_colorSsbo);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
@@ -2461,6 +2464,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             unpack(green,  perTypeBlob[i].hotGreenRGB);
         }
 
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &s_perTypeSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perTypeSsbo);
         glBufferStorage(GL_SHADER_STORAGE_BUFFER,
@@ -2756,6 +2760,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             (unsigned long long)gpuSsboOffsetAlignment());
         const size_t totalBytes =
             static_cast<size_t>(RING_FRAMES) * alignedPerFrame;
+        // TIER2-EXCLUDED: ring
         glGenBuffers(1, &s_coalesceInstanceSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_coalesceInstanceSsbo);
         const GLbitfield mapFlags =
@@ -4216,6 +4221,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             std::fputs(buf, stderr);
         }
 
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &s_perDrawSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perDrawSsbo);
         MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
@@ -4228,6 +4234,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         // maps to its parent typeID so the patch shader can write the
         // type's instanceCount into all cmds (= all packets) of that type.
         if (s_cmdToBucketSsbo == 0) {
+            // TIER2-EXCLUDED: dead-path
             glGenBuffers(1, &s_cmdToBucketSsbo);
         }
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_cmdToBucketSsbo);
@@ -4267,6 +4274,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         const size_t totalBytes =
             static_cast<size_t>(RING_FRAMES) * s_baseInstanceByCmdBytesPerFrame;
         if (totalBytes > 0) {
+            // TIER2-EXCLUDED: dead-path
             glGenBuffers(1, &s_baseInstanceByCmdSsbo);
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_baseInstanceByCmdSsbo);
             const GLbitfield mapFlags =
@@ -7910,6 +7918,7 @@ void GpuStaticPropBatcher::drawStaticBuildingShadows(
     glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElemBuf);
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
 
+    // TIER2-EXCLUDED: substrate-gated
     if (s_staticBldgShadowSsbo == 0) glGenBuffers(1, &s_staticBldgShadowSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_staticBldgShadowSsbo);
     // GPU-UPDATE-BUFFER-COUNTER-1: per-render transient shadow SSBO orphan-on-write.
@@ -8679,6 +8688,7 @@ static bool ensureStaticInstanceCapacity() {
     if (s_staticInstanceSsbo) return s_staticInstanceMap != nullptr;
     const size_t want = static_cast<size_t>(s_globalInstanceCap)
                         * sizeof(GpuStaticPropInstance);
+    // TIER2-EXCLUDED: dead-path
     glGenBuffers(1, &s_staticInstanceSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_staticInstanceSsbo);
     const GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;

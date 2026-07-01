@@ -49,6 +49,21 @@ SCAN_DIRS = [
 
 CONCRETE_LIFETIMES = {"FrameLocal", "Mission", "Persistent", "External"}
 
+# GPU-BUFFER-EXCLUSION-LEDGER-1: valid TIER2 exclusion reasons.
+TIER2_REASONS = {"ring", "substrate-gated", "dead-path"}
+
+# A glGenBuffers target var name is in-scope for the owned-OR-excluded partition
+# iff it looks like an SSBO or UBO (the frame-graph resource kinds we own). VBO /
+# IBO / VB / IB / PBO / CmdBuf / generic `local`/`buffer`/`id` handles are out of
+# scope by design (per-pass-rebind / vertex-index data, not owned resources).
+SSBO_UBO_NAME = re.compile(r"[Ss][Ss][Bb][Oo]|[Uu][Bb][Oo]")
+
+# `glGenBuffers(<n>, &<var>)` -- capture the target var name.
+GEN_BUFFERS = re.compile(r"glGenBuffers\s*\(\s*[^,]+,\s*&\s*([A-Za-z_]\w*)\s*\)")
+
+# `// TIER2-EXCLUDED: <reason>`
+TIER2_TAG = re.compile(r"//\s*TIER2-EXCLUDED:\s*([A-Za-z0-9_-]+)")
+
 # `RenderCore::GpuBufferOwner   s_name{` (var-decl construction, not a typedef/include/comment).
 OWNER_DECL = re.compile(
     r"(?:RenderCore::)?GpuBufferOwner\s+[A-Za-z_]\w*\s*\{", re.M)
@@ -125,6 +140,92 @@ def owner_sites():
                 # Split on top-level commas (no nesting expected in these PODs).
                 args = [a.strip() for a in inner.split(",") if a.strip()]
                 yield rel, lineno, args
+
+
+def owner_aliased_names():
+    """SSBO/UBO-named vars that ARE owned even though glGenBuffers writes them.
+
+    Two owner patterns in the tree write the raw handle without a temp var:
+      (a) `#define <var> (<owner>.glName)`  -- <var> is a macro alias for the
+          owner's glName field (e.g. s_lightDataSsbo, s_dynamicPropShadowSsbo).
+      (b) `<owner>.glName = <var>` near a glGenBuffers(&<var>) -- the freshly
+          generated name is stored straight into an owner (e.g. view_uniforms
+          `ubo`). Detected per-site in the partition scan, not here.
+    Returns the set of macro-aliased names (pattern a).
+    """
+    aliased = set()
+    for d in SCAN_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not (fn.endswith(".cpp") or fn.endswith(".h")):
+                continue
+            text = read(os.path.join(d, fn))
+            for m in re.finditer(
+                    r"#define\s+([A-Za-z_]\w*)\s*\(\s*[A-Za-z_]\w*\.glName\s*\)",
+                    text):
+                aliased.add(m.group(1))
+    return aliased
+
+
+def check_partition(aliased):
+    """Every SSBO/UBO-named glGenBuffers target is owned OR // TIER2-EXCLUDED.
+
+    Returns (failures, n_owned, n_excluded).
+    """
+    failures = []
+    n_owned = 0
+    n_excluded = 0
+    for d in SCAN_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".cpp"):
+                continue
+            path = os.path.join(d, fn)
+            rel = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
+            lines = read(path).splitlines()
+            for i, line in enumerate(lines):
+                gm = GEN_BUFFERS.search(line)
+                if not gm:
+                    continue
+                var = gm.group(1)
+                if not SSBO_UBO_NAME.search(var):
+                    continue  # VBO/IBO/generic -- out of scope.
+                where = "%s:%d %s" % (rel, i + 1, var)
+
+                # OWNED via macro alias (#define var (owner.glName)).
+                if var in aliased:
+                    n_owned += 1
+                    continue
+                # OWNED via `<owner>.glName = <var>` within a few lines (the
+                # temp-name-assigned-to-owner pattern, e.g. view_uniforms ubo).
+                lookahead = "\n".join(lines[i:i + 4])
+                if re.search(r"\.glName\s*=\s*(?:static_cast<[^>]+>\s*\(\s*)?"
+                             + re.escape(var) + r"\b", lookahead):
+                    n_owned += 1
+                    continue
+
+                # EXCLUDED via a // TIER2-EXCLUDED tag on this line or the 2
+                # lines above it.
+                tag = None
+                for j in range(max(0, i - 2), i + 1):
+                    tm = TIER2_TAG.search(lines[j])
+                    if tm:
+                        tag = tm.group(1)
+                        break
+                if tag is None:
+                    failures.append(
+                        "%s -- un-owned SSBO/UBO with NO // TIER2-EXCLUDED tag "
+                        "(must be a GpuBufferOwner OR tagged ring/"
+                        "substrate-gated/dead-path)" % where)
+                elif tag not in TIER2_REASONS:
+                    failures.append(
+                        "%s -- // TIER2-EXCLUDED reason %r not in %s"
+                        % (where, tag, sorted(TIER2_REASONS)))
+                else:
+                    n_excluded += 1
+    return failures, n_owned, n_excluded
 
 
 def main():
@@ -211,6 +312,11 @@ def main():
                         'TEST_SUITE("GpuBufferOwnerLifetimeCheck") missing '
                         "(runtime invariant arm gone)")
 
+    # GPU-BUFFER-EXCLUSION-LEDGER-1: owned-OR-excluded partition over every
+    # SSBO/UBO-named glGenBuffers target.
+    part_failures, n_owned_gen, n_excluded = check_partition(owner_aliased_names())
+    failures.extend(part_failures)
+
     if failures:
         print("[check-gpu-buffer-owners] FAIL:", file=sys.stderr)
         for f in failures:
@@ -222,9 +328,12 @@ def main():
               % len(sites))
         for where, idname, life in ok:
             print("  OK  %-30s %-12s %s" % (idname, life, where))
+        print("[check-gpu-buffer-owners] SSBO/UBO partition: %d owned "
+              "(GpuBufferOwner), %d excluded-by-tag, 0 unclassified."
+              % (n_owned_gen, n_excluded))
         print("[check-gpu-buffer-owners] PASS -- all owners use a registered id "
-              "+ concrete non-Unset lifetime + matching name; runtime doctest "
-              "present.")
+              "+ concrete non-Unset lifetime + matching name; every SSBO/UBO "
+              "glGenBuffers is owned OR // TIER2-EXCLUDED; runtime doctest present.")
     return 0
 
 

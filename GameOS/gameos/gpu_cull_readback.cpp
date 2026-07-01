@@ -224,6 +224,7 @@ bool readback_init(uint32_t maxActors) {
     // --- GPU-side SSBO (compute shader writes here) ---
     // GL_DYNAMIC_STORAGE_BIT: allows glClearNamedBufferSubData to zero rb_visibleCount.
     // No map flags — pure GPU memory (VRAM on RDNA3), ensuring atomicAdd writes work.
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_gpuSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_gpuSsbo);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, totalBytes, nullptr, GL_DYNAMIC_STORAGE_BIT);

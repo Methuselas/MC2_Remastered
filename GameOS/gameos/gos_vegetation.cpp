@@ -225,6 +225,7 @@ void GosVegetation::init() {
     // --- Block visibility SSBO (binding 12) ---
     // Pre-allocated to 1024 slots at 2u (LOD0 = draw) so OOB reads
     // on the first frame (before setBlockVisibility fires) show all cards.
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_blockVisSsbo);
     {
         uint32_t initVis[1024];

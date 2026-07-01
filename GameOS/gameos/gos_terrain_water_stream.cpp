@@ -1317,6 +1317,7 @@ static uint32_t BuildQuadWindowSSBO() {
     }
     if (g_quadWindowSsbo == 0) {
         const uint32_t cap = (uint32_t)(g_recipes.size() * sizeof(uint32_t));
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &g_quadWindowSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
         MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr, GL_DYNAMIC_DRAW);
@@ -1367,6 +1368,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         }
 
         // Bucket header: 16 B GpuDrivenBucketHeader (visibleCount + 3 pads).
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &g_waterBucketHeaderSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
         MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
