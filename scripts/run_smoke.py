@@ -484,6 +484,17 @@ def main():
     ap.add_argument("--strict", action="store_true",
                     help="with --verify-only/--verify-preflight: a hard "
                          "mismatch (stale/missing) exits 1 instead of advisory")
+    # DEPLOY-LANE-GUARD-1 opt-in: shell scripts/check-deploy-target.py before
+    # smoke to catch broken-tree (0.4c) / cross-lane contention / stale-exe
+    # fingerprint. OFF by default (behavior unchanged). --guard = advisory
+    # (log only, never changes verdict); add --guard-fatal to abort on a
+    # non-OK guard verdict.
+    ap.add_argument("--guard", action="store_true",
+                    help="opt-in: run scripts/check-deploy-target.py against the "
+                         "resolved deploy dir before smoke (advisory log only)")
+    ap.add_argument("--guard-fatal", action="store_true",
+                    help="with --guard: abort the smoke on a non-OK guard verdict "
+                         "(broken-tree / contended / stale / fingerprint-mismatch)")
     ap.add_argument("--require-gate", action="append", default=[],
                     metavar="MC2_VAR",
                     help="after the run, assert the named MC2_* gate reached the "
@@ -635,6 +646,44 @@ def main():
             sys.exit(1)
         print("[runner] [VERIFY] --verify-preflight gate PASSED; proceeding "
               "to normal smoke.", file=sys.stderr)
+
+    # DEPLOY-LANE-GUARD-1: opt-in pre-smoke lane guard (--guard). Default OFF ->
+    # this whole block is skipped and behavior is byte-identical to before. When
+    # on, it shells scripts/check-deploy-target.py; advisory unless --guard-fatal.
+    if args.guard:
+        try:
+            _gsha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                                   capture_output=True, text=True, timeout=10)
+            _gexp = _gsha.stdout.strip() if _gsha.returncode == 0 else None
+            _gbr = subprocess.run(["git", "-C", str(ROOT), "rev-parse",
+                                   "--abbrev-ref", "HEAD"],
+                                  capture_output=True, text=True, timeout=10)
+            _gbranch = _gbr.stdout.strip() if _gbr.returncode == 0 else None
+            _gcmd = [sys.executable,
+                     str(ROOT / "scripts" / "check-deploy-target.py"),
+                     str(Path(args.exe).resolve().parent),
+                     "--exe-name", Path(args.exe).name]
+            if _gexp:
+                _gcmd += ["--expected-sha", _gexp]
+            if _gbranch:
+                _gcmd += ["--branch", _gbranch]
+            _g = subprocess.run(_gcmd, capture_output=True, text=True, timeout=60)
+            for _line in ((_g.stdout or "") + (_g.stderr or "")).splitlines():
+                if _line.strip():
+                    print(f"[runner] {_line}", file=sys.stderr)
+            if _g.returncode != 0:
+                if args.guard_fatal:
+                    print("[runner] [DEPLOY_GUARD] HARD FAIL (--guard-fatal): "
+                          f"guard exit {_g.returncode}; not launching smoke.",
+                          file=sys.stderr)
+                    sys.exit(2)
+                print("[runner] [DEPLOY_GUARD] ADVISORY: non-OK verdict "
+                      f"(exit {_g.returncode}); continuing (no --guard-fatal).",
+                      file=sys.stderr)
+        except SystemExit:
+            raise
+        except Exception as _ge:
+            print(f"[runner] [DEPLOY_GUARD] check skipped: {_ge}", file=sys.stderr)
 
     # Deploy-coherence advisory (scripts/check-deploy-coherence.py): detects
     # a stale deployed exe (fix built but never copied to the run dir).
