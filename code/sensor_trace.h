@@ -1,0 +1,103 @@
+//***************************************************************************
+//
+//	sensor_trace.h -- SENSOR-SCAN-FACTS-1 telemetry helper.
+//
+//	Additive, gated, default-OFF. When MC2_DIAG_TAGS lacks "SENSOR" the
+//	mc2_diag::tagEnabled("SENSOR") check returns false, so the whole trace
+//	is skipped: no counter accumulation, no snprintf, no I/O. The only
+//	OFF-path cost is one cached bool + predicted branches.
+//
+//	HARD RULE: measure only. Nothing here changes sensor behavior, raises
+//	any constant, or alters the O(sensors x movers) scan.
+//
+//	Mirrors mclib/path_trace.h (PATHFINDING-FACTS-1). The gate is the
+//	mc2_diag "SENSOR" tag (MC2_DIAG_TAGS=SENSOR). A separate env gate
+//	MC2_SENSOR_SCAN_FACTS is also honored so the counters can be armed
+//	without widening the diag whitelist.
+//
+//***************************************************************************
+#pragma once
+
+#include "../GameOS/gameos/diagnostic_trace.h"
+#include <cstdio>
+#include <cstdlib>
+#include <chrono>
+
+namespace mc2_sensor_trace {
+
+// One-time gate cache. The TeamSensorSystem::update driver caches the gate
+// once per team-update (activeThisFrame), and the hot scanBattlefield inner
+// loop only reads that local bool + increments plain longs -- no per-pair
+// tagEnabled() call. Byte-identical when OFF.
+struct Counters {
+	bool active;         // gate cached for the current team-update
+	long pairsTested;    // TRUE O(n.m) inner-loop iteration count (headline)
+	long numSensors;     // sensors scanned this team-update
+	long numMovers;      // movers in the dense moverList this frame
+	long adds;           // contacts added this team-update
+	long removes;        // contacts removed this team-update
+	long modifies;       // contacts modified this team-update
+
+	void reset(bool a) {
+		active = a;
+		pairsTested = numSensors = numMovers = 0;
+		adds = removes = modifies = 0;
+	}
+};
+
+// Translation-unit-local accumulator, defined in contact.cpp.
+extern Counters g_counters;
+
+// Resolve the gate once. True when the "SENSOR" diag tag is whitelisted OR
+// MC2_SENSOR_SCAN_FACTS is set to a non-zero value. Cached process-wide.
+inline bool gateActive() {
+	static int cached = -1;  // -1 unresolved, 0 off, 1 on
+	if (cached < 0) {
+		bool on = mc2_diag::tagEnabled("SENSOR");
+		if (!on) {
+			const char* e = getenv("MC2_SENSOR_SCAN_FACTS");
+			on = (e && e[0] && e[0] != '0');
+		}
+		cached = on ? 1 : 0;
+	}
+	return cached == 1;
+}
+
+// Per-team-update RAII timer. Construct around the sensor scan loop; dtor
+// emits one "frame" event (only when active). team = teamId round-robined
+// this frame.
+struct ScanScope {
+	bool active;
+	int  team;
+	std::chrono::steady_clock::time_point t0;
+
+	explicit ScanScope(int teamId)
+		: active(gateActive()), team(teamId)
+	{
+		if (active) {
+			g_counters.reset(true);
+			t0 = std::chrono::steady_clock::now();
+		}
+	}
+
+	~ScanScope() {
+		if (!active) {
+			g_counters.active = false;
+			return;
+		}
+		auto t1 = std::chrono::steady_clock::now();
+		double us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+		char buf[288];
+		snprintf(buf, sizeof(buf),
+			"{\"ev\":\"frame\",\"team\":%d,\"num_sensors\":%ld,\"num_movers\":%ld,"
+			"\"pairs_tested\":%ld,\"adds\":%ld,\"removes\":%ld,\"modifies\":%ld,"
+			"\"scan_us\":%.2f}",
+			team, g_counters.numSensors, g_counters.numMovers,
+			g_counters.pairsTested, g_counters.adds, g_counters.removes,
+			g_counters.modifies, us);
+		mc2_diag::writeEvent("SENSOR", 1, 0, buf);
+		g_counters.active = false;
+	}
+};
+
+} // namespace mc2_sensor_trace

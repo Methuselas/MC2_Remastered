@@ -42,7 +42,12 @@
 
 #include<gameos.hpp>
 
+#include"sensor_trace.h"		// SENSOR-SCAN-FACTS-1 (gated, default-OFF)
+
 //***************************************************************************
+
+// SENSOR-SCAN-FACTS-1: TU-local telemetry accumulator (default-OFF).
+namespace mc2_sensor_trace { Counters g_counters = {false,0,0,0,0,0,0}; }
 
 SensorSystemManagerPtr		SensorManager = NULL;
 
@@ -598,33 +603,42 @@ long SensorSystem::scanBattlefield (void)
 	long numNewContacts = 0;
 
 	long numMovers = ObjectManager->getNumMovers();
-	for (long i = 0; i < numMovers; i++) 
+	// SENSOR-SCAN-FACTS-1: cache the gate once outside the hot loop (OFF = one bool).
+	const bool _sfacts = mc2_sensor_trace::g_counters.active;
+	for (long i = 0; i < numMovers; i++)
 	{
+		if (_sfacts) mc2_sensor_trace::g_counters.pairsTested++;	// true O(n.m) count
 		MoverPtr mover = (MoverPtr)ObjectManager->getMover(i);
-		if (mover->getExists() && (mover->getTeamId() != owner->getTeamId())) 
+		if (mover->getExists() && (mover->getTeamId() != owner->getTeamId()))
 		{
 			long contactStatus = calcContactStatus(mover);
-			if (isContact(mover)) 
+			if (isContact(mover))
 			{
 				if (contactStatus == CONTACT_NONE)
+				{
 					removeContact(mover);
+					if (_sfacts) mc2_sensor_trace::g_counters.removes++;
+				}
 				else
 				{
 					modifyContact(mover, contactStatus == CONTACT_VISUAL ? true : false);
 					getLargest(currentLargest,mover,contactStatus);
+					if (_sfacts) mc2_sensor_trace::g_counters.modifies++;
 				}
 			}
-			else 
+			else
 			{
-				if (contactStatus != CONTACT_NONE) 
+				if (contactStatus != CONTACT_NONE)
 				{
 					addContact(mover, contactStatus == CONTACT_VISUAL ? true : false);
 					getLargest(currentLargest,mover,contactStatus);
 					numNewContacts++;
+					if (_sfacts) mc2_sensor_trace::g_counters.adds++;
 				}
 			}
 		}
 	}
+	if (_sfacts) mc2_sensor_trace::g_counters.numMovers = numMovers;
 
 	totalContacts += numNewContacts;
 	
@@ -785,8 +799,16 @@ void TeamSensorSystem::update (void) {
 
 		//---------------------------------
 		// First, update actual scanning...
-		for (long i = 0; i < numSensors; i++)
-			sensors[i]->updateScan();
+		// SENSOR-SCAN-FACTS-1: RAII timer/emitter around the O(sensors x movers)
+		// scan (gated, default-OFF -> byte-identical). ScanScope resets counters
+		// on entry (when active) and emits one "SENSOR" JSONL frame on dtor.
+		{
+			mc2_sensor_trace::ScanScope _sscope(teamId);
+			if (_sscope.active)
+				mc2_sensor_trace::g_counters.numSensors = numSensors;
+			for (long i = 0; i < numSensors; i++)
+				sensors[i]->updateScan();
+		}
 
 		if (Team::teams[teamId]->rosterSize < NUM_CONTACT_UPDATES_PER_PASS)
 			numContactUpdatesPerPass = Team::teams[teamId]->rosterSize;
