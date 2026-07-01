@@ -15,6 +15,13 @@
 # Excluded (too heavy for this aggregator):
 #   check-shader-schema.sh   -- requires glslangValidator + compiled goldens
 #   check-debug-state-json.py -- requires a live engine JSON snapshot
+#
+# Deliberately NOT wired here (report, not a gate):
+#   check-vulkan-bindings.py -- Vk-prep shared-binding report (VULKAN-BINDINGS-CHECK-1).
+#     Known collisions (SSBO slot-14/20) are PRESENT and not yet split, so it is
+#     report-only (exit 0) by default; wiring it here would false-fail the
+#     aggregator. Run standalone: `py -3 scripts/check-vulkan-bindings.py`.
+#     Its `--strict` flag becomes the gate once the slots are split.
 
 set -euo pipefail
 

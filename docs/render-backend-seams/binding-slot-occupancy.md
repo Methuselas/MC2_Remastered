@@ -96,6 +96,31 @@ GLSTATE-SSBO-SLOT14-PARTICLE-UNBIND-1 slice is therefore **MOOT** — no live le
 remains. (A restore-previous guard would diverge from the established
 symmetric-unbind-to-0 convention for no behavior gain.)
 
+## Vulkan-prep shared-binding report (VULKAN-BINDINGS-CHECK-1)
+
+Under GL the multiplexing above is legal (a slot is per-pass). Under Vulkan a
+descriptor-set layout pins a fixed `(set, binding)`; a slot occupied by DISTINCT
+live resources that a per-pipeline layout cannot isolate is a descriptor
+collision that must be split before descriptor assignment.
+
+`scripts/check-vulkan-bindings.py` converts that recon finding into a standing
+report over this JSON:
+
+```
+py -3 scripts/check-vulkan-bindings.py            # report (exit 0)
+py -3 scripts/check-vulkan-bindings.py --strict   # exit 1 if any collision (future gate)
+```
+
+- **VULKAN-COLLISION** — the two KNOWN Vk-prep TODOs: SSBO **slot-14**
+  (`ReadbackBuf` / `Particles` / `RibbonPos`) and SSBO **slot-20**
+  (`SurfaceVertexBuf` / `LightsData`). Tracked as debt; report-only until split.
+- **benign shares** — the intentional per-pass multiplexing (per-pipeline
+  descriptor-set isolatable) and the slot-9 mutually-exclusive `#if` branches.
+- Any NEW distinct-role slot share (not in the curated classification) is
+  surfaced on stderr so it cannot slip; `--strict` fails on it. It is
+  deliberately NOT wired into `check-contracts.sh` (would false-fail on the
+  known-present collisions).
+
 ## Scope boundaries (this slice)
 
 CI/check-time only. No flat global enum, no descriptor abstraction, no
