@@ -117,6 +117,17 @@ if(MC2_VULKAN)
     message(STATUS "MC2_VULKAN=ON -- Vulkan found: ${Vulkan_LIBRARY} (include ${Vulkan_INCLUDE_DIR})")
 endif()
 
+# VULKAN-EDGE-FOG-ISLAND-2a: first REAL Vulkan render work in the frame loop.
+# Compiles GameOS/gameos/vulkan_edge_fog_island.cpp INTO gameos (the main mc2
+# target), gated behind #ifdef MC2_VULKAN_ISLAND. Default OFF -> byte-identical
+# to the non-island build. Requires MC2_VULKAN=ON (volk + VMA + headers). The
+# island is off at runtime too unless MC2_VULKAN_EDGE_FOG_ISLAND=1; on lazy-init
+# failure it fails soft to the GL edge-fog path.
+option(MC2_VULKAN_ISLAND "Compile the Vulkan edge-fog island into gameos (VULKAN-EDGE-FOG-ISLAND-2a)" OFF)
+if(MC2_VULKAN_ISLAND AND NOT MC2_VULKAN)
+    message(FATAL_ERROR "MC2_VULKAN_ISLAND=ON requires MC2_VULKAN=ON (volk/VMA/Vulkan headers).")
+endif()
+
 # VULKAN-SHADER-TOOLCHAIN-1: standalone headless probe harness (ON only).
 # Links ONLY the Vulkan loader + the skeleton TU -- no GL/SDL/window/game.
 # Verifies the SPIR-V shader-module load path against the compiled .spv.
@@ -522,6 +533,12 @@ add_custom_target(build_fingerprint
 
 add_executable(mc2 ${SOURCES} ${MAIN_SRC})
 add_dependencies(mc2 build_fingerprint)
+# VULKAN-EDGE-FOG-ISLAND-2a: ensure the SPIR-V shaders (edge_fog.{vert,frag}.spv,
+# fullscreen.*) are baked when building the mc2 target directly (mc2_vulkan_shaders
+# is an ALL target, but --target mc2 does not pull ALL). Only exists under MC2_VULKAN.
+if(MC2_VULKAN_ISLAND AND TARGET mc2_vulkan_shaders)
+    add_dependencies(mc2 mc2_vulkan_shaders)
+endif()
 target_link_libraries(mc2 mclib fx_trace particles gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL renderworld gameadapters editorbridge imgui gui_runtime)
 
 if(MC2_IMGUI)

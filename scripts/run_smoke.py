@@ -1489,7 +1489,15 @@ def main():
                             # gate-ON determinism smoke runs the CRT (gate-OFF) path,
                             # making the RNG trace non-reproducible.
                             "MC2_DETERMINISTIC_RNG",
-                            "MC2_RNG_SEED")},
+                            "MC2_RNG_SEED",
+                            # VULKAN-EDGE-FOG-ISLAND-2a: route the edge-fog
+                            # composite through the headless Vulkan island
+                            # (default-OFF; fail-soft to GL). MC2_VULKAN_SPV_DIR
+                            # optionally overrides the .spv search dir. Without
+                            # these in the allowlist Popen drops them and the
+                            # gate-ON island smoke silently runs the GL path.
+                            "MC2_VULKAN_EDGE_FOG_ISLAND",
+                            "MC2_VULKAN_SPV_DIR")},
             },
         )
         # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.

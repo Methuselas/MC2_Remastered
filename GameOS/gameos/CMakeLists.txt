@@ -95,6 +95,12 @@ if(MC2_VULKAN)
     # VULKAN-VOLK-LOADER-1: volk meta-loader (dynamic Vulkan load; no hard link
     # to vulkan-1.dll). Only compiled when MC2_VULKAN=ON.
     list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/3rdparty/volk/volk.c")
+    # VULKAN-EDGE-FOG-ISLAND-2a: the real edge-fog Vulkan render island (compiled
+    # into gameos, but entirely inert unless MC2_VULKAN_ISLAND is also defined --
+    # the whole TU is #ifdef MC2_VULKAN_ISLAND). Only added when MC2_VULKAN_ISLAND=ON.
+    if(MC2_VULKAN_ISLAND)
+        list(APPEND SOURCES vulkan_edge_fog_island.cpp)
+    endif()
 endif()
 
 set_source_files_properties(
@@ -135,6 +141,11 @@ if(MC2_VULKAN)
     target_include_directories(gameos PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/volk")
     # VK-BOOTSTRAP-INTEGRATE-1: vendored vk-bootstrap (SwapchainBuilder).
     target_include_directories(gameos PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vk_bootstrap")
+    # VULKAN-EDGE-FOG-ISLAND-2a: define the island gate on gameos so
+    # vulkan_edge_fog_island.cpp compiles + the gos_postprocess.cpp seam is active.
+    if(MC2_VULKAN_ISLAND)
+        target_compile_definitions(gameos PRIVATE MC2_VULKAN_ISLAND)
+    endif()
 endif()
 
 # VULKAN-SHADER-TOOLCHAIN-1: compile the trivial fullscreen GLSL vert/frag to
@@ -156,27 +167,33 @@ if(MC2_VULKAN)
     set(MC2_VK_SPV_OUT_DIR "${CMAKE_BINARY_DIR}/shaders/vulkan")
     file(MAKE_DIRECTORY "${MC2_VK_SPV_OUT_DIR}")
 
+    # VULKAN-EDGE-FOG-ISLAND-2a: bake edge_fog.{vert,frag} alongside fullscreen.
+    # These are only USED when MC2_VULKAN_ISLAND=ON, but baking them under plain
+    # MC2_VULKAN is harmless (extra .spv outputs) and keeps the toolchain simple.
+    set(MC2_VK_SHADER_BASENAMES fullscreen edge_fog)
     set(MC2_VK_SPV_OUTPUTS "")
     if(MC2_GLSLANG_VALIDATOR OR MC2_GLSLC)
+        foreach(_base ${MC2_VK_SHADER_BASENAMES})
         foreach(_stage vert frag)
-            set(_src "${MC2_VK_SHADER_SRC_DIR}/fullscreen.${_stage}")
-            set(_spv "${MC2_VK_SPV_OUT_DIR}/fullscreen.${_stage}.spv")
+            set(_src "${MC2_VK_SHADER_SRC_DIR}/${_base}.${_stage}")
+            set(_spv "${MC2_VK_SPV_OUT_DIR}/${_base}.${_stage}.spv")
             if(MC2_GLSLANG_VALIDATOR)
                 add_custom_command(
                     OUTPUT "${_spv}"
                     COMMAND "${MC2_GLSLANG_VALIDATOR}" -V "${_src}" -o "${_spv}"
                     DEPENDS "${_src}"
-                    COMMENT "SPIR-V (glslang): fullscreen.${_stage} -> ${_spv}"
+                    COMMENT "SPIR-V (glslang): ${_base}.${_stage} -> ${_spv}"
                     VERBATIM)
             else()
                 add_custom_command(
                     OUTPUT "${_spv}"
                     COMMAND "${MC2_GLSLC}" "${_src}" -o "${_spv}"
                     DEPENDS "${_src}"
-                    COMMENT "SPIR-V (glslc): fullscreen.${_stage} -> ${_spv}"
+                    COMMENT "SPIR-V (glslc): ${_base}.${_stage} -> ${_spv}"
                     VERBATIM)
             endif()
             list(APPEND MC2_VK_SPV_OUTPUTS "${_spv}")
+        endforeach()
         endforeach()
         add_custom_target(mc2_vulkan_shaders ALL DEPENDS ${MC2_VK_SPV_OUTPUTS})
         message(STATUS "VULKAN-SHADER-TOOLCHAIN-1: SPIR-V compile ON -> ${MC2_VK_SPV_OUT_DIR}")

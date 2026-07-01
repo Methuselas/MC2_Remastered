@@ -323,6 +323,26 @@ public:
     glsl_program* edgeFogProg_ = nullptr;
     void  runEdgeFog();
 
+#ifdef MC2_VULKAN_ISLAND
+    // VULKAN-EDGE-FOG-ISLAND-2a: the first REAL Vulkan render work in the frame
+    // loop. When MC2_VULKAN_EDGE_FOG_ISLAND=1 AND lazy Vulkan init succeeds, the
+    // edge-fog composite runs on a headless Vulkan device instead of the GL path
+    // (see the seam in beginPostProcess()/composite). All Vulkan state is held in
+    // an opaque struct so the Vulkan headers never leak into this header.
+    //
+    // vulkanEdgeFogIslandEnabled(): reads MC2_VULKAN_EDGE_FOG_ISLAND once, lazily
+    // initializes the device on first call, and returns true only if init
+    // succeeded. On failure it logs once, disables itself, and returns false so
+    // the caller falls back to runEdgeFog() (the GL path). Never throws/crashes.
+    // runEdgeFogVulkan(): per-frame GL->Vulkan->GL edge-fog composite.
+    // destroyVulkanEdgeFogIsland(): torn down from destroy().
+    bool  vulkanEdgeFogIslandEnabled();
+    void  runEdgeFogVulkan();
+    void  destroyVulkanEdgeFogIsland();
+    struct VulkanEdgeFogIsland;   // defined in vulkan_edge_fog_island.cpp
+    VulkanEdgeFogIsland* vkFogIsland_ = nullptr;
+#endif
+
     // OOB-FOG-1: fullscreen fog over out-of-bounds far-plane pixels.
     // Default ON (MC2_OOB_FOG=0 to disable). Reads only scene depth —
     // no sceneColorTex_ feedback loop; blends SRC_ALPHA over scene color.

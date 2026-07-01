@@ -756,6 +756,12 @@ void gosPostProcess::destroy()
     destroyFullscreenQuad();
     destroyBoxDecalCube();   // BT2018-BOX-DECAL-1
 
+#ifdef MC2_VULKAN_ISLAND
+    // VULKAN-EDGE-FOG-ISLAND-2a: tear down the headless Vulkan device + all
+    // island resources (no-op if the island was never lazily initialized).
+    destroyVulkanEdgeFogIsland();
+#endif
+
     // CLUSTER-DEPTH-PYRAMID-NATIVE-1: release the gated pass's GL resources.
     // No-op when the gate was never enabled (nothing was allocated).
     cluster_depth_pyramid::Shutdown();
@@ -2691,7 +2697,13 @@ void gosPostProcess::endScene()
     // After SSAO so AO-darkening is preserved under the fog.
     // FRAME-GRAPH-EXECUTOR-ISLAND-2: validate->call-unchanged->validate (default-OFF).
     executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::EdgeFog);
-    runEdgeFog();
+#ifdef MC2_VULKAN_ISLAND
+    // VULKAN-EDGE-FOG-ISLAND-2a: route the edge-fog composite through the Vulkan
+    // island when MC2_VULKAN_EDGE_FOG_ISLAND=1 and lazy init succeeded. Otherwise
+    // (gate off, or init fail-soft) fall through to the unchanged GL path.
+    if (vulkanEdgeFogIslandEnabled()) { runEdgeFogVulkan(); } else
+#endif
+    { runEdgeFog(); }
     executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::EdgeFog);
 
     // OOB fog: applies fog color to far-plane pixels pointing toward ground.
