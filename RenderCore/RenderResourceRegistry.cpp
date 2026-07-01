@@ -77,6 +77,7 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::TerrainLightInputSsbo:         return "TerrainLightInputSsbo";
         case RenderResourceId::TerrainLightComputeOutputSsbo: return "TerrainLightComputeOutputSsbo";
         case RenderResourceId::LightDataSsbo:        return "LightDataSsbo";
+        case RenderResourceId::DynamicFullMapFbo:    return "DynamicFullMapFbo";
         case RenderResourceId::DynamicPropShadowSsbo: return "DynamicPropShadowSsbo";
         case RenderResourceId::Count:                return "Count";
     }
