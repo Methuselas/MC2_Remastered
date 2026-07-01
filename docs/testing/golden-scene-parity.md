@@ -35,7 +35,8 @@ that combined manifest.
 ## How sharp is the oracle? (mc2_01, measured)
 
 The mc2_01 floor (`golden_floors/mc2_01.json`, N=3 OFF captures, v0.4 deploy)
-classifies **195 fields EXACT**, only **3 DRIFT**, 4 ignored bookkeeping fields.
+classifies **195 fields EXACT**, **0 DRIFT**, 7 ignored (4 bookkeeping + the 3
+frame-count-proportional `*_samples` counters, see below).
 The 4 pixel fields — `pixel_sha_all` + `pixel_shas.{overview_center,ridge_lowangle,highangle_wide}`
 — are all **EXACT**. So a change to any of the three bookmark framings flips an
 exact `sha256` → BEYOND → parity FAIL, with the culprit bookmark named.
@@ -47,13 +48,40 @@ regressions. The three bookmarks cover `terrain_splat`, `sky`,
 touching pixels **outside** all three framings would not be caught — add a
 bookmark that frames the island's output (see *Sharpening*).
 
-### The 3 DRIFT fields (the actual noise floor)
+### Frame-count-proportional counters are IGNORED, not DRIFT (GOLDEN-PARITY-FRAMECOUNT-NORMALIZE-1)
 
 `render_health.frame_graph.{ambient_probe_samples, fbo_samples, viewport_probe_samples}`
-— GPU occupancy-query sample counts, which vary run to run. They are DRIFT (range
-tolerance) and never fail parity on their own. Everything load-bearing
-(`registry_hash`, `exe_md5`, every `pass_counters.*`, every `render_health` flag/
-mismatch counter, and every pixel `sha`) is EXACT.
+are **cumulative per-frame occupancy-query counts**: each probe fires once per
+pass per *frame*, so the absolute value is proportional to how many frames the run
+reached inside the fixed 30 s window. **Every Vulkan island runs at a different
+framerate** (an island adds per-frame cost), so a gate-ON run reaches fewer frames
+than gate-OFF and all three counters scale down proportionally. That is pure
+frame-count variance, **not** a render/layout signal.
+
+They are now classified **IGNORE** (`IGNORE_SUFFIXES` in `golden_compare.py`), not
+DRIFT. Why not DRIFT: the drift tolerance is `[min − pad, max + pad]` over the
+sampled OFF floor. When the N OFF captures happen to run at similar high
+framerates the sampled range is *tight*, and a slower ON island's much lower count
+falls outside the padded envelope → a **false BEYOND** even though pixels are
+byte-identical. This actually happened on `mc2_01` / `MC2_VULKAN_EDGE_FOG_ISLAND`:
+OFF ≈ 2400 frames vs ON ≈ 1735, samples `25267 → 14305` (fbo `29477 → 16688`),
+identical fbo:probe ratio `1.167` both, **0 pixels changed**, yet the old floor
+reported `within_floor=False culprits=frame_graph.{ambient_probe,fbo,viewport_probe}_samples`.
+
+Why IGNORE and not per-frame normalization (option b): the combined manifest has
+**no reliable total-frame denominator** — the frame count is itself the volatile
+quantity, and `frame_graph.frame_graph_dryrun.frames` is 0 (dry-run disabled).
+Reclassifying to IGNORE is the clean, principled choice and preserves the most
+signal, because the **correctness** member of this same probe family is
+`*_mismatches` — `ambient_probe_mismatches`, `fbo_mismatches`,
+`viewport_probe_mismatches` — which stay **EXACT** and still gate: a nonzero
+mismatch means a pass ran under the wrong ambient/FBO/viewport state, a real
+regression. We drop ONLY the frame-proportional *counts*, never the *mismatches*.
+
+Everything load-bearing remains EXACT: `registry_hash`, `exe_md5`, every
+`pass_counters.*`, every `render_health` flag + `*_mismatches` counter, and every
+pixel `sha`. `golden_compare.py self-test` regression-guards this: frame-count-only
+divergence PASSES; a pixel-sha diff or a `*_mismatches` bump FAILS.
 
 ## The one-liner
 
@@ -148,3 +176,18 @@ py -3 scripts\run_golden_parity.py mc2_01 MC2_GOLDEN_PARITY_NOOP_SELFTEST --nois
 
 Verified result (v0.4 deploy):
 `RESULT: PASS scene=mc2_01 gate=MC2_GOLDEN_PARITY_NOOP_SELFTEST=1 within_floor=True pixel_oracle=SHARP(4 exact px fields) culprits=(none)` — exit 0.
+
+### Compare-layer self-test (no GPU, no game run)
+
+`golden_compare.py self-test` exercises the classifier directly on synthetic
+manifests — no deploy required — and regression-guards
+GOLDEN-PARITY-FRAMECOUNT-NORMALIZE-1:
+
+```powershell
+py -3 scripts\golden_compare.py self-test
+```
+
+Asserts, against a deliberately *tight* OFF floor: (1) frame-count-only divergence
+(the `*_samples` counters scaled down as a slower island would, pixels identical)
+→ WITHIN; (2) a pixel-`sha` diff → BEYOND; (3) a `*_mismatches` correctness bump →
+BEYOND. Exit 0 iff all three behave.
