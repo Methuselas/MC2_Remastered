@@ -36,6 +36,17 @@ struct IRenderBackend {
     // RENDER-BACKEND-IFACE-FBO-1 to route one more PostProcess FBO-bind edge; the
     // interface grows one edge at a time.
     virtual void bindFramebuffer(unsigned int fbo) = 0;
+
+    // Set the current viewport rectangle. GL impl == glViewport(x, y, w, h).
+    // Plain ints keep this file GL-free. Added by
+    // RENDER-BACKEND-IFACE-VIEWPORT-1 to route the composite-edge viewport ops.
+    virtual void setViewport(int x, int y, int w, int h) = 0;   // RENDER-BACKEND-IFACE-VIEWPORT-1
+
+    // Clear the current render target. `mask` is a plain uint (the GL buffer-bit
+    // mask) so this file stays GL-free; GL impl == glClearColor(r,g,b,a);
+    // glClear(mask). Added by RENDER-BACKEND-IFACE-CLEAR-1 to route the
+    // letterbox clear on the composite edge.
+    virtual void clear(unsigned int mask, float r, float g, float b, float a) = 0;  // RENDER-BACKEND-IFACE-CLEAR-1
 };
 
 }  // namespace RenderCore

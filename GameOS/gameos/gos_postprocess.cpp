@@ -2741,18 +2741,35 @@ void gosPostProcess::endScene()
         if (s_oobLetterbox) {
             const GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
             if (prevScissor) glDisable(GL_SCISSOR_TEST);
-            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
+            // RENDER-BACKEND-IFACE-CLEAR-1: route the OOB letterbox clear.
+            if (s_backendIface) {
+                RenderCore::getGLBackend().clear(GL_COLOR_BUFFER_BIT, 0.0f, 0.0f, 0.0f, 1.0f);
+            } else {
+                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+            }
             if (prevScissor) glEnable(GL_SCISSOR_TEST);
         }
         int bx, by, bw, bh;
         if (gos_Compute43Box(width_, height_, &bx, &by, &bw, &bh)) {
-            glViewport(0, 0, width_, height_);
-            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-            glViewport(bx, by, bw, bh);
+            // RENDER-BACKEND-IFACE-VIEWPORT-1 / -CLEAR-1: route FORCE-43 pillarbox.
+            if (s_backendIface) {
+                RenderCore::getGLBackend().setViewport(0, 0, width_, height_);
+                RenderCore::getGLBackend().clear(GL_COLOR_BUFFER_BIT, 0.0f, 0.0f, 0.0f, 1.0f);
+                RenderCore::getGLBackend().setViewport(bx, by, bw, bh);
+            } else {
+                glViewport(0, 0, width_, height_);
+                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+                glViewport(bx, by, bw, bh);
+            }
         } else {
-            glViewport(0, 0, width_, height_);
+            // RENDER-BACKEND-IFACE-VIEWPORT-1: route the non-pillarbox composite viewport.
+            if (s_backendIface) {
+                RenderCore::getGLBackend().setViewport(0, 0, width_, height_);
+            } else {
+                glViewport(0, 0, width_, height_);
+            }
         }
     }
 
