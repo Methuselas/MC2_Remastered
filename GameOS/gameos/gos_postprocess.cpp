@@ -17,6 +17,7 @@
 #include "gl_state_guard.h"  // GLSTATE-GUARD-ADOPTION-1: GlScopedTextureUnit (composite tex-unit leak)
 #include "../../RenderCore/PipelineRegistry.h"  // POSTPROCESS-COMPOSITE-REGISTRATION-1
 #include "pipeline_binder.h"                     // applyPipeline — composite FF state
+#include "GLBackend.h"                           // RENDER-BACKEND-IFACE-POSTPROCESS-1: getGLBackend()
 #include "render_frame_plan.h"                   // RENDER-FRAME-PLAN-SCAFFOLD-1
 #include "gos_cluster_depth_pyramid.h"  // CLUSTER-DEPTH-PYRAMID-NATIVE-1 (gated substrate)
 #include "gos_lightgrid_build.h"         // MC2-LIGHTGRID-BUILD-NATIVE-1 (gated, inert)
@@ -2678,8 +2679,21 @@ void gosPostProcess::endScene()
     runFogOob();
     executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::FogOob);
 
-    // Bind default framebuffer
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // Bind default framebuffer (the backbuffer) for the composite output edge.
+    // RENDER-BACKEND-IFACE-POSTPROCESS-1: first render-backend boundary route.
+    // Gate MC2_RENDER_BACKEND_IFACE (default-OFF). OFF = direct GL, byte-
+    // identical. ON = the SAME glBindFramebuffer(0) via GLBackend — both GL, so
+    // output is identical; the gate just proves the seam routes. The interface
+    // grows one edge at a time; only this bind is routed in this slice.
+    static const bool s_backendIface = []() {
+        const char* v = getenv("MC2_RENDER_BACKEND_IFACE");
+        return v && v[0] == '1';
+    }();
+    if (s_backendIface) {
+        RenderCore::getGLBackend().bindBackbuffer();
+    } else {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
     // [FORCE-43 v1] Pillarbox the final scene composite into a centered 4:3
     // rect with black bars. The scene FBO content (4:3 world stretched into the
     // 16:9 target) un-stretches when drawn into a 4:3 rect. Mouse is remapped

@@ -59,6 +59,7 @@ set(SOURCES ${SOURCES}
     gos_frame_pass_stats.cpp
     draw_packet_emitter.cpp
     pipeline_binder.cpp
+    GLBackend.cpp
     view_uniforms_gl.cpp
     debug_state_dump.cpp
     dbg_asset_globals.cpp
