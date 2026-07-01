@@ -16,9 +16,12 @@ int main(int argc, char** argv) {
     bool shaders  = mc2_vulkan_probe_shaders(spvDir);
     // VULKAN-FULLSCREEN-TRIANGLE-1: full headless offscreen render + readback.
     bool triangle = mc2_vulkan_probe_triangle(spvDir);
+    // VULKAN-DESCRIPTOR-SMOKE-1: headless descriptor-set plumbing probe. With
+    // MC2_VULKAN_VALIDATION set, zero validation errors is the real proof.
+    bool descriptors = mc2_vulkan_probe_descriptors();
     // Fail-soft re-check: a bogus spv dir must log + return false, no crash.
     bool failSoft = !mc2_vulkan_probe_triangle("this/dir/does/not/exist");
-    std::printf("[vulkan_shader_probe] caps=%d shaders=%d triangle=%d failSoftOK=%d\n",
-                caps ? 1 : 0, shaders ? 1 : 0, triangle ? 1 : 0, failSoft ? 1 : 0);
-    return (caps && shaders && triangle && failSoft) ? 0 : 1;
+    std::printf("[vulkan_shader_probe] caps=%d shaders=%d triangle=%d descriptors=%d failSoftOK=%d\n",
+                caps ? 1 : 0, shaders ? 1 : 0, triangle ? 1 : 0, descriptors ? 1 : 0, failSoft ? 1 : 0);
+    return (caps && shaders && triangle && descriptors && failSoft) ? 0 : 1;
 }

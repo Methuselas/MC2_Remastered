@@ -46,6 +46,17 @@ bool mc2_vulkan_probe_shaders(const char* spvDir);
 // false on any error. spvDir = directory holding the compiled .spv files.
 bool mc2_vulkan_probe_triangle(const char* spvDir);
 
+// VULKAN-DESCRIPTOR-SMOKE-1: headless descriptor-set plumbing probe.
+// Creates a headless VkDevice (no surface/swapchain/render), builds a
+// VkDescriptorSetLayout mirroring the inventory's Set-0 shape (binding 0 = UBO,
+// binding 1 = SSBO), a VkDescriptorPool, allocates a VkDescriptorSet, creates a
+// small uniform + storage VkBuffer, binds them to the set via
+// vkUpdateDescriptorSets, then destroys everything. With MC2_VULKAN_VALIDATION
+// set the KHRONOS validation layer is enabled and ZERO validation errors is the
+// real proof the descriptors are wired correctly. Fail-soft: any VkResult error
+// -> log + return false. No pipeline/renderpass/draw needed.
+bool mc2_vulkan_probe_descriptors();
+
 // Returns true if a VkInstance was created, at least one physical device was
 // enumerated, and the capability dump completed. Fail-soft: logs + returns
 // false on any error.

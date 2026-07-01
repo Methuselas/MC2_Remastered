@@ -595,6 +595,295 @@ done:
     return ok;
 }
 
+// ============================================================================
+// VULKAN-DESCRIPTOR-SMOKE-1: headless descriptor-set plumbing probe.
+// Builds a Set-0-shaped descriptor set layout (binding 0 = UBO, binding 1 =
+// SSBO, mirroring VULKAN-DESCRIPTOR-INVENTORY-1's per-frame global set) + pool
+// + set, creates a small uniform + storage buffer, binds them via
+// vkUpdateDescriptorSets, destroys all. No pipeline/renderpass/draw. With
+// MC2_VULKAN_VALIDATION set, a debug-utils messenger catches any validation
+// error/warning and flips the probe to FAIL -- ZERO validation errors is the
+// real proof the descriptor plumbing is wired correctly.
+// Fail-soft: any VkResult error -> log + return false.
+// ============================================================================
+
+namespace {
+
+// Set by the debug messenger callback if the validation layer ever reports an
+// error or warning during the descriptor probe. File-static so the C callback
+// (which has no user-data plumbing here) can reach it. The probe is one-shot
+// and single-threaded, so a plain flag is sufficient.
+bool g_desc_validation_saw_error = false;
+
+VKAPI_ATTR VkBool32 VKAPI_CALL desc_debug_cb(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT /*types*/,
+    const VkDebugUtilsMessengerCallbackDataEXT* pData,
+    void* /*user*/) {
+    if (severity & (VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+                    VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)) {
+        g_desc_validation_saw_error = true;
+        log("desc-probe: VALIDATION: %s",
+            pData && pData->pMessage ? pData->pMessage : "(no message)");
+    }
+    return VK_FALSE;
+}
+
+} // namespace
+
+bool mc2_vulkan_probe_descriptors() {
+    g_desc_validation_saw_error = false;
+
+    // ---- Optional validation layer + debug-utils messenger ------------------
+    std::vector<const char*> layers;
+    std::vector<const char*> instExts;
+    bool wantValidation = std::getenv("MC2_VULKAN_VALIDATION") != nullptr;
+    if (wantValidation) {
+        uint32_t layerCount = 0;
+        vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+        std::vector<VkLayerProperties> avail(layerCount);
+        if (layerCount) vkEnumerateInstanceLayerProperties(&layerCount, avail.data());
+        const char* want = "VK_LAYER_KHRONOS_validation";
+        bool found = false;
+        for (const auto& lp : avail) {
+            if (std::strcmp(lp.layerName, want) == 0) { found = true; break; }
+        }
+        if (found) {
+            layers.push_back(want);
+            instExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            log("desc-probe: validation layer %s enabled", want);
+        } else {
+            wantValidation = false;
+            log("desc-probe: validation requested but %s not available; continuing without", want);
+        }
+    }
+
+    // ---- VkInstance (headless) ----------------------------------------------
+    VkApplicationInfo app{};
+    app.sType            = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app.pApplicationName = "MC2 (Vulkan descriptor probe)";
+    app.pEngineName      = "MC2-GameOS";
+    app.apiVersion       = VK_API_VERSION_1_1;
+
+    VkInstanceCreateInfo ici{};
+    ici.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    ici.pApplicationInfo        = &app;
+    ici.enabledLayerCount       = static_cast<uint32_t>(layers.size());
+    ici.ppEnabledLayerNames     = layers.empty() ? nullptr : layers.data();
+    ici.enabledExtensionCount   = static_cast<uint32_t>(instExts.size());
+    ici.ppEnabledExtensionNames = instExts.empty() ? nullptr : instExts.data();
+
+    VkInstance instance = VK_NULL_HANDLE;
+    VkResult r = vkCreateInstance(&ici, nullptr, &instance);
+    if (r != VK_SUCCESS) {
+        log("desc-probe: vkCreateInstance failed (VkResult=%d). fail-soft.", (int)r);
+        return false;
+    }
+
+    // ---- Debug messenger (only if validation enabled) -----------------------
+    VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
+    if (wantValidation) {
+        auto pfnCreate = (PFN_vkCreateDebugUtilsMessengerEXT)
+            vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+        if (pfnCreate) {
+            VkDebugUtilsMessengerCreateInfoEXT mci{};
+            mci.sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+            mci.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+            mci.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+            mci.pfnUserCallback = desc_debug_cb;
+            pfnCreate(instance, &mci, nullptr, &messenger);
+        } else {
+            log("desc-probe: vkCreateDebugUtilsMessengerEXT not found; continuing (no error capture)");
+        }
+    }
+
+    // ---- Physical device + queue family -------------------------------------
+    uint32_t devCount = 0;
+    r = vkEnumeratePhysicalDevices(instance, &devCount, nullptr);
+    if (r != VK_SUCCESS || devCount == 0) {
+        log("desc-probe: no physical devices (VkResult=%d, count=%u). fail-soft.", (int)r, devCount);
+        if (messenger) {
+            auto d = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+            if (d) d(instance, messenger, nullptr);
+        }
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+    std::vector<VkPhysicalDevice> devs(devCount);
+    vkEnumeratePhysicalDevices(instance, &devCount, devs.data());
+    VkPhysicalDevice phys = devs[0];
+
+    uint32_t qfCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, nullptr);
+    if (qfCount == 0) {
+        log("desc-probe: no queue families. fail-soft.");
+        if (messenger) {
+            auto d = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+            if (d) d(instance, messenger, nullptr);
+        }
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+
+    float prio = 1.0f;
+    VkDeviceQueueCreateInfo qci{};
+    qci.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    qci.queueFamilyIndex = 0;
+    qci.queueCount       = 1;
+    qci.pQueuePriorities = &prio;
+
+    VkDeviceCreateInfo dci{};
+    dci.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    dci.queueCreateInfoCount = 1;
+    dci.pQueueCreateInfos    = &qci;
+
+    VkDevice device = VK_NULL_HANDLE;
+    r = vkCreateDevice(phys, &dci, nullptr, &device);
+    if (r != VK_SUCCESS) {
+        log("desc-probe: vkCreateDevice failed (VkResult=%d). fail-soft.", (int)r);
+        if (messenger) {
+            auto d = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+            if (d) d(instance, messenger, nullptr);
+        }
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+
+    // Everything past here is cleaned up via the single `done` epilogue.
+    bool ok = false;
+    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+    VkDescriptorPool      pool   = VK_NULL_HANDLE;
+    VkDescriptorSet       set    = VK_NULL_HANDLE; // freed with the pool
+    VkBuffer       ubo     = VK_NULL_HANDLE;
+    VkDeviceMemory uboMem  = VK_NULL_HANDLE;
+    VkBuffer       ssbo    = VK_NULL_HANDLE;
+    VkDeviceMemory ssboMem = VK_NULL_HANDLE;
+
+    // ---- Descriptor set layout: binding0=UBO, binding1=SSBO (Set-0 shape) ---
+    {
+        VkDescriptorSetLayoutBinding binds[2]{};
+        binds[0].binding         = 0; // ViewUniformsUbo analog
+        binds[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        binds[0].descriptorCount = 1;
+        binds[0].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        binds[1].binding         = 1; // LightDataSsbo analog
+        binds[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binds[1].descriptorCount = 1;
+        binds[1].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+
+        VkDescriptorSetLayoutCreateInfo lci{};
+        lci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        lci.bindingCount = 2;
+        lci.pBindings    = binds;
+        r = vkCreateDescriptorSetLayout(device, &lci, nullptr, &layout);
+        if (r != VK_SUCCESS) { log("desc-probe: vkCreateDescriptorSetLayout failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Descriptor pool (1 UBO + 1 SSBO, 1 set) ----------------------------
+    {
+        VkDescriptorPoolSize sizes[2]{};
+        sizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        sizes[0].descriptorCount = 1;
+        sizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        sizes[1].descriptorCount = 1;
+
+        VkDescriptorPoolCreateInfo pci{};
+        pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pci.maxSets       = 1;
+        pci.poolSizeCount = 2;
+        pci.pPoolSizes    = sizes;
+        r = vkCreateDescriptorPool(device, &pci, nullptr, &pool);
+        if (r != VK_SUCCESS) { log("desc-probe: vkCreateDescriptorPool failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkDescriptorSetAllocateInfo dsai{};
+        dsai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        dsai.descriptorPool     = pool;
+        dsai.descriptorSetCount = 1;
+        dsai.pSetLayouts        = &layout;
+        r = vkAllocateDescriptorSets(device, &dsai, &set);
+        if (r != VK_SUCCESS) { log("desc-probe: vkAllocateDescriptorSets failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Small UBO + SSBO buffers (host-visible for simplicity) -------------
+    {
+        auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage,
+                               VkBuffer* outBuf, VkDeviceMemory* outMem) -> bool {
+            VkBufferCreateInfo bci{};
+            bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bci.size  = size;
+            bci.usage = usage;
+            VkResult rr = vkCreateBuffer(device, &bci, nullptr, outBuf);
+            if (rr != VK_SUCCESS) { log("desc-probe: vkCreateBuffer failed (%d). fail-soft.", (int)rr); return false; }
+            VkMemoryRequirements mr{};
+            vkGetBufferMemoryRequirements(device, *outBuf, &mr);
+            uint32_t mt = find_mem_type(phys, mr.memoryTypeBits,
+                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            if (mt == UINT32_MAX) { log("desc-probe: no host-visible memtype. fail-soft."); return false; }
+            VkMemoryAllocateInfo mai{};
+            mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            mai.allocationSize  = mr.size;
+            mai.memoryTypeIndex = mt;
+            rr = vkAllocateMemory(device, &mai, nullptr, outMem);
+            if (rr != VK_SUCCESS) { log("desc-probe: vkAllocateMemory failed (%d). fail-soft.", (int)rr); return false; }
+            vkBindBufferMemory(device, *outBuf, *outMem, 0);
+            return true;
+        };
+
+        // 144B mirrors ViewUniformsUbo POD (2x mat4 + vec4); 256B storage.
+        if (!make_buffer(144, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &ubo, &uboMem)) goto done;
+        if (!make_buffer(256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &ssbo, &ssboMem)) goto done;
+    }
+
+    // ---- Bind buffers to the set via vkUpdateDescriptorSets -----------------
+    {
+        VkDescriptorBufferInfo uboInfo{ ubo, 0, VK_WHOLE_SIZE };
+        VkDescriptorBufferInfo ssboInfo{ ssbo, 0, VK_WHOLE_SIZE };
+
+        VkWriteDescriptorSet writes[2]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = set;
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].pBufferInfo     = &uboInfo;
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = set;
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[1].pBufferInfo     = &ssboInfo;
+
+        vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+        log("desc-probe: descriptor set updated (binding0=UBO, binding1=SSBO).");
+    }
+
+    // Wiring succeeded. If validation was on, ZERO captured errors is the proof.
+    ok = !(wantValidation && g_desc_validation_saw_error);
+    if (wantValidation) {
+        log("desc-probe: validation active; saw_error=%d", g_desc_validation_saw_error ? 1 : 0);
+    }
+
+done:
+    if (ssboMem) vkFreeMemory(device, ssboMem, nullptr);
+    if (ssbo)    vkDestroyBuffer(device, ssbo, nullptr);
+    if (uboMem)  vkFreeMemory(device, uboMem, nullptr);
+    if (ubo)     vkDestroyBuffer(device, ubo, nullptr);
+    if (pool)    vkDestroyDescriptorPool(device, pool, nullptr); // frees the set
+    if (layout)  vkDestroyDescriptorSetLayout(device, layout, nullptr);
+    vkDestroyDevice(device, nullptr);
+    if (messenger) {
+        auto d = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+        if (d) d(instance, messenger, nullptr);
+    }
+    vkDestroyInstance(instance, nullptr);
+    log("desc-probe: %s -- cleaned up (device+instance destroyed).", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 bool mc2_vulkan_probe() {
     // ---- Optional validation layer (MC2_VULKAN_VALIDATION env) --------------
     std::vector<const char*> layers;
@@ -703,8 +992,11 @@ bool mc2_vulkan_probe_if_env() {
     bool shOk = mc2_vulkan_probe_shaders(spvDir ? spvDir : "shaders/vulkan");
     // VULKAN-FULLSCREEN-TRIANGLE-1: capstone -- full headless offscreen render.
     bool triOk = mc2_vulkan_probe_triangle(spvDir ? spvDir : "shaders/vulkan");
-    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d", ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0);
-    return ok && shOk && triOk;
+    // VULKAN-DESCRIPTOR-SMOKE-1: headless descriptor-set plumbing probe.
+    bool descOk = mc2_vulkan_probe_descriptors();
+    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d descriptors=%d",
+        ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0, descOk ? 1 : 0);
+    return ok && shOk && triOk && descOk;
 }
 
 #endif // MC2_VULKAN
