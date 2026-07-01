@@ -7,6 +7,7 @@
 #include "objmgr.h"
 #include "mover.h"
 #include "objtype.h"
+#include <cstdlib>                       // getenv (throwaway test hook)
 
 void populateProfileFromFit(FitIniFile& fit, UnitProfile& p) {
     // Optional, additive (grant-only, never clears). Stock .fits have no
@@ -18,6 +19,24 @@ void populateProfileFromFit(FitIniFile& fit, UnitProfile& p) {
         if (fit.readIdBoolean("Jump", jump) == NO_ERR && jump)
             p.baselineCapabilities.set(CAP_JUMP, true);
     }
+}
+
+// UNIT-PROFILE-SEAM-1 — THROWAWAY PROOF HOOK (remove after slice verify).
+// Repacking objects.pak in-session is infeasible, so this proves the
+// data-extensibility path the plan's Task 9 Step 4 requires: when
+// MC2_UNIT_PROFILE_TEST_GRANT_VEHICLE=1, parse an in-memory [UnitProfile]
+// Jump=TRUE buffer for a vehicle type through the REAL populateProfileFromFit
+// + FitIniFile in-RAM open path — exactly what a .fit edit would feed. The
+// vehicle gains CAP_JUMP (fact) but has no jump executor, so canPerform==false.
+void mc2_unitprofile_test_grant_vehicle(UnitProfile& p) {
+    static const bool on = mc2_unitprofile_parse_enabled(
+        getenv("MC2_UNIT_PROFILE_TEST_GRANT_VEHICLE"));
+    if (!on)
+        return;
+    static const char kBuf[] = "[UnitProfile]\nJump = TRUE\n";
+    FitIniFile mem;
+    if (mem.open(kBuf, (int)(sizeof(kBuf) - 1)) == NO_ERR)
+        populateProfileFromFit(mem, p);
 }
 
 // UNIT-PROFILE-SEAM-1: fill the state-dump witness array from live movers.
