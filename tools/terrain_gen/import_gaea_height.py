@@ -179,7 +179,11 @@ def run(cfg: dict, out_root: Path) -> dict:
     elev = (coarse * recipe.height.max_elevation + recipe.height.min_elevation).astype("<f4")
     elev.tofile(str(out / f"{name}.elev.r32"))
     if have_template:
-        _write_fit(out / f"{name}.fit", f"{name}.burnin", recipe)
+        # mission_ready: the template-pak path emits a directly game-launchable
+        # map, so the .fit MUST carry the minimal player/commander skeleton --
+        # a bare [ColorMap]/[Terrain] fit AVs Mission::init (no commanders
+        # created; see _mission_skeleton_blocks in terrain_gen.py).
+        _write_fit(out / f"{name}.fit", f"{name}.burnin", recipe, mission_ready=True)
 
     # colormap (burnin): use the Gaea color directly if present, else hillshade of height.
     burnin_res = recipe.burnin_resolution()
