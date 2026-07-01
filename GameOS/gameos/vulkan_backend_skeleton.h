@@ -57,6 +57,20 @@ bool mc2_vulkan_probe_triangle(const char* spvDir);
 // -> log + return false. No pipeline/renderpass/draw needed.
 bool mc2_vulkan_probe_descriptors();
 
+// VULKAN-SAMPLED-IMAGE-SMOKE-1: headless sampled-image + sampler descriptor probe.
+// Creates a headless VkDevice (no surface/swapchain/window/render), builds a
+// small device-local VkImage (8x8 RGBA8), clears it and transitions it to
+// SHADER_READ_ONLY via a one-shot command-buffer barrier, creates a VkImageView,
+// a linear+repeat VkSampler and (cheap) a compare VkSampler (compareEnable, one
+// of the shadow-sampler shapes the sampler recon identified), a descriptor set
+// with a COMBINED_IMAGE_SAMPLER binding, binds via vkUpdateDescriptorSets, then
+// destroys everything. Proves the sampled-image path Vulkan needs -- per-pass
+// rebind (GL) does not survive Vk; Vk needs explicit VkImage/View/Sampler +
+// COMBINED_IMAGE_SAMPLER descriptors. With MC2_VULKAN_VALIDATION set the KHRONOS
+// validation layer is enabled and ZERO validation errors is the real proof.
+// Fail-soft: any VkResult error -> log + return false.
+bool mc2_vulkan_probe_sampled_image();
+
 // Returns true if a VkInstance was created, at least one physical device was
 // enumerated, and the capability dump completed. Fail-soft: logs + returns
 // false on any error.

@@ -884,6 +884,412 @@ done:
     return ok;
 }
 
+// ============================================================================
+// VULKAN-SAMPLED-IMAGE-SMOKE-1: headless sampled-image + sampler descriptor.
+// Builds a small device-local VkImage (8x8 RGBA8), clears it + transitions to
+// SHADER_READ_ONLY via a one-shot cmd-buffer barrier, VkImageView, a linear+
+// repeat VkSampler + a compare VkSampler (compareEnable, shadow-sampler shape),
+// a descriptor set with a COMBINED_IMAGE_SAMPLER binding, binds via
+// vkUpdateDescriptorSets, destroys all. Proves the sampled-image path Vulkan
+// needs (per-pass rebind does not survive Vk). No swapchain/window/game path.
+// With MC2_VULKAN_VALIDATION set, ZERO validation errors is the real proof.
+// Fail-soft: any VkResult error -> log + return false.
+// ============================================================================
+
+namespace {
+
+bool g_img_validation_saw_error = false;
+
+VKAPI_ATTR VkBool32 VKAPI_CALL img_debug_cb(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT /*types*/,
+    const VkDebugUtilsMessengerCallbackDataEXT* pData,
+    void* /*user*/) {
+    if (severity & (VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+                    VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)) {
+        g_img_validation_saw_error = true;
+        log("img-probe: VALIDATION: %s",
+            pData && pData->pMessage ? pData->pMessage : "(no message)");
+    }
+    return VK_FALSE;
+}
+
+} // namespace
+
+bool mc2_vulkan_probe_sampled_image() {
+    g_img_validation_saw_error = false;
+    const uint32_t W = 8, H = 8;
+    const VkFormat FMT = VK_FORMAT_R8G8B8A8_UNORM;
+
+    // ---- Optional validation layer + debug-utils messenger ------------------
+    std::vector<const char*> layers;
+    std::vector<const char*> instExts;
+    bool wantValidation = std::getenv("MC2_VULKAN_VALIDATION") != nullptr;
+    if (wantValidation) {
+        uint32_t layerCount = 0;
+        vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+        std::vector<VkLayerProperties> avail(layerCount);
+        if (layerCount) vkEnumerateInstanceLayerProperties(&layerCount, avail.data());
+        const char* want = "VK_LAYER_KHRONOS_validation";
+        bool found = false;
+        for (const auto& lp : avail) {
+            if (std::strcmp(lp.layerName, want) == 0) { found = true; break; }
+        }
+        if (found) {
+            layers.push_back(want);
+            instExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            log("img-probe: validation layer %s enabled", want);
+        } else {
+            wantValidation = false;
+            log("img-probe: validation requested but %s not available; continuing without", want);
+        }
+    }
+
+    // ---- VkInstance (headless) ----------------------------------------------
+    VkApplicationInfo app{};
+    app.sType            = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app.pApplicationName = "MC2 (Vulkan sampled-image probe)";
+    app.pEngineName      = "MC2-GameOS";
+    app.apiVersion       = VK_API_VERSION_1_1;
+
+    VkInstanceCreateInfo ici{};
+    ici.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    ici.pApplicationInfo        = &app;
+    ici.enabledLayerCount       = static_cast<uint32_t>(layers.size());
+    ici.ppEnabledLayerNames     = layers.empty() ? nullptr : layers.data();
+    ici.enabledExtensionCount   = static_cast<uint32_t>(instExts.size());
+    ici.ppEnabledExtensionNames = instExts.empty() ? nullptr : instExts.data();
+
+    VkInstance instance = VK_NULL_HANDLE;
+    VkResult r = vkCreateInstance(&ici, nullptr, &instance);
+    if (r != VK_SUCCESS) {
+        log("img-probe: vkCreateInstance failed (VkResult=%d). fail-soft.", (int)r);
+        return false;
+    }
+
+    // ---- Debug messenger (only if validation enabled) -----------------------
+    VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
+    if (wantValidation) {
+        auto pfnCreate = (PFN_vkCreateDebugUtilsMessengerEXT)
+            vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+        if (pfnCreate) {
+            VkDebugUtilsMessengerCreateInfoEXT mci{};
+            mci.sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+            mci.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+            mci.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+            mci.pfnUserCallback = img_debug_cb;
+            pfnCreate(instance, &mci, nullptr, &messenger);
+        } else {
+            log("img-probe: vkCreateDebugUtilsMessengerEXT not found; continuing (no error capture)");
+        }
+    }
+
+    auto destroy_messenger = [&]() {
+        if (messenger) {
+            auto d = (PFN_vkDestroyDebugUtilsMessengerEXT)
+                vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+            if (d) d(instance, messenger, nullptr);
+        }
+    };
+
+    // ---- Physical device + graphics queue family ----------------------------
+    uint32_t devCount = 0;
+    r = vkEnumeratePhysicalDevices(instance, &devCount, nullptr);
+    if (r != VK_SUCCESS || devCount == 0) {
+        log("img-probe: no physical devices (VkResult=%d, count=%u). fail-soft.", (int)r, devCount);
+        destroy_messenger();
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+    std::vector<VkPhysicalDevice> devs(devCount);
+    vkEnumeratePhysicalDevices(instance, &devCount, devs.data());
+    VkPhysicalDevice phys = devs[0];
+
+    uint32_t qfCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, nullptr);
+    std::vector<VkQueueFamilyProperties> qfs(qfCount);
+    if (qfCount) vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, qfs.data());
+    uint32_t gfxFamily = UINT32_MAX;
+    for (uint32_t q = 0; q < qfCount; ++q) {
+        if (qfs[q].queueFlags & VK_QUEUE_GRAPHICS_BIT) { gfxFamily = q; break; }
+    }
+    if (gfxFamily == UINT32_MAX) {
+        log("img-probe: no graphics queue family. fail-soft.");
+        destroy_messenger();
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+
+    float prio = 1.0f;
+    VkDeviceQueueCreateInfo qci{};
+    qci.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    qci.queueFamilyIndex = gfxFamily;
+    qci.queueCount       = 1;
+    qci.pQueuePriorities = &prio;
+
+    VkDeviceCreateInfo dci{};
+    dci.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    dci.queueCreateInfoCount = 1;
+    dci.pQueueCreateInfos    = &qci;
+
+    VkDevice device = VK_NULL_HANDLE;
+    r = vkCreateDevice(phys, &dci, nullptr, &device);
+    if (r != VK_SUCCESS) {
+        log("img-probe: vkCreateDevice failed (VkResult=%d). fail-soft.", (int)r);
+        destroy_messenger();
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+    VkQueue queue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(device, gfxFamily, 0, &queue);
+
+    // Everything past here is cleaned up via the single `done` epilogue.
+    bool ok = false;
+    VkImage         image    = VK_NULL_HANDLE;
+    VkDeviceMemory  imageMem = VK_NULL_HANDLE;
+    VkImageView     view     = VK_NULL_HANDLE;
+    VkSampler       sampler  = VK_NULL_HANDLE;
+    VkSampler       cmpSampler = VK_NULL_HANDLE;
+    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+    VkDescriptorPool      pool   = VK_NULL_HANDLE;
+    VkDescriptorSet       set    = VK_NULL_HANDLE; // freed with the pool
+    VkCommandPool   cpool = VK_NULL_HANDLE;
+    VkCommandBuffer cbuf  = VK_NULL_HANDLE;
+    VkFence         fence = VK_NULL_HANDLE;
+
+    // ---- Device-local sampled VkImage (8x8 RGBA8) + memory + view -----------
+    {
+        VkImageCreateInfo ii{};
+        ii.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        ii.imageType     = VK_IMAGE_TYPE_2D;
+        ii.format        = FMT;
+        ii.extent        = {W, H, 1};
+        ii.mipLevels     = 1;
+        ii.arrayLayers   = 1;
+        ii.samples       = VK_SAMPLE_COUNT_1_BIT;
+        ii.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        // SAMPLED (shader read) + TRANSFER_DST (for the clear).
+        ii.usage         = VK_IMAGE_USAGE_SAMPLED_BIT |
+                           VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        r = vkCreateImage(device, &ii, nullptr, &image);
+        if (r != VK_SUCCESS) { log("img-probe: vkCreateImage failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkMemoryRequirements mr{};
+        vkGetImageMemoryRequirements(device, image, &mr);
+        uint32_t mt = find_mem_type(phys, mr.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (mt == UINT32_MAX) { log("img-probe: no device-local memtype for image. fail-soft."); goto done; }
+        VkMemoryAllocateInfo mai{};
+        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        mai.allocationSize  = mr.size;
+        mai.memoryTypeIndex = mt;
+        r = vkAllocateMemory(device, &mai, nullptr, &imageMem);
+        if (r != VK_SUCCESS) { log("img-probe: vkAllocateMemory(image) failed (%d). fail-soft.", (int)r); goto done; }
+        vkBindImageMemory(device, image, imageMem, 0);
+
+        VkImageViewCreateInfo vi{};
+        vi.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vi.image    = image;
+        vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.format   = FMT;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        r = vkCreateImageView(device, &vi, nullptr, &view);
+        if (r != VK_SUCCESS) { log("img-probe: vkCreateImageView failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Samplers: linear+repeat main; compare (shadow) sampler -------------
+    {
+        VkSamplerCreateInfo si{};
+        si.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        si.magFilter    = VK_FILTER_LINEAR;
+        si.minFilter    = VK_FILTER_LINEAR;
+        si.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.maxLod       = VK_LOD_CLAMP_NONE;
+        r = vkCreateSampler(device, &si, nullptr, &sampler);
+        if (r != VK_SUCCESS) { log("img-probe: vkCreateSampler(linear) failed (%d). fail-soft.", (int)r); goto done; }
+
+        // Shadow-compare sampler shape: linear PCF, clamp-to-edge, white border,
+        // compareEnable + LESS_OR_EQUAL (mirrors the PCF shadow sampler config).
+        VkSamplerCreateInfo cs{};
+        cs.sType         = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        cs.magFilter     = VK_FILTER_LINEAR;
+        cs.minFilter     = VK_FILTER_LINEAR;
+        cs.mipmapMode    = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        cs.addressModeU  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        cs.addressModeV  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        cs.addressModeW  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        cs.borderColor   = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+        cs.compareEnable = VK_TRUE;
+        cs.compareOp     = VK_COMPARE_OP_LESS_OR_EQUAL;
+        cs.maxLod        = VK_LOD_CLAMP_NONE;
+        r = vkCreateSampler(device, &cs, nullptr, &cmpSampler);
+        if (r != VK_SUCCESS) { log("img-probe: vkCreateSampler(compare) failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- One-shot cmd buffer: clear image + transition to SHADER_READ_ONLY --
+    {
+        VkCommandPoolCreateInfo pci{};
+        pci.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pci.queueFamilyIndex = gfxFamily;
+        r = vkCreateCommandPool(device, &pci, nullptr, &cpool);
+        if (r != VK_SUCCESS) { log("img-probe: vkCreateCommandPool failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkCommandBufferAllocateInfo cai{};
+        cai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cai.commandPool        = cpool;
+        cai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cai.commandBufferCount = 1;
+        r = vkAllocateCommandBuffers(device, &cai, &cbuf);
+        if (r != VK_SUCCESS) { log("img-probe: vkAllocateCommandBuffers failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkCommandBufferBeginInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        r = vkBeginCommandBuffer(cbuf, &bi);
+        if (r != VK_SUCCESS) { log("img-probe: vkBeginCommandBuffer failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+        // UNDEFINED -> TRANSFER_DST_OPTIMAL (for the clear).
+        VkImageMemoryBarrier toDst{};
+        toDst.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toDst.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+        toDst.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toDst.image               = image;
+        toDst.subresourceRange    = range;
+        toDst.srcAccessMask       = 0;
+        toDst.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cbuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDst);
+
+        VkClearColorValue clear{};
+        clear.float32[0] = 0.25f; clear.float32[1] = 0.5f;
+        clear.float32[2] = 0.75f; clear.float32[3] = 1.0f;
+        vkCmdClearColorImage(cbuf, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             &clear, 1, &range);
+
+        // TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL (the key transition).
+        VkImageMemoryBarrier toRead{};
+        toRead.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toRead.oldLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toRead.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        toRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toRead.image               = image;
+        toRead.subresourceRange    = range;
+        toRead.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toRead.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cbuf, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toRead);
+
+        r = vkEndCommandBuffer(cbuf);
+        if (r != VK_SUCCESS) { log("img-probe: vkEndCommandBuffer failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkFenceCreateInfo fnci{};
+        fnci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        r = vkCreateFence(device, &fnci, nullptr, &fence);
+        if (r != VK_SUCCESS) { log("img-probe: vkCreateFence failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkSubmitInfo si{};
+        si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.commandBufferCount = 1;
+        si.pCommandBuffers    = &cbuf;
+        r = vkQueueSubmit(queue, 1, &si, fence);
+        if (r != VK_SUCCESS) { log("img-probe: vkQueueSubmit failed (%d). fail-soft.", (int)r); goto done; }
+        r = vkWaitForFences(device, 1, &fence, VK_TRUE, 5ull * 1000 * 1000 * 1000);
+        if (r != VK_SUCCESS) { log("img-probe: vkWaitForFences failed/timeout (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Descriptor set layout: binding0 = COMBINED_IMAGE_SAMPLER -----------
+    {
+        VkDescriptorSetLayoutBinding bind{};
+        bind.binding         = 0;
+        bind.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bind.descriptorCount = 1;
+        bind.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutCreateInfo lci{};
+        lci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        lci.bindingCount = 1;
+        lci.pBindings    = &bind;
+        r = vkCreateDescriptorSetLayout(device, &lci, nullptr, &layout);
+        if (r != VK_SUCCESS) { log("img-probe: vkCreateDescriptorSetLayout failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Descriptor pool + set ----------------------------------------------
+    {
+        VkDescriptorPoolSize size{};
+        size.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        size.descriptorCount = 1;
+
+        VkDescriptorPoolCreateInfo pci{};
+        pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pci.maxSets       = 1;
+        pci.poolSizeCount = 1;
+        pci.pPoolSizes    = &size;
+        r = vkCreateDescriptorPool(device, &pci, nullptr, &pool);
+        if (r != VK_SUCCESS) { log("img-probe: vkCreateDescriptorPool failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkDescriptorSetAllocateInfo dsai{};
+        dsai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        dsai.descriptorPool     = pool;
+        dsai.descriptorSetCount = 1;
+        dsai.pSetLayouts        = &layout;
+        r = vkAllocateDescriptorSets(device, &dsai, &set);
+        if (r != VK_SUCCESS) { log("img-probe: vkAllocateDescriptorSets failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Bind the sampled image + sampler via vkUpdateDescriptorSets --------
+    {
+        VkDescriptorImageInfo imgInfo{};
+        imgInfo.sampler     = sampler;
+        imgInfo.imageView   = view;
+        imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet write{};
+        write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet          = set;
+        write.dstBinding      = 0;
+        write.descriptorCount = 1;
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo      = &imgInfo;
+
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        log("img-probe: descriptor set updated (binding0=COMBINED_IMAGE_SAMPLER, "
+            "image 8x8 RGBA8 in SHADER_READ_ONLY; +compare sampler created).");
+    }
+
+    // Wiring succeeded. If validation was on, ZERO captured errors is the proof.
+    ok = !(wantValidation && g_img_validation_saw_error);
+    if (wantValidation) {
+        log("img-probe: validation active; saw_error=%d", g_img_validation_saw_error ? 1 : 0);
+    }
+
+done:
+    if (fence)      vkDestroyFence(device, fence, nullptr);
+    if (cpool)      vkDestroyCommandPool(device, cpool, nullptr); // frees cbuf
+    if (pool)       vkDestroyDescriptorPool(device, pool, nullptr); // frees the set
+    if (layout)     vkDestroyDescriptorSetLayout(device, layout, nullptr);
+    if (cmpSampler) vkDestroySampler(device, cmpSampler, nullptr);
+    if (sampler)    vkDestroySampler(device, sampler, nullptr);
+    if (view)       vkDestroyImageView(device, view, nullptr);
+    if (imageMem)   vkFreeMemory(device, imageMem, nullptr);
+    if (image)      vkDestroyImage(device, image, nullptr);
+    vkDestroyDevice(device, nullptr);
+    destroy_messenger();
+    vkDestroyInstance(instance, nullptr);
+    log("img-probe: %s -- cleaned up (device+instance destroyed).", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 bool mc2_vulkan_probe() {
     // ---- Optional validation layer (MC2_VULKAN_VALIDATION env) --------------
     std::vector<const char*> layers;
@@ -994,9 +1400,11 @@ bool mc2_vulkan_probe_if_env() {
     bool triOk = mc2_vulkan_probe_triangle(spvDir ? spvDir : "shaders/vulkan");
     // VULKAN-DESCRIPTOR-SMOKE-1: headless descriptor-set plumbing probe.
     bool descOk = mc2_vulkan_probe_descriptors();
-    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d descriptors=%d",
-        ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0, descOk ? 1 : 0);
-    return ok && shOk && triOk && descOk;
+    // VULKAN-SAMPLED-IMAGE-SMOKE-1: headless sampled-image + sampler descriptor.
+    bool imgOk = mc2_vulkan_probe_sampled_image();
+    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d descriptors=%d sampled_image=%d",
+        ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0, descOk ? 1 : 0, imgOk ? 1 : 0);
+    return ok && shOk && triOk && descOk && imgOk;
 }
 
 #endif // MC2_VULKAN
