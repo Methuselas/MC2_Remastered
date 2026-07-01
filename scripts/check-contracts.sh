@@ -134,6 +134,7 @@ run_check "deploy_data_parity"     "py -3 scripts/check-deploy-data-parity.py --
 run_check "pass_coverage"          "py -3 scripts/check-pass-coverage.py --quiet"
 run_check "render_ctx_parity"      "py -3 scripts/check-editor-game-render-context-parity.py --quiet"
 run_check "editor_pass_parity"     "py -3 scripts/check-editor-pass-contract-parity.py --quiet"
+run_check "gated_layout_macros"    "py -3 scripts/check-gated-layout-macros.py --quiet"
 
 # ---------------------------------------------------------------------------
 # Summary table
