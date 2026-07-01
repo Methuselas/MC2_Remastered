@@ -32,6 +32,12 @@
 #include"move.h"
 #endif
 
+#include "collision_trace.h"
+
+//------------------------------------------------------------------------------
+// COLLISION-FACTS-1: TU-local telemetry accumulator (default-OFF, additive).
+namespace mc2_collision_trace { Counters g_counters = {false,0,0,0,0,0,0}; }
+
 //------------------------------------------------------------------------------
 // Static globals
 //CollisionSystem *collisionSystem = NULL;
@@ -310,7 +316,10 @@ void CollisionGrid::createGrid (void)
 		{
 			unsigned long gridIndex = x + y*xGridWidth;
 			CollisionGridNodePtr g = grid[gridIndex];
-			
+
+			if (g && mc2_collision_trace::g_counters.active)
+				mc2_collision_trace::g_counters.gridCells++;
+
 			while (g)
 			{
 				GameObjectPtr obj = g->object;
@@ -368,6 +377,9 @@ void CollisionGrid::checkGrid (GameObjectPtr obj1, CollisionGridNodePtr area)
 		GameObjectPtr obj2 = area->object;
 		area = area->next;
 
+		if (mc2_collision_trace::g_counters.active)
+			mc2_collision_trace::g_counters.pairsTested++;  // headline broadphase pair count
+
 		if (obj1 && obj2)
 		{
 			//-------------------------------------------------------------
@@ -381,10 +393,13 @@ void CollisionGrid::checkGrid (GameObjectPtr obj1, CollisionGridNodePtr area)
 				((obj1->getObjectClass() == TREE) && (obj2->getObjectClass() == TURRET)) ||
 				((obj1->getObjectClass() == EXPLOSION) && (obj2->getObjectClass() == EXPLOSION)))
 			{
-				
+				if (mc2_collision_trace::g_counters.active)
+					mc2_collision_trace::g_counters.culledPairs++;
 			}
 			else
 			{
+				if (mc2_collision_trace::g_counters.active)
+					mc2_collision_trace::g_counters.narrowChecks++;
 				//--------------------------------------------------------
 				// At this point, we have two objects in the same area
 				// and they can collide.  We now run the bigBoy detection
@@ -444,8 +459,10 @@ long CollisionSystem::init (FitIniFile *scenarioFile)
 //------------------------------------------------------------------------------
 void CollisionSystem::checkObjects (void)
 {
+	mc2_collision_trace::CollideScope _collideScope;  // COLLISION-FACTS-1 (default-OFF)
+
 	Stuff::Vector3D gridCenter(0L,0L,0L);
-	
+
 	collisionGrid->init(gridCenter);
 
 	//-----------------------------------------------------------
@@ -466,6 +483,8 @@ void CollisionSystem::checkObjects (void)
 			collisionGrid->add(objList[i]);
 			gosASSERT(result == NO_ERR);
 			objList[i]->handleStaticCollision();
+			if (mc2_collision_trace::g_counters.active)
+				mc2_collision_trace::g_counters.collidables++;
 		}
 	}
 
@@ -654,6 +673,9 @@ void CollisionSystem::checkExtents (GameObjectPtr obj1, GameObjectPtr obj2, floa
 	// -fs
 	if (!obj1->getExists() || !obj2->getExists())
 		return;
+
+	if (mc2_collision_trace::g_counters.active)
+		mc2_collision_trace::g_counters.hits++;  // actual collision handled
 
 	if ((obj1->getMoveLevel() == 2) || (obj2->getMoveLevel() == 2))
 	{
