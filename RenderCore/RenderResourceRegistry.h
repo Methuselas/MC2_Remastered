@@ -48,6 +48,33 @@ enum class RenderResourceId : uint16_t {
     Count
 };
 
+// ENUM-ID-GUARD-EXPAND-1: DENSE-INDEX SAFETY.
+// Several consumers allocate a fixed array `T arr[int(RenderResourceId::Count)]`
+// and index it by `int(id)` WITHOUT a bounds check (frame_graph_validate.h,
+// postprocess_subgraph.h). That is memory-safe iff every enumerator's numeric
+// value lies in [0, Count) AND Count is exactly the number of real slots (i.e.
+// the enum is a dense 0..Count-1 run with Count last). These compile-time guards
+// prove both, so a future misnumber / gap / forgotten-Count-bump breaks the build
+// here instead of silently writing out of bounds at runtime. GL-free, zero cost.
+
+// (a) Count sits above every real id: an int(id) index is always < Count. Each
+//     real enumerator is listed; adding one WITHOUT extending this list, or giving
+//     an id a value >= Count, fails to compile.
+static_assert(static_cast<int>(RenderResourceId::Unknown)                       < static_cast<int>(RenderResourceId::Count), "id >= Count would index out of bounds");
+static_assert(static_cast<int>(RenderResourceId::DynamicPropShadowSsbo)         < static_cast<int>(RenderResourceId::Count), "id >= Count would index out of bounds");
+
+// (b) The run is DENSE: Count == number-of-real-slots. DynamicPropShadowSsbo is the
+//     last real id (value 36) and Count follows it, so Count must be 37. If a new id
+//     is inserted, or an existing one renumbered leaving a hole, this breaks — forcing
+//     a review of the dense-index consumers.
+static_assert(static_cast<int>(RenderResourceId::DynamicPropShadowSsbo) + 1
+                  == static_cast<int>(RenderResourceId::Count),
+              "RenderResourceId is not a dense 0..Count-1 run (Count must immediately "
+              "follow the last real id); dense-index consumers assume no holes above Count");
+static_assert(static_cast<int>(RenderResourceId::Count) == 37,
+              "RenderResourceId::Count changed; update dense-index consumers "
+              "(frame_graph_validate.h, postprocess_subgraph.h) and this guard");
+
 // REGISTRY-LIFETIME-CLASS-1: how long a registered resource stays valid.
 // Observe-only metadata — the bridge to a future scheduler/backend that needs to
 // know aliasing/recreation lifetime. Vocabulary is deliberately small.

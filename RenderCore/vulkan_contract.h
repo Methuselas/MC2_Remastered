@@ -197,6 +197,10 @@ constexpr bool vkKindConsistent(RenderResourceKind kind, VkDescriptorClass cls) 
 // ---------------------------------------------------------------------------
 constexpr bool vkContractRowOk(const VkResourceContract& r) {
     return r.id   != RenderResourceId::Unknown
+        // ENUM-ID-GUARD-EXPAND-1: Count is the past-the-end sentinel, never a real
+        // resource; a row keyed on it would index out of bounds in dense-index consumers.
+        && r.id   != RenderResourceId::Count
+        && static_cast<int>(r.id) < static_cast<int>(RenderResourceId::Count)
         && r.kind != RenderResourceKind::Unknown
         && r.cls  != VkDescriptorClass::None
         && r.freq != VkResourceFreq::None
