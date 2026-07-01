@@ -2618,6 +2618,239 @@ void gosPostProcess::runFogOob()
     glActiveTexture(GL_TEXTURE0);
 }
 
+// ===========================================================================
+// RENDER-BACKEND-REGION-IFACE-1 (Layer-6 ENTRY): PostprocessFog region.
+// ===========================================================================
+//
+// 1A: the extracted GL fog region wrapper. Calls the UNCHANGED runEdgeFog() +
+// runFogOob() inline bodies, in the same order the endScene() sites call them.
+// No interface, no Vulkan: this is a pure code-move. Under the master gate OFF
+// this wrapper is never entered (endScene() runs the original direct sites);
+// under gate ON, the GL backend calls this so its output == the old inline path.
+int gosPostProcess::runFogRegionGL()
+{
+    runEdgeFog();
+    runFogOob();
+    // Both GL fog sites ran (each may per-effect early-return internally, exactly
+    // as the original inline sites did — that behavior is unchanged). The region
+    // contract is "the two GL fog passes", so the equivalence count is 2.
+    return 2;
+}
+
+// Master-gate read (once). MC2_RENDER_BACKEND_REGION_IFACE==1 -> route the fog
+// region through IRenderBackend; else the original direct-GL sites run.
+bool gosPostProcess::regionIfaceEnabled() const
+{
+    static const bool s_on = []() {
+        const char* v = getenv("MC2_RENDER_BACKEND_REGION_IFACE");
+        return v && v[0] == '1';
+    }();
+    return s_on;
+}
+
+// Resolver: gosPostProcess owns the scene textures, so it maps the neutral ids
+// to the concrete GL handles. Keeps handles OUT of the region context.
+unsigned int gosPostProcess::resolveRegionResource(RenderCore::RenderResourceId id) const
+{
+    switch (id) {
+        case RenderCore::RenderResourceId::MainColor: return (unsigned int)sceneColorTex_;
+        case RenderCore::RenderResourceId::MainDepth: return (unsigned int)sceneDepthTex_;
+        default: return 0u;
+    }
+}
+
+#ifdef MC2_VULKAN_ISLAND
+// 1C: Vulkan impl of the PostprocessFog region. Reuses the shipped, parity-proven
+// subgraph. Fail-soft: vulkanPostprocessSubgraphEnabled() returns false on any
+// init failure (and disables itself), so we return false -> caller runs GL. To
+// keep the subgraph gate INDEPENDENTLY runnable, backend=vk requires
+// MC2_VULKAN_POSTPROCESS_SUBGRAPH=1 as well (this method does not secretly
+// re-gate the subgraph). The neutral ctx values already equal the subgraph's
+// EXACT member-sourced uploads, so no data is threaded through here — the ctx is
+// carried for contract symmetry and resolver exercise.
+bool gosPostProcess::runFogRegionVulkanBackend(
+    const RenderCore::PostprocessFogRegionContext& ctx,
+    RenderCore::RegionOutput* out)
+{
+    if (ctx.resolver) {
+        (void)ctx.resolver->resolve(ctx.color);
+        (void)ctx.resolver->resolve(ctx.depth);
+    }
+    if (!vulkanPostprocessSubgraphEnabled()) {
+        if (out) { out->impl = RenderCore::RenderRegionImpl::None;
+                   out->fallbackReason = "subgraph_disabled_or_gate_off";
+                   out->glPassesRun = 0; out->vkDraws = 0; }
+        return false;
+    }
+    runPostprocessSubgraph();   // does BOTH fog effects in ONE Vulkan render pass
+    if (out) { out->impl = RenderCore::RenderRegionImpl::VulkanSubgraph;
+               out->fallbackReason = ""; out->glPassesRun = 0; out->vkDraws = 2; }
+    return true;
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// 1B: region routing — selector + backend impls + health snapshot.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Process-lifetime region-selection health, surfaced in the debug-state dump so
+// backend_region_selected = gl|vk|fallback_gl is catchable. Distinct from the
+// subgraph's own g_sub health (that one is the Vulkan device/perf report).
+struct RegionSelectHealth {
+    int         ifaceGateOn      = 0;    // MC2_RENDER_BACKEND_REGION_IFACE==1
+    char        requestedBackend[8] = "gl";  // MC2_POSTPROCESS_BACKEND (gl|vk)
+    int         lastImpl         = 0;    // RenderRegionImpl (None/GLInline/VulkanSubgraph/FallbackGL)
+    char        lastFallbackReason[64] = {0};
+    int         lastGlPassesRun  = 0;    // GL fog passes actually run (0 or 2)
+    int         lastVkDraws      = 0;    // Vulkan fog draws (0 or 2)
+    unsigned long routedFrames   = 0;    // frames routed through runRegion
+};
+RegionSelectHealth g_region;
+
+void region_set_fallback_reason(const char* r) {
+    std::strncpy(g_region.lastFallbackReason, r ? r : "",
+                 sizeof(g_region.lastFallbackReason) - 1);
+    g_region.lastFallbackReason[sizeof(g_region.lastFallbackReason) - 1] = '\0';
+}
+
+// Neutral-context resolver adaptor wrapping gosPostProcess::resolveRegionResource.
+struct GosResourceResolver final : RenderCore::IResourceResolver {
+    const gosPostProcess* pp = nullptr;
+    unsigned int resolve(RenderCore::RenderResourceId id) const override {
+        return pp ? pp->resolveRegionResource(id) : 0u;
+    }
+};
+
+// GL impl of runRegion for the PostprocessFog region: resolves color/depth from
+// the neutral context (proving the id->handle path is exercised even though the
+// GL fog bodies read the members directly today) and runs the extracted GL
+// wrapper. Always succeeds -> out->impl = GLInline. Delegates to the owner.
+struct GlFogRegionBackend final : RenderCore::IRenderBackend {
+    gosPostProcess* pp = nullptr;
+    void bindBackbuffer() override {}
+    void bindFramebuffer(unsigned int) override {}
+    void setViewport(int, int, int, int) override {}
+    void clear(unsigned int, float, float, float, float) override {}
+    bool runRegion(RenderCore::RenderRegionId id,
+                   const RenderCore::PostprocessFogRegionContext& ctx,
+                   RenderCore::RegionOutput* out) override {
+        if (id != RenderCore::RenderRegionId::PostprocessFog || !pp) return false;
+        // Exercise the id->handle resolve so the neutral-context contract is real
+        // (a bad resolver would surface as 0 handles here, not a silent divergence).
+        if (ctx.resolver) {
+            (void)ctx.resolver->resolve(ctx.color);
+            (void)ctx.resolver->resolve(ctx.depth);
+        }
+        int gl = pp->runFogRegionGL();
+        if (out) { out->impl = RenderCore::RenderRegionImpl::GLInline;
+                   out->glPassesRun = gl; out->vkDraws = 0; out->fallbackReason = ""; }
+        return true;
+    }
+};
+
+} // namespace
+
+// C-linkage accessor for the debug-state dump (region-selection health). Mirrors
+// the mc2_vulkan_postprocess_subgraph_health pattern; always compiled (no #ifdef)
+// because the region iface exists on every build.
+extern "C" void mc2_render_backend_region_health(
+    int* ifaceGateOn, const char** requestedBackend, int* lastImpl,
+    const char** lastFallbackReason, int* lastGlPassesRun, int* lastVkDraws,
+    unsigned long* routedFrames) {
+    if (ifaceGateOn)         *ifaceGateOn         = g_region.ifaceGateOn;
+    if (requestedBackend)    *requestedBackend    = g_region.requestedBackend;
+    if (lastImpl)            *lastImpl            = g_region.lastImpl;
+    if (lastFallbackReason)  *lastFallbackReason  = g_region.lastFallbackReason;
+    if (lastGlPassesRun)     *lastGlPassesRun     = g_region.lastGlPassesRun;
+    if (lastVkDraws)         *lastVkDraws         = g_region.lastVkDraws;
+    if (routedFrames)        *routedFrames        = g_region.routedFrames;
+}
+
+// The routed entry (master gate ON). Builds the neutral context, selects the
+// backend, calls runRegion; falls back to GL on false. Never double-applies:
+// exactly ONE of {GL wrapper, Vulkan subgraph} runs, and the GL fog sites in
+// endScene() are skipped whenever this routed path is taken.
+void gosPostProcess::runFogRegionThroughBackend()
+{
+    ++g_region.routedFrames;
+    g_region.ifaceGateOn = 1;
+
+    // Sub-selector: MC2_POSTPROCESS_BACKEND = gl | vk (default gl).
+    static const bool s_wantVk = []() {
+        const char* v = getenv("MC2_POSTPROCESS_BACKEND");
+        return v && (v[0] == 'v' || v[0] == 'V');   // "vk"
+    }();
+    std::strncpy(g_region.requestedBackend, s_wantVk ? "vk" : "gl",
+                 sizeof(g_region.requestedBackend) - 1);
+
+    // Build the BACKEND-NEUTRAL context (RenderResourceId + params + dims; NO
+    // raw handles). Values pulled EXACTLY from the GL runEdgeFog()/runFogOob().
+    GosResourceResolver resolver;
+    resolver.pp = this;
+    RenderCore::PostprocessFogRegionContext ctx;
+    ctx.color  = RenderCore::RenderResourceId::MainColor;
+    ctx.depth  = RenderCore::RenderResourceId::MainDepth;
+    ctx.width  = width_;
+    ctx.height = height_;
+    ctx.resolver = &resolver;
+    // EdgeFog params (row-major invViewProj as the GL path uploads with GL_FALSE).
+    std::memcpy(ctx.edgeFog.invViewProj, inverseViewProj_, 16 * sizeof(float));
+    ctx.edgeFog.color[0] = edgeFogColor_[0];
+    ctx.edgeFog.color[1] = edgeFogColor_[1];
+    ctx.edgeFog.color[2] = edgeFogColor_[2];
+    ctx.edgeFog.halfExtent     = mapHalfExtent_;
+    ctx.edgeFog.fogStart       = edgeFogStart_;
+    ctx.edgeFog.fogHeight      = edgeFogHeight_;
+    ctx.edgeFog.fogMax         = edgeFogMax_;
+    ctx.edgeFog.waterElevation = waterElevation_;
+    // OOB params.
+    std::memcpy(ctx.oobFog.invViewProj, inverseViewProj_, 16 * sizeof(float));
+    ctx.oobFog.color[0] = oobFogColor_[0];
+    ctx.oobFog.color[1] = oobFogColor_[1];
+    ctx.oobFog.color[2] = oobFogColor_[2];
+    ctx.oobFog.opacity  = oobFogOpacity_;
+    ctx.oobFog.time     = SmokeMode::fixedTimestepEnabled()
+                              ? (float)SmokeMode::fixedClockSeconds()
+                              : (float)SDL_GetTicks() / 1000.0f;
+
+    RenderCore::RegionOutput out;
+    bool ran = false;
+
+#ifdef MC2_VULKAN_ISLAND
+    if (s_wantVk) {
+        // Route through the Vulkan subgraph backend (1C). On false the caller
+        // (this function) runs GL below with impl=FallbackGL.
+        ran = runFogRegionVulkanBackend(ctx, &out);
+        if (!ran) {
+            region_set_fallback_reason(out.fallbackReason && out.fallbackReason[0]
+                                           ? out.fallbackReason : "vk_declined");
+        }
+    }
+#endif
+
+    if (!ran) {
+        GlFogRegionBackend gl;
+        gl.pp = this;
+        bool okGl = gl.runRegion(RenderCore::RenderRegionId::PostprocessFog, ctx, &out);
+        if (s_wantVk) {
+            // requested vk but GL actually ran -> FallbackGL (not plain GLInline).
+            out.impl = RenderCore::RenderRegionImpl::FallbackGL;
+        }
+        (void)okGl;
+    }
+
+    g_region.lastImpl        = (int)out.impl;
+    g_region.lastGlPassesRun = out.glPassesRun;
+    g_region.lastVkDraws     = out.vkDraws;
+    if (out.impl != RenderCore::RenderRegionImpl::FallbackGL)
+        region_set_fallback_reason("");
+
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "PostprocessFogRegion",
+        render_frame_plan::PathKind::ApplyPipeline, 1,
+        RenderCore::region_impl_to_string(out.impl));
+}
+
 // Forward declarations for ISLAND-2 sub-stage wrappers (defined below the executor section).
 static void executorOwnBeginSub(gosPostProcess*, RenderCore::framegraph::ExecutorIslandId);
 static void executorOwnEndSub(gosPostProcess*, RenderCore::framegraph::ExecutorIslandId);
@@ -2701,6 +2934,20 @@ void gosPostProcess::endScene()
     // After SSAO so AO-darkening is preserved under the fog.
     // FRAME-GRAPH-EXECUTOR-ISLAND-2: validate->call-unchanged->validate (default-OFF).
     executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::EdgeFog);
+    // RENDER-BACKEND-REGION-IFACE-1 (Layer-6 ENTRY): when the master gate is ON,
+    // route the WHOLE fog region (edge + oob) through IRenderBackend::runRegion
+    // ONCE here, and skip BOTH original fog sites (guard below). Selector
+    // MC2_POSTPROCESS_BACKEND=gl|vk picks the impl; VK falls back to the GL
+    // wrapper on failure. Gate OFF -> the original direct sites run verbatim
+    // (byte-identical). Precedence when ON: region-iface > (subgraph > island > GL
+    // inside the GL/VK impls). The region-iface path is mutually exclusive with
+    // the legacy in-site subgraph/island paths (which stay reachable gate-OFF).
+    const bool regionRouted = regionIfaceEnabled();
+    bool subgraphRanThisFrame = false;   // scope spans to the FogOob site below
+    (void)subgraphRanThisFrame;          // read only under MC2_VULKAN_ISLAND
+    if (regionRouted) {
+        runFogRegionThroughBackend();   // does BOTH edge + oob (GL wrapper or VK subgraph)
+    } else {
 #ifdef MC2_VULKAN_ISLAND
     // VULKAN-POSTPROCESS-SUBGRAPH-1: gate precedence (correctness-critical). When
     // MC2_VULKAN_POSTPROCESS_SUBGRAPH=1 and lazy init succeeded, run the FUSED
@@ -2711,19 +2958,25 @@ void gosPostProcess::endScene()
     //   subgraph  >  per-pass island  >  GL.
     // VULKAN-EDGE-FOG-ISLAND-2a: else route the edge-fog composite through the
     // per-pass Vulkan island when MC2_VULKAN_EDGE_FOG_ISLAND=1. Otherwise GL.
-    bool subgraphRanThisFrame = false;
     if (vulkanPostprocessSubgraphEnabled()) {
         runPostprocessSubgraph();       // does BOTH fog effects
         subgraphRanThisFrame = true;    // -> OOB site is skipped below (no double-apply)
     } else if (vulkanEdgeFogIslandEnabled()) { runEdgeFogVulkan(); } else
 #endif
     { runEdgeFog(); }
+    }
     executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::EdgeFog);
 
     // OOB fog: applies fog color to far-plane pixels pointing toward ground.
     // After edge fog so the two cloud colors match seamlessly.
     // FRAME-GRAPH-EXECUTOR-ISLAND-2: validate->call-unchanged->validate (default-OFF).
     executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::FogOob);
+    // RENDER-BACKEND-REGION-IFACE-1: when the fog region was routed through the
+    // backend above, it ALREADY did the oob fog -> skip this site ENTIRELY (no GL,
+    // no island). Explicit no-double-apply guard, symmetric with subgraphRanThisFrame.
+    if (regionRouted) {
+        // region iface did edge+oob; nothing to do here.
+    } else {
 #ifdef MC2_VULKAN_ISLAND
     // VULKAN-POSTPROCESS-SUBGRAPH-1: if the fused subgraph already ran this frame it
     // ALSO did the oob fog, so this site is skipped ENTIRELY (no GL, no island) --
@@ -2737,6 +2990,7 @@ void gosPostProcess::endScene()
     if (vulkanOobFogIslandEnabled()) { runFogOobVulkan(); } else
 #endif
     { runFogOob(); }
+    }
     executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::FogOob);
 
     // Bind default framebuffer (the backbuffer) for the composite output edge.

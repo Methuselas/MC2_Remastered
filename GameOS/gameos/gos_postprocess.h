@@ -3,6 +3,8 @@
 
 #include "utils/gl_utils.h"
 
+#include "../../RenderCore/RenderRegionId.h"   // RENDER-BACKEND-REGION-IFACE-1 (relative: reachable from every TU that includes this header, incl. RenderWorld)
+
 struct glsl_program;
 
 class gosPostProcess {
@@ -323,6 +325,36 @@ public:
     glsl_program* edgeFogProg_ = nullptr;
     void  runEdgeFog();
 
+    // RENDER-BACKEND-REGION-IFACE-1 (Layer-6 ENTRY). The PostprocessFog region
+    // (EdgeFog + OOB fog) made SELECTABLE GL-vs-Vulkan through IRenderBackend.
+    //
+    // Master gate MC2_RENDER_BACKEND_REGION_IFACE (default OFF): OFF -> the
+    // ORIGINAL direct-GL fog sites run (abstraction fully skipped, byte-identical).
+    // ON -> endScene() routes the fog region through runFogRegionThroughBackend(),
+    // which builds the backend-neutral context, selects the backend
+    // (MC2_POSTPROCESS_BACKEND=gl|vk, default gl), and calls
+    // IRenderBackend::runRegion(); GL falls back on any failure.
+    bool regionIfaceEnabled() const;   // MC2_RENDER_BACKEND_REGION_IFACE==1
+
+    // 1A: the extracted GL fog region wrapper. Calls runEdgeFog() then runFogOob()
+    // UNCHANGED (same two inline bodies, same order). Returns the number of GL fog
+    // passes that actually executed (always 2 here; the inner run*() early-returns
+    // still short-circuit per-effect but the wrapper's contract is "run both GL
+    // sites"). This is what the GL backend's runRegion() invokes.
+    int  runFogRegionGL();
+
+    // 1B: the routed entry called from endScene() when the master gate is ON. Builds
+    // the neutral context, picks the backend by MC2_POSTPROCESS_BACKEND, calls
+    // runRegion(); on false (VK unavailable/failed) runs runFogRegionGL(). Writes
+    // the region_impl / fallback_reason / equivalence counters to the health snapshot.
+    void runFogRegionThroughBackend();
+
+    // GL handle resolver for the region context. gosPostProcess owns
+    // sceneColorTex_/sceneDepthTex_, so IT is the resolver: MainColor->sceneColorTex_,
+    // MainDepth->sceneDepthTex_. Defined as a tiny adaptor in the .cpp; the neutral
+    // context carries a pointer to it (a resolver is a SERVICE, not a handle).
+    unsigned int resolveRegionResource(RenderCore::RenderResourceId id) const;
+
 #ifdef MC2_VULKAN_ISLAND
     // VULKAN-EDGE-FOG-ISLAND-2a: the first REAL Vulkan render work in the frame
     // loop. When MC2_VULKAN_EDGE_FOG_ISLAND=1 AND lazy Vulkan init succeeds, the
@@ -372,6 +404,16 @@ public:
     bool  vulkanPostprocessSubgraphEnabled();
     void  runPostprocessSubgraph();
     void  destroyVulkanPostprocessSubgraph();
+
+    // RENDER-BACKEND-REGION-IFACE-1 (1C): Vulkan impl of runRegion for the
+    // PostprocessFog region. Returns false (fail-soft) if the subgraph is
+    // unavailable/failed this frame -> caller runs the GL wrapper (FallbackGL).
+    // On success runs runPostprocessSubgraph() and reports impl=VulkanSubgraph
+    // with vkDraws=2. Never crashes. Defined in gos_postprocess.cpp under the
+    // same #ifdef; the neutral context values already match the subgraph's
+    // EXACT uploads (both pull from the same members).
+    bool  runFogRegionVulkanBackend(const RenderCore::PostprocessFogRegionContext& ctx,
+                                     RenderCore::RegionOutput* out);
     struct VulkanPostprocessSubgraph;   // defined in vulkan_postprocess_subgraph.cpp
     VulkanPostprocessSubgraph* vkPostprocessSubgraph_ = nullptr;
 #endif

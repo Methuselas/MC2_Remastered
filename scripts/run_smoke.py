@@ -1519,6 +1519,15 @@ def main():
                             # runs the GL edge+oob fog path instead.
                             "MC2_VULKAN_POSTPROCESS_SUBGRAPH",
                             "MC2_VULKAN_POSTPROCESS_SUBGRAPH_FORCE_FALLBACK",
+                            # RENDER-BACKEND-REGION-IFACE-1 (Layer-6 ENTRY): master
+                            # gate + backend sub-selector for the SELECTABLE
+                            # PostprocessFog region. Without these in the allowlist
+                            # Popen drops them and the gate-ON smoke silently runs
+                            # the original direct-GL fog sites (region iface inert).
+                            # _FORCE_FALLBACK forces the VK impl to decline so the
+                            # FallbackGL path is provable under smoke.
+                            "MC2_RENDER_BACKEND_REGION_IFACE",
+                            "MC2_POSTPROCESS_BACKEND",
                             # VULKAN-ISLAND-VALIDATION-WIRING-1: opt-in Vulkan
                             # validation preset (off/core/sync/gpu-assisted/
                             # best-practices/debug-printf). Without this in the

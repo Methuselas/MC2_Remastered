@@ -62,6 +62,14 @@ extern "C" unsigned long mc2_ui_pass_entry_drift();
 extern "C" unsigned long mc2_ui_pass_ambient_samples();     // UI-PASS-MODEL-1
 extern "C" unsigned long mc2_ui_pass_ambient_mismatches();  // UI-PASS-MODEL-1
 
+// RENDER-BACKEND-REGION-IFACE-1 (Layer-6 ENTRY): PostprocessFog region-selection
+// health (defined in GameOS/gameos/gos_postprocess.cpp). ALWAYS compiled — the
+// region interface exists on every build (no Vulkan needed for the GL path).
+extern "C" void mc2_render_backend_region_health(
+    int* ifaceGateOn, const char** requestedBackend, int* lastImpl,
+    const char** lastFallbackReason, int* lastGlPassesRun, int* lastVkDraws,
+    unsigned long* routedFrames);
+
 #ifdef MC2_VULKAN_ISLAND
 // VULKAN-ISLAND-HEALTH-DUMP-1: EdgeFog Vulkan island health snapshot (defined in
 // GameOS/gameos/vulkan_edge_fog_island.cpp, compiled only under MC2_VULKAN_ISLAND).
@@ -763,6 +771,37 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "  }\n";
     }
 #endif
+    // RENDER-BACKEND-REGION-IFACE-1 (Layer-6 ENTRY): PostprocessFog region-selection
+    // health. ALWAYS emitted (region iface exists on every build). Surfaces
+    // backend_region_selected = gl|vk|fallback_gl via region_impl + requested_backend.
+    {
+        int gateOn = 0, impl = 0, glPasses = 0, vkDraws = 0;
+        const char* reqBackend = "gl";
+        const char* fbReason = "";
+        unsigned long routed = 0;
+        mc2_render_backend_region_health(&gateOn, &reqBackend, &impl, &fbReason,
+                                         &glPasses, &vkDraws, &routed);
+        const char* implStr =
+            impl == 1 ? "GLInline" :
+            impl == 2 ? "VulkanSubgraph" :
+            impl == 3 ? "FallbackGL" : "None";
+        const char* selectedStr =
+            impl == 2 ? "vk" :
+            impl == 3 ? "fallback_gl" :
+            impl == 1 ? "gl" : "none";
+        s << "  ,\n";
+        s << "  \"render_backend_region\": {\n";
+        s << "    \"region_id\": \"PostprocessFog\",\n";
+        s << "    \"iface_gate_on\": " << gateOn << ",\n";
+        s << "    \"requested_backend\": \"" << jsonEscape(reqBackend) << "\",\n";
+        s << "    \"backend_region_selected\": \"" << selectedStr << "\",\n";
+        s << "    \"region_impl\": \"" << implStr << "\",\n";
+        s << "    \"fallback_reason\": \"" << jsonEscape(fbReason) << "\",\n";
+        s << "    \"gl_passes_run\": " << glPasses << ",\n";
+        s << "    \"vk_draws\": " << vkDraws << ",\n";
+        s << "    \"routed_frames\": " << routed << "\n";
+        s << "  }\n";
+    }
     s << "}\n";
     return s.str();
 }

@@ -18,11 +18,28 @@
 
 #pragma once
 
+#include "RenderRegionId.h"   // RENDER-BACKEND-REGION-IFACE-1 (GL-free contract)
+
 namespace RenderCore {
 
 // Abstract render backend. Pure virtual; no state, no GL.
 struct IRenderBackend {
     virtual ~IRenderBackend() = default;
+
+    // RENDER-BACKEND-REGION-IFACE-1 (Layer-6 ENTRY): run a SELECTABLE render
+    // region. The context is BACKEND-NEUTRAL (RenderResourceId + params + dims,
+    // no raw handles); the impl resolves ids -> handles via ctx.resolver. Writes
+    // which impl ran / fallback reason / equivalence counters into *out.
+    //
+    // Returns false if this backend is unavailable/failed for the region -> the
+    // CALLER falls back to GL. A GL backend that succeeds returns true with
+    // out->impl = GLInline. A Vulkan backend that can't run returns false (out
+    // carries the fallback reason) so the caller runs GL. Default impl declines.
+    virtual bool runRegion(RenderRegionId /*id*/,
+                           const PostprocessFogRegionContext& /*ctx*/,
+                           RegionOutput* /*out*/) {
+        return false;
+    }
 
     // Bind the window's default framebuffer (the backbuffer) as the current
     // render target for the composite output edge. GL impl == glBindFramebuffer
