@@ -1504,7 +1504,14 @@ def main():
                             # without uninstalling the Vulkan runtime. Without this in
                             # the allowlist Popen drops it and the forced-fallback smoke
                             # runs the real Vulkan (or default GL) path instead.
-                            "MC2_VULKAN_ISLAND_FORCE_FALLBACK")},
+                            "MC2_VULKAN_ISLAND_FORCE_FALLBACK",
+                            # VULKAN-ISLAND-VALIDATION-WIRING-1: opt-in Vulkan
+                            # validation preset (off/core/sync/gpu-assisted/
+                            # best-practices/debug-printf). Without this in the
+                            # allowlist Popen drops it and the island's validation
+                            # layer never loads, so validation_errors stays 0 by
+                            # omission rather than by being genuinely clean.
+                            "MC2_VULKAN_VALIDATION")},
             },
         )
         # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.

@@ -52,7 +52,7 @@ struct IslandHealth {
     int  islandBuildEnabled     = 1;   // this TU compiled (always 1 here)
     int  islandRuntimeGate      = 0;   // MC2_VULKAN_EDGE_FOG_ISLAND=1
     char deviceName[256]        = {0}; // VkPhysicalDeviceProperties.deviceName
-    unsigned long validationErrors = 0;   // 0 (no validation layer wired yet)
+    unsigned long validationErrors = 0;   // ERROR-severity validation msgs (MC2_VULKAN_VALIDATION)
     unsigned long edgeFogAttempted = 0;    // frames the island path was entered
     unsigned long edgeFogUsedVulkan= 0;    // frames actually composited via Vulkan
     char fallbackReason[64]     = {0}; // "" when healthy; else why GL fallback happened
@@ -99,6 +99,73 @@ void vlog(const char* fmt, ...) {
     std::vfprintf(stderr, fmt, ap);
     std::fprintf(stderr, "\n");
     va_end(ap);
+}
+
+// VULKAN-ISLAND-VALIDATION-WIRING-1: opt-in Vulkan validation for the island's own
+// instance. Mirrors the standalone probe skeleton (vulkan_backend_skeleton.cpp:
+// resolve_validation_preset + VK_EXT_debug_utils messenger), which lives in an
+// anonymous namespace in a separate TU and so is not linkable here -- this is a
+// minimal inline equivalent, NOT a duplicate of the whole probe. ERROR-severity
+// messages increment g_health.validationErrors (so the health dump becomes
+// truthful instead of a hardcoded 0); WARNING-severity is logged but not counted
+// (same ERROR-vs-WARNING split as the skeleton). Everything is fail-soft: if the
+// layer or VK_EXT_debug_utils is unavailable the island runs WITHOUT validation.
+// When MC2_VULKAN_VALIDATION is unset/off there is zero overhead (no layer, no
+// messenger) -- identical to prior behavior.
+
+// True when validation should be enabled. Populates `feats` with the extra
+// VkValidationFeatureEnableEXT for the resolved preset (empty for plain "core")
+// and returns the canonical preset name in `resolvedName`. Unknown -> core.
+bool resolve_validation_preset(std::vector<VkValidationFeatureEnableEXT>& feats,
+                               const char*& resolvedName) {
+    feats.clear();
+    resolvedName = "off";
+    const char* env = std::getenv("MC2_VULKAN_VALIDATION");
+    if (env == nullptr) return false; // unset -> OFF (unchanged behavior)
+    auto eq = [&](const char* s) { return std::strcmp(env, s) == 0; };
+    if (eq("0") || eq("off")) { resolvedName = "off"; return false; }
+    if (eq("1") || eq("core") || eq("")) { resolvedName = "core"; return true; }
+    if (eq("sync")) {
+        resolvedName = "sync";
+        feats.push_back(VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT);
+        return true;
+    }
+    if (eq("gpu-assisted")) {
+        resolvedName = "gpu-assisted";
+        feats.push_back(VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT);
+        feats.push_back(VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT);
+        return true;
+    }
+    if (eq("best-practices")) {
+        resolvedName = "best-practices";
+        feats.push_back(VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT);
+        return true;
+    }
+    if (eq("debug-printf")) {
+        resolvedName = "debug-printf";
+        feats.push_back(VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT);
+        return true;
+    }
+    vlog("validation preset '%s' unrecognized; falling back to 'core'.", env);
+    resolvedName = "core";
+    return true;
+}
+
+// Debug-utils callback: ERROR -> count + log (prefixed [VK_ISLAND_VALIDATION]);
+// WARNING -> log only (visible, not counted). Writes g_health.validationErrors.
+VKAPI_ATTR VkBool32 VKAPI_CALL island_debug_cb(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT /*types*/,
+    const VkDebugUtilsMessengerCallbackDataEXT* pData,
+    void* /*user*/) {
+    const char* msg = (pData && pData->pMessage) ? pData->pMessage : "(no message)";
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        ++g_health.validationErrors;
+        std::fprintf(stderr, "[VK_ISLAND_VALIDATION] ERROR: %s\n", msg);
+    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        std::fprintf(stderr, "[VK_ISLAND_VALIDATION] warning: %s\n", msg);
+    }
+    return VK_FALSE;
 }
 
 // Bring up volk exactly once (shared idea with the skeleton). On failure the
@@ -215,6 +282,7 @@ struct gosPostProcess::VulkanEdgeFogIsland {
     int height = 0;
 
     VkInstance       instance = VK_NULL_HANDLE;
+    VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE; // validation-only
     VkPhysicalDevice phys     = VK_NULL_HANDLE;
     VkDevice         device   = VK_NULL_HANDLE;
     uint32_t         gfxFamily = UINT32_MAX;
@@ -283,6 +351,12 @@ void destroy_island(gosPostProcess::VulkanEdgeFogIsland* s) {
         vmaDestroyAllocator(s->allocator);
     }
     if (d != VK_NULL_HANDLE) vkDestroyDevice(d, nullptr);
+    // Destroy the validation messenger BEFORE the instance (it is instance-owned).
+    if (s->debugMessenger && s->instance) {
+        auto destroyFn = (PFN_vkDestroyDebugUtilsMessengerEXT)
+            vkGetInstanceProcAddr(s->instance, "vkDestroyDebugUtilsMessengerEXT");
+        if (destroyFn) destroyFn(s->instance, s->debugMessenger, nullptr);
+    }
     if (s->instance) vkDestroyInstance(s->instance, nullptr);
     // Reset all handles so a rebuild (resize) starts clean.
     gosPostProcess::VulkanEdgeFogIsland fresh;
@@ -316,18 +390,79 @@ bool build_island(gosPostProcess::VulkanEdgeFogIsland* s, int W, int H) {
     s->width = W; s->height = H;
     VkResult r;
 
+    // ---- Optional validation layer + debug-utils messenger (MC2_VULKAN_VALIDATION) ----
+    // Fail-soft: if requested but the layer / VK_EXT_debug_utils is unavailable, the
+    // island runs WITHOUT validation. Unset/off -> no layer, no messenger (no overhead).
+    std::vector<const char*> layers;
+    std::vector<const char*> instExts;
+    std::vector<VkValidationFeatureEnableEXT> valFeatures;
+    const char* valPreset = "off";
+    bool wantValidation = resolve_validation_preset(valFeatures, valPreset);
+    if (wantValidation) {
+        uint32_t layerCount = 0;
+        vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+        std::vector<VkLayerProperties> avail(layerCount);
+        if (layerCount) vkEnumerateInstanceLayerProperties(&layerCount, avail.data());
+        const char* want = "VK_LAYER_KHRONOS_validation";
+        bool found = false;
+        for (const auto& lp : avail) {
+            if (std::strcmp(lp.layerName, want) == 0) { found = true; break; }
+        }
+        if (found) {
+            layers.push_back(want);
+            instExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            vlog("validation ON: layer %s enabled (preset=%s, +%zu feature(s)).",
+                 want, valPreset, valFeatures.size());
+        } else {
+            wantValidation = false;
+            vlog("validation requested but %s unavailable; continuing WITHOUT validation.", want);
+        }
+    }
+
     // ---- Instance (headless) ----
     VkApplicationInfo app{};
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app.pApplicationName = "MC2 (Vulkan edge-fog island)";
     app.pEngineName = "MC2-GameOS";
     app.apiVersion = VK_API_VERSION_1_1;
+
+    VkValidationFeaturesEXT valFeaturesInfo{};
+    valFeaturesInfo.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    valFeaturesInfo.enabledValidationFeatureCount = static_cast<uint32_t>(valFeatures.size());
+    valFeaturesInfo.pEnabledValidationFeatures    = valFeatures.empty() ? nullptr : valFeatures.data();
+
     VkInstanceCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ici.pApplicationInfo = &app;
+    ici.enabledLayerCount       = static_cast<uint32_t>(layers.size());
+    ici.ppEnabledLayerNames     = layers.empty() ? nullptr : layers.data();
+    ici.enabledExtensionCount   = static_cast<uint32_t>(instExts.size());
+    ici.ppEnabledExtensionNames = instExts.empty() ? nullptr : instExts.data();
+    if (wantValidation && !valFeatures.empty()) ici.pNext = &valFeaturesInfo;
     r = vkCreateInstance(&ici, nullptr, &s->instance);
     if (r != VK_SUCCESS) { vlog("vkCreateInstance failed (%d).", (int)r); return false; }
     volkLoadInstance(s->instance);
+
+    // Register the debug-utils messenger so validation errors reach island_debug_cb.
+    if (wantValidation) {
+        auto pfnCreate = (PFN_vkCreateDebugUtilsMessengerEXT)
+            vkGetInstanceProcAddr(s->instance, "vkCreateDebugUtilsMessengerEXT");
+        if (pfnCreate) {
+            VkDebugUtilsMessengerCreateInfoEXT mci{};
+            mci.sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+            mci.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+            mci.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+            mci.pfnUserCallback = island_debug_cb;
+            VkResult mr = pfnCreate(s->instance, &mci, nullptr, &s->debugMessenger);
+            if (mr == VK_SUCCESS) vlog("validation messenger engaged (preset=%s).", valPreset);
+            else vlog("vkCreateDebugUtilsMessengerEXT failed (%d); no error capture.", (int)mr);
+        } else {
+            vlog("vkCreateDebugUtilsMessengerEXT not found; no error capture.");
+        }
+    }
 
     // ---- Physical device + graphics queue family ----
     uint32_t devCount = 0;
