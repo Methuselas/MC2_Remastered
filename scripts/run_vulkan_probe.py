@@ -74,7 +74,10 @@ SUCCESS_TOKENS = ("caps", "shaders", "triangle", "descriptors", "failSoftOK")
 
 # Validation-layer error signature emitted by the skeleton's debug messenger
 # (vulkan_backend_skeleton.cpp: "[VULKAN_SKELETON] <probe>: VALIDATION: <msg>").
-VALIDATION_ERROR_RE = re.compile(r"VALIDATION\b", re.IGNORECASE)
+# Match ONLY that exact debug-callback prefix ("<probe>: VALIDATION: ..."), not
+# the informational "validation layer ... enabled" / "validation active" lines
+# the probes also print -- those are not errors and must not inflate the count.
+VALIDATION_ERROR_RE = re.compile(r":\s*VALIDATION:")
 
 PROBE_TIMEOUT_S = 120
 
@@ -164,8 +167,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--config", default="RelWithDebInfo", help="CMake config (default RelWithDebInfo).")
     parser.add_argument(
         "--shader-dir",
-        default="shaders/vulkan",
-        help="SPIR-V shader dir passed to the probe (default shaders/vulkan).",
+        default=None,
+        help="Directory holding the COMPILED .spv files, passed to the probe. "
+        "Default: <build-dir>/shaders/vulkan -- that is where the "
+        "mc2_vulkan_shaders CMake target emits fullscreen.{vert,frag}.spv. "
+        "(The source .vert/.frag live in shaders/vulkan/ but the probe needs "
+        "the compiled .spv, so the default MUST be the build output, not source.)",
     )
     parser.add_argument(
         "--validation",
@@ -201,10 +208,19 @@ def main(argv: list[str]) -> int:
     if not build_dir.is_absolute():
         build_dir = (root / build_dir).resolve()
 
+    # Default the SPIR-V dir to the build output (where mc2_vulkan_shaders emits
+    # the compiled .spv). Only when the user did not pass --shader-dir.
+    if args.shader_dir is None:
+        shader_dir = str((build_dir / "shaders" / "vulkan"))
+    else:
+        shader_dir = args.shader_dir
+    args.shader_dir = shader_dir
+
     print(f"[run_vulkan_probe] worktree root : {root}")
     print(f"[run_vulkan_probe] build dir      : {build_dir}")
     print(f"[run_vulkan_probe] config         : {args.config}")
     print(f"[run_vulkan_probe] target         : {args.target}")
+    print(f"[run_vulkan_probe] shader dir     : {args.shader_dir}")
     print(f"[run_vulkan_probe] validation     : {args.validation}")
 
     cmake = find_cmake()
