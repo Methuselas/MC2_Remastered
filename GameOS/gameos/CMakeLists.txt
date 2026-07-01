@@ -87,6 +87,8 @@ set(SOURCES ${SOURCES}
 # When OFF the TU is not added -> no Vulkan headers/loader pulled in.
 if(MC2_VULKAN)
     list(APPEND SOURCES vulkan_backend_skeleton.cpp)
+    # VULKAN-VMA-INTEGRATION-1: single VMA_IMPLEMENTATION TU (header-only lib).
+    list(APPEND SOURCES vma_impl.cpp)
 endif()
 
 set_source_files_properties(
@@ -119,6 +121,8 @@ target_link_libraries(gameos PRIVATE rendercore)
 if(MC2_VULKAN)
     target_link_libraries(gameos PRIVATE Vulkan::Vulkan)
     target_compile_definitions(gameos PRIVATE MC2_VULKAN)
+    # VULKAN-VMA-INTEGRATION-1: vendored header-only VMA (3rdparty/vma).
+    target_include_directories(gameos PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vma")
 endif()
 
 # VULKAN-SHADER-TOOLCHAIN-1: compile the trivial fullscreen GLSL vert/frag to
@@ -179,6 +183,8 @@ target_link_libraries(gameos_editor PRIVATE rendercore)
 if(MC2_VULKAN)
     target_link_libraries(gameos_editor PRIVATE Vulkan::Vulkan)
     target_compile_definitions(gameos_editor PRIVATE MC2_VULKAN)
+    # VULKAN-VMA-INTEGRATION-1: vendored header-only VMA (3rdparty/vma).
+    target_include_directories(gameos_editor PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vma")
 endif()
 
 add_library(gameos_main ${MAIN_SRC})

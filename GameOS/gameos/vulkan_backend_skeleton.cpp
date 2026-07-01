@@ -9,6 +9,10 @@
 
 #include <vulkan/vulkan.h>
 
+// VULKAN-VMA-INTEGRATION-1: AMD Vulkan Memory Allocator (header-only). The
+// single VMA_IMPLEMENTATION TU is vma_impl.cpp; here we only pull declarations.
+#include "vk_mem_alloc.h"
+
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -276,18 +280,38 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
     // Everything past here is cleaned up via the single `done` epilogue.
     bool ok = false;
     VkShaderModule vert = VK_NULL_HANDLE, frag = VK_NULL_HANDLE;
-    VkImage        image   = VK_NULL_HANDLE;
-    VkDeviceMemory imageMem = VK_NULL_HANDLE;
+    // VULKAN-VMA-INTEGRATION-1: VMA owns the offscreen image + readback buffer
+    // allocations below (imageMem/dstMem are gone -- VMA holds the memory).
+    VmaAllocator   allocator = VK_NULL_HANDLE;
+    VkImage        image    = VK_NULL_HANDLE;
+    VmaAllocation  imageAlloc = VK_NULL_HANDLE;
     VkImageView    view    = VK_NULL_HANDLE;
     VkRenderPass   rpass   = VK_NULL_HANDLE;
     VkFramebuffer  fb      = VK_NULL_HANDLE;
     VkPipelineLayout playout = VK_NULL_HANDLE;
     VkPipeline     pipe    = VK_NULL_HANDLE;
     VkBuffer       dst     = VK_NULL_HANDLE;
-    VkDeviceMemory dstMem  = VK_NULL_HANDLE;
+    VmaAllocation  dstAlloc = VK_NULL_HANDLE;
     VkCommandPool  cpool   = VK_NULL_HANDLE;
     VkCommandBuffer cbuf   = VK_NULL_HANDLE;
     VkFence        fence   = VK_NULL_HANDLE;
+
+    // ---- VMA allocator ------------------------------------------------------
+    // VULKAN-VMA-INTEGRATION-1: one allocator per device. Owns the offscreen
+    // image + readback buffer below. Statically linked Vulkan entry points
+    // (VMA_STATIC_VULKAN_FUNCTIONS=1 in vma_impl.cpp), so no fn-table plumbing.
+    {
+        VmaAllocatorCreateInfo aci{};
+        aci.physicalDevice   = phys;
+        aci.device           = device;
+        aci.instance         = instance;
+        aci.vulkanApiVersion = VK_API_VERSION_1_1; // matches app.apiVersion above
+        r = vmaCreateAllocator(&aci, &allocator);
+        if (r != VK_SUCCESS) {
+            log("triangle-probe: vmaCreateAllocator failed (%d). fail-soft.", (int)r);
+            goto done;
+        }
+    }
 
     // ---- Shader modules -----------------------------------------------------
     {
@@ -315,20 +339,15 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
         ii.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        r = vkCreateImage(device, &ii, nullptr, &image);
-        if (r != VK_SUCCESS) { log("triangle-probe: vkCreateImage failed (%d). fail-soft.", (int)r); goto done; }
 
-        VkMemoryRequirements mr{};
-        vkGetImageMemoryRequirements(device, image, &mr);
-        uint32_t mt = find_mem_type(phys, mr.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        if (mt == UINT32_MAX) { log("triangle-probe: no device-local memtype for image. fail-soft."); goto done; }
-        VkMemoryAllocateInfo mai{};
-        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        mai.allocationSize  = mr.size;
-        mai.memoryTypeIndex = mt;
-        r = vkAllocateMemory(device, &mai, nullptr, &imageMem);
-        if (r != VK_SUCCESS) { log("triangle-probe: vkAllocateMemory(image) failed (%d). fail-soft.", (int)r); goto done; }
-        vkBindImageMemory(device, image, imageMem, 0);
+        // VULKAN-VMA-INTEGRATION-1: VMA creates the image + backing device-local
+        // memory + binds them in one call (replaces vkCreateImage +
+        // vkGetImageMemoryRequirements + vkAllocateMemory + vkBindImageMemory).
+        VmaAllocationCreateInfo aci{};
+        aci.usage = VMA_MEMORY_USAGE_AUTO;
+        aci.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT; // render target
+        r = vmaCreateImage(allocator, &ii, &aci, &image, &imageAlloc, nullptr);
+        if (r != VK_SUCCESS) { log("triangle-probe: vmaCreateImage failed (%d). fail-soft.", (int)r); goto done; }
 
         VkImageViewCreateInfo vi{};
         vi.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -458,22 +477,15 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
         bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bci.size  = (VkDeviceSize)W * H * 4;
         bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        r = vkCreateBuffer(device, &bci, nullptr, &dst);
-        if (r != VK_SUCCESS) { log("triangle-probe: vkCreateBuffer failed (%d). fail-soft.", (int)r); goto done; }
 
-        VkMemoryRequirements mr{};
-        vkGetBufferMemoryRequirements(device, dst, &mr);
-        uint32_t mt = find_mem_type(phys, mr.memoryTypeBits,
-                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        if (mt == UINT32_MAX) { log("triangle-probe: no host-visible memtype. fail-soft."); goto done; }
-        VkMemoryAllocateInfo mai{};
-        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        mai.allocationSize  = mr.size;
-        mai.memoryTypeIndex = mt;
-        r = vkAllocateMemory(device, &mai, nullptr, &dstMem);
-        if (r != VK_SUCCESS) { log("triangle-probe: vkAllocateMemory(buffer) failed (%d). fail-soft.", (int)r); goto done; }
-        vkBindBufferMemory(device, dst, dstMem, 0);
+        // VULKAN-VMA-INTEGRATION-1: VMA creates the buffer + host-visible memory
+        // + binds them in one call. HOST_ACCESS_RANDOM_BIT makes VMA pick a
+        // HOST_VISIBLE|HOST_COHERENT memory type for the CPU readback below.
+        VmaAllocationCreateInfo aci{};
+        aci.usage = VMA_MEMORY_USAGE_AUTO;
+        aci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+        r = vmaCreateBuffer(allocator, &bci, &aci, &dst, &dstAlloc, nullptr);
+        if (r != VK_SUCCESS) { log("triangle-probe: vmaCreateBuffer failed (%d). fail-soft.", (int)r); goto done; }
     }
 
     // ---- Command buffer: renderpass + draw(3) + copy image->buffer ----------
@@ -539,8 +551,10 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
     // ---- Read back + verify -------------------------------------------------
     {
         void* mapped = nullptr;
-        r = vkMapMemory(device, dstMem, 0, (VkDeviceSize)W * H * 4, 0, &mapped);
-        if (r != VK_SUCCESS) { log("triangle-probe: vkMapMemory failed (%d). fail-soft.", (int)r); goto done; }
+        // VULKAN-VMA-INTEGRATION-1: map through VMA (the allocation is host-
+        // visible + coherent per the HOST_ACCESS_RANDOM_BIT request above).
+        r = vmaMapMemory(allocator, dstAlloc, &mapped);
+        if (r != VK_SUCCESS) { log("triangle-probe: vmaMapMemory failed (%d). fail-soft.", (int)r); goto done; }
         const unsigned char* px = static_cast<const unsigned char*>(mapped);
         auto at = [&](uint32_t x, uint32_t y) { return px + ((size_t)y * W + x) * 4; };
 
@@ -568,7 +582,7 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
             "centerOK=%d tlOK=%d trOK=%d",
             c[0], c[1], c[2], c[3], tl[0], tl[1], tl[2], tl[3], tr[0], tr[1], tr[2], tr[3],
             centerOK ? 1 : 0, tlOK ? 1 : 0, trOK ? 1 : 0);
-        vkUnmapMemory(device, dstMem);
+        vmaUnmapMemory(allocator, dstAlloc);
         ok = centerOK && tlOK && trOK;
     }
 
@@ -578,15 +592,16 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
 done:
     if (fence)   vkDestroyFence(device, fence, nullptr);
     if (cpool)   vkDestroyCommandPool(device, cpool, nullptr); // frees cbuf
-    if (dstMem)  vkFreeMemory(device, dstMem, nullptr);
-    if (dst)     vkDestroyBuffer(device, dst, nullptr);
+    // VULKAN-VMA-INTEGRATION-1: VMA-owned buffer/image are destroyed with their
+    // allocations via vmaDestroy*; the allocator is torn down last (below).
+    if (dst)     vmaDestroyBuffer(allocator, dst, dstAlloc);
     if (pipe)    vkDestroyPipeline(device, pipe, nullptr);
     if (playout) vkDestroyPipelineLayout(device, playout, nullptr);
     if (fb)      vkDestroyFramebuffer(device, fb, nullptr);
     if (rpass)   vkDestroyRenderPass(device, rpass, nullptr);
     if (view)    vkDestroyImageView(device, view, nullptr);
-    if (imageMem) vkFreeMemory(device, imageMem, nullptr);
-    if (image)   vkDestroyImage(device, image, nullptr);
+    if (image)   vmaDestroyImage(allocator, image, imageAlloc);
+    if (allocator) vmaDestroyAllocator(allocator);
     mc2_vulkan_free_shader(device, vert);
     mc2_vulkan_free_shader(device, frag);
     vkDestroyDevice(device, nullptr);

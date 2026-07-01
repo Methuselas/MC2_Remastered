@@ -124,8 +124,12 @@ endif()
 if(MC2_VULKAN)
     add_executable(vulkan_shader_probe
         tools/vulkan_shader_probe_main.cpp
-        GameOS/gameos/vulkan_backend_skeleton.cpp)
-    target_include_directories(vulkan_shader_probe PRIVATE GameOS/gameos)
+        GameOS/gameos/vulkan_backend_skeleton.cpp
+        # VULKAN-VMA-INTEGRATION-1: single VMA_IMPLEMENTATION TU.
+        GameOS/gameos/vma_impl.cpp)
+    target_include_directories(vulkan_shader_probe PRIVATE GameOS/gameos
+        # VULKAN-VMA-INTEGRATION-1: vendored header-only VMA (3rdparty/vma).
+        "${CMAKE_SOURCE_DIR}/3rdparty/vma")
     target_compile_definitions(vulkan_shader_probe PRIVATE MC2_VULKAN)
     target_link_libraries(vulkan_shader_probe PRIVATE Vulkan::Vulkan)
     if(TARGET mc2_vulkan_shaders)
