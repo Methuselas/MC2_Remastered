@@ -104,8 +104,12 @@ static constexpr TopLevelPassContract kTopLevelExecutorPasses[] = {
     },
     {
         /*id*/              RenderPassId::UI,
-        /*validateAmbient*/ false,  // UI-SAME-ORDER-VALIDATE-1: UI ambient is per-draw legacy gos
-                                    // dynamic state (DO_NOT_MODEL) -> no AmbientContract row
+        /*validateAmbient*/ false,  // UI-PASS-MODEL-1: UI now HAS an AmbientContract row and is
+                                    // verified OBSERVE-ONLY at UI entry (mc2_ui_pass_check_ambient,
+                                    // own non-fatal counter). Deliberately NOT routed through this
+                                    // executor validateAmbient path yet — that shares the default-ON
+                                    // FATAL g_ambientMismatchCount. Flip to true only after the UI
+                                    // observe counter is verified 0 across all tier1 (measure-first).
         /*validateFbo*/     true,   // FBO ledger declares Backbuffer (default FBO 0, post-composite)
         /*note*/            "UI/gosRenderer_flushHUDBatch",
     },

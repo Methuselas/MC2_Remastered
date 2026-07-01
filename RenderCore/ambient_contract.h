@@ -137,6 +137,24 @@ static constexpr AmbientContract kPassAmbient[] = {
       DepthFuncState::Inherit, ViewportKind::MainScene,
       /*producesLatch*/ false, /*consumesLatch*/ true,
       "consumes sceneHasTerrain_; FORCE-43 viewport re-set before composite" },
+
+    // UI-PASS-MODEL-1: promotes PassIdentity::UI from DO_NOT_MODEL to a declared ambient
+    // contract. UI-PASS-DRAWCOUNT-AMBIENT-MEASURE-1 sampled the UI pass entry
+    // (gosRenderer::flushHUDBatch, after pp->endScene binds FB0 + fullscreen viewport,
+    // after the VAO rebind) across 1197 frames on mc2_01: entry_drift=0, colorMask AllOn,
+    // blend Off, depthWrite On, depthFunc Inherit (neither GEQUAL nor LESS — unconstrained).
+    // AMBIENT-VIEWPORT-PROBE-1's classifier reports the FB0 backbuffer (non-square) as
+    // MainScene. So the entry state is stable and declarable. depthFunc left Inherit
+    // (the measure showed no constrained value -> skipped by compareAmbient, never a false
+    // trip). Verified OBSERVE-ONLY via its own counter (g_uiAmbientMismatchCount, never
+    // fatal) — the UI check does NOT run through the default-ON ambient guard's fatal path.
+    { RenderPassId::UI,
+      ColorMaskState::AllOn, /*reassert*/ false, /*disables*/ false,
+      DepthFuncState::Inherit, ViewportKind::MainScene,
+      /*producesLatch*/ false, /*consumesLatch*/ false,
+      "post-composite HUD flush; colorMask AllOn, blend Off, depthWrite On, depthFunc "
+      "Inherit (unconstrained), FB0 backbuffer viewport (classifies MainScene)",
+      /*blend*/ BlendState::Off, /*depthWrite*/ DepthWriteState::On },
 };
 static constexpr int kPassAmbientCount =
     sizeof(kPassAmbient) / sizeof(kPassAmbient[0]);

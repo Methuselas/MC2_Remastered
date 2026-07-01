@@ -1144,6 +1144,12 @@ bool          g_uiEntryLatched   = false;
 unsigned long g_uiFirstColorMask = 0, g_uiFirstDepthFunc = 0,
               g_uiFirstBlend = 0, g_uiFirstDepthWrite = 0;
 unsigned long g_uiEntryDriftCount = 0;  // # entries differing from the first latched sample
+// UI-PASS-MODEL-1: OBSERVE-ONLY UI ambient guard counters. Kept SEPARATE from
+// g_ambientMismatchCount so the newly-modeled UI row can never trip the existing
+// default-ON ambient guard's fatal / CI path — UI is verified observe-first, exactly
+// like AMBIENT-VIEWPORT-PROBE-1 measured before enforcing.
+unsigned long g_uiAmbientSamples       = 0;  // UI ambient compares run (proves it fired)
+unsigned long g_uiAmbientMismatchCount = 0;  // UI entry-vs-declared divergences (never fatal)
 } // namespace
 
 // Called ONCE at UI pass entry (flushHUDBatch, before the replay loop). Samples the
@@ -1197,6 +1203,51 @@ extern "C" unsigned long mc2_ui_pass_entry_depthfunc()   { return g_uiEntryDepth
 extern "C" unsigned long mc2_ui_pass_entry_blend()       { return g_uiEntryBlend;      }
 extern "C" unsigned long mc2_ui_pass_entry_depthwrite()  { return g_uiEntryDepthWrite; }
 extern "C" unsigned long mc2_ui_pass_entry_drift()       { return g_uiEntryDriftCount; }
+
+// UI-PASS-MODEL-1: OBSERVE-ONLY UI ambient guard. Samples the UI pass entry ambient
+// (same read-only glGet helpers as the guard/measure) and compares against the now-declared
+// UI row in kPassAmbient[] via the pure compareAmbient() + the viewport axis. Counts
+// divergences into g_uiAmbientMismatchCount; NEVER aborts and NEVER changes control flow or
+// GL state. This is the runtime cross-check that promotes UI DO_NOT_MODEL -> modeled: the
+// ambient guard now VERIFIES UI entry state every frame instead of skipping it. Called at UI
+// pass entry (flushHUDBatch, after pp->endScene binds FB0 + fullscreen viewport, after the
+// VAO rebind) — the exact point UI-PASS-DRAWCOUNT-AMBIENT-MEASURE-1 sampled. Kept observe-only
+// (its own counter, non-fatal) until verified 0 across all tier1, per MEASURE-THEN-ENFORCE.
+extern "C" void mc2_ui_pass_check_ambient() {
+    const RenderCore::framegraph::AmbientContract* decl =
+        RenderCore::framegraph::findAmbient(RenderCore::RenderPassId::UI);
+    if (!decl) return;
+    ++g_uiAmbientSamples;
+    RenderCore::framegraph::AmbientSample live;
+    live.colorMask  = sampleColorMask();
+    live.depthFunc  = sampleDepthFunc();
+    live.blend      = sampleBlend();
+    live.depthWrite = sampleDepthWrite();
+    live.viewport   = sampleViewport();
+    const RenderCore::framegraph::AmbientMismatch mm =
+        RenderCore::framegraph::compareAmbient(*decl, live);
+    if (mm.any()) {
+        ++g_uiAmbientMismatchCount;
+        static unsigned s_uiLogged = 0;
+        if (s_uiLogged < 32u) {
+            ++s_uiLogged;
+            fprintf(stderr,
+                "[UI_AMBIENT_GUARD] phase=begin pass=\"UI\" cmMiss=%d dfMiss=%d blMiss=%d "
+                "dwMiss=%d vpMiss=%d (decl cm=%d df=%d bl=%d dw=%d vp=%d | live cm=%d df=%d "
+                "bl=%d dw=%d vp=%d) [observe-only]\n",
+                (int)mm.colorMask, (int)mm.depthFunc, (int)mm.blend,
+                (int)mm.depthWrite, (int)mm.viewport,
+                (int)decl->colorMaskOnEntry, (int)decl->depthFunc, (int)decl->blend,
+                (int)decl->depthWrite, (int)decl->viewport,
+                (int)live.colorMask, (int)live.depthFunc, (int)live.blend,
+                (int)live.depthWrite, (int)live.viewport);
+            fflush(stderr);
+        }
+        // Intentionally NO abort() — observe-only until verified 0 across all tier1.
+    }
+}
+extern "C" unsigned long mc2_ui_pass_ambient_samples()   { return g_uiAmbientSamples;       }
+extern "C" unsigned long mc2_ui_pass_ambient_mismatches() { return g_uiAmbientMismatchCount; }
 
 void beginPass(RenderCore::RenderPassId id) {
     ambientProbeAtPassBegin(id);   // self-gated (MC2_AMBIENT_PROBE); runs before order gate

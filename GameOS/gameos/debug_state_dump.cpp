@@ -59,6 +59,8 @@ extern "C" unsigned long mc2_ui_pass_entry_depthfunc();
 extern "C" unsigned long mc2_ui_pass_entry_blend();
 extern "C" unsigned long mc2_ui_pass_entry_depthwrite();
 extern "C" unsigned long mc2_ui_pass_entry_drift();
+extern "C" unsigned long mc2_ui_pass_ambient_samples();     // UI-PASS-MODEL-1
+extern "C" unsigned long mc2_ui_pass_ambient_mismatches();  // UI-PASS-MODEL-1
 
 #include <chrono>
 #include <cstdlib>
@@ -361,7 +363,14 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "    \"entry_depthfunc\": "  << mc2_ui_pass_entry_depthfunc()  << ",\n";
         s << "    \"entry_blend\": "      << mc2_ui_pass_entry_blend()      << ",\n";
         s << "    \"entry_depthwrite\": " << mc2_ui_pass_entry_depthwrite() << ",\n";
-        s << "    \"entry_drift\": "      << mc2_ui_pass_entry_drift()      << "\n";
+        s << "    \"entry_drift\": "      << mc2_ui_pass_entry_drift()      << ",\n";
+        // UI-PASS-MODEL-1: OBSERVE-ONLY UI ambient guard. ambient_samples>0 proves the UI
+        // pass fired + was compared against its now-declared kPassAmbient[] row every frame;
+        // ambient_mismatches counts UI entry-vs-declared divergences (colorMask/depthFunc/
+        // blend/depthWrite/viewport). Must be 0 across tier1 for the UI contract to be
+        // universally declarable (else the UI row is NOT enforceable and must revert).
+        s << "    \"ambient_samples\": "    << mc2_ui_pass_ambient_samples()    << ",\n";
+        s << "    \"ambient_mismatches\": " << mc2_ui_pass_ambient_mismatches() << "\n";
         s << "  },\n";
     }
     s << "  \"mission\": {\n";

@@ -7515,6 +7515,7 @@ void gosRenderer::replayTextQuads(const HudDrawCall& call)
 // mclib/render_contract.cpp (GL-aware TU; reuses the ambient-probe sample helpers).
 extern "C" void mc2_ui_pass_sample_entry_ambient();
 extern "C" void mc2_ui_pass_note_draw(unsigned kind);
+extern "C" void mc2_ui_pass_check_ambient();
 
 void gosRenderer::flushHUDBatch()
 {
@@ -7600,6 +7601,13 @@ void gosRenderer::flushHUDBatch()
         // ONE ambient entry sample, taken after the VAO rebind, before the replay loop.
         mc2_ui_pass_sample_entry_ambient();
     }
+
+    // UI-PASS-MODEL-1: UI is now MODELED (declared ambient row in kPassAmbient[]). Verify
+    // the UI entry ambient against that row every frame — OBSERVE-ONLY (own counter,
+    // non-fatal), read-only glGet, NO GL state change, so the HUD replay stays byte-identical.
+    // This closes the last DO_NOT_MODEL hole: the ambient guard checks UI entry state instead
+    // of skipping it. Default-ON (not gated) — the check is cheap glGet + compare.
+    mc2_ui_pass_check_ambient();
 
     // Save pre-flush render state and projection
     uint32_t priorState[gos_MaxState];

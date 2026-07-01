@@ -1458,7 +1458,32 @@ TEST_CASE("top-level executor (e): ambient ledger cross-check — Shadow/MechOpa
     CHECK(findAmbient(RenderPassId::TerrainDecal)     == nullptr);
     CHECK(findAmbient(RenderPassId::VegetationCards)  == nullptr);
     CHECK(findAmbient(RenderPassId::VFX)              == nullptr);  // VFX-FBO-ONLY-VALIDATE-1 (FBO-only)
-    CHECK(findAmbient(RenderPassId::UI)               == nullptr);  // UI-SAME-ORDER-VALIDATE-1 (FBO-only; ambient DO_NOT_MODEL)
+    CHECK(findAmbient(RenderPassId::UI)               != nullptr);  // UI-PASS-MODEL-1 (now modeled; verified observe-only)
+}
+
+TEST_CASE("UI-PASS-MODEL-1: UI ambient row declares the measured entry state") {
+    // UI-PASS-DRAWCOUNT-AMBIENT-MEASURE-1 measured: colorMask AllOn, blend Off, depthWrite On,
+    // depthFunc Inherit (unconstrained), viewport MainScene (FB0 backbuffer classifies MainScene).
+    const AmbientContract* ui = findAmbient(RenderPassId::UI);
+    REQUIRE(ui != nullptr);
+    CHECK(ui->colorMaskOnEntry == ColorMaskState::AllOn);
+    CHECK(ui->blend            == BlendState::Off);
+    CHECK(ui->depthWrite       == DepthWriteState::On);
+    CHECK(ui->depthFunc        == DepthFuncState::Inherit);  // unconstrained -> skipped by compare
+    CHECK(ui->viewport         == ViewportKind::MainScene);
+    CHECK(ui->reassertsColorMaskAllOn == false);
+    CHECK(ui->disablesColorWrite      == false);
+    CHECK(ui->producesTerrainLatch    == false);
+    CHECK(ui->consumesTerrainLatch    == false);
+
+    // A live sample matching the measurement produces ZERO mismatch (declarable contract).
+    AmbientSample live;
+    live.colorMask  = ColorMaskState::AllOn;
+    live.blend      = BlendState::Off;
+    live.depthWrite = DepthWriteState::On;
+    live.depthFunc  = DepthFuncState::Inherit;  // entry unconstrained
+    live.viewport   = ViewportKind::MainScene;
+    CHECK(compareAmbient(*ui, live).any() == false);
 }
 
 TEST_CASE("top-level executor (f): FBO ledger cross-check — Shadow=ShadowDynamicMap, MechOpaque+4=MainColor; VegetationCards undeclared") {
