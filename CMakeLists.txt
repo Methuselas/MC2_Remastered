@@ -102,6 +102,12 @@ endif()
 # ---------------------------------------------------------------------------
 option(MC2_ASAN "Build with MSVC AddressSanitizer (parallel dev build)" OFF)
 option(MC2_IMGUI "Enable in-game ImGui UI" OFF)
+# MC2_EDITOR: build the MFC/Windows-only Mission Editor (EditRel). The editor is
+# ImGui-gated (editor/CMakeLists.txt FATAL_ERRORs if NOT MC2_IMGUI). Default ON so
+# every existing build (build64 shipping, build64_vulkan, EditRel) is UNCHANGED.
+# Turn OFF for a pure-mc2 build with MC2_IMGUI=OFF (e.g. the Vulkan parity island),
+# which otherwise cannot exist because the editor forces MC2_IMGUI=ON.
+option(MC2_EDITOR "Build the MC2 Mission Editor (Windows-only, requires MC2_IMGUI=ON)" ON)
 # DETERMINISTIC-RNG-1: compile-in the per-gos_rand() "RNG" JSONL trace. Default OFF
 # so stock builds pay nothing; runtime still requires MC2_DETERMINISTIC_RNG=1 +
 # MC2_DIAG_TAGS=RNG. Turn ON only for determinism-proof builds.
@@ -539,6 +545,17 @@ add_dependencies(mc2 build_fingerprint)
 if(MC2_VULKAN_ISLAND AND TARGET mc2_vulkan_shaders)
     add_dependencies(mc2 mc2_vulkan_shaders)
 endif()
+# VULKAN-EDGE-FOG-ISLAND-2b: gos_postprocess.h changes the gosPostProcess class
+# LAYOUT under #ifdef MC2_VULKAN_ISLAND (adds vkFogIsland_ + method decls). The
+# macro is PUBLIC on gameos, but gameos_main / mc2 do NOT consume gameos's usage
+# requirements (gameos_main has no target_link_libraries(gameos)), so define it
+# directly on the TUs that include the header, or getSceneFBO()/getWidth()/
+# getHeight() read the wrong offset (ODR) -> garbage FBO -> visual capture never
+# fires. Harmless when the header block declares only an opaque pointer + decls.
+if(MC2_VULKAN_ISLAND)
+    target_compile_definitions(gameos_main PRIVATE MC2_VULKAN_ISLAND)
+    target_compile_definitions(mc2 PRIVATE MC2_VULKAN_ISLAND)
+endif()
 target_link_libraries(mc2 mclib fx_trace particles gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL renderworld gameadapters editorbridge imgui gui_runtime)
 
 if(MC2_IMGUI)
@@ -682,7 +699,11 @@ add_subdirectory("./text_tool" "./out/text_tool")
 # itself with if(NOT MSVC) return() so this is safe on all platforms.
 # Scoped import from PR #36: editor tree + gameos_editor only; PR's
 # terrain-shader/.fit/resource rework deliberately NOT merged.
-add_subdirectory("./editor" "./out/editor")
+# MC2_EDITOR gate: editor is ImGui-coupled and forces MC2_IMGUI=ON. Skipping it
+# lets mc2 build MC2_IMGUI=OFF (Vulkan parity island). Default ON = no change.
+if(MC2_EDITOR)
+    add_subdirectory("./editor" "./out/editor")
+endif()
 
 # -----------------------------------------------------------------------
 # Shader contract reflection CI (Tier 1.2)

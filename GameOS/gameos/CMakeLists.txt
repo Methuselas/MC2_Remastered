@@ -143,8 +143,15 @@ if(MC2_VULKAN)
     target_include_directories(gameos PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vk_bootstrap")
     # VULKAN-EDGE-FOG-ISLAND-2a: define the island gate on gameos so
     # vulkan_edge_fog_island.cpp compiles + the gos_postprocess.cpp seam is active.
+    # MUST be PUBLIC: gos_postprocess.h adds a member (vkFogIsland_) + methods under
+    # #ifdef MC2_VULKAN_ISLAND, so the gosPostProcess class LAYOUT depends on this
+    # macro. Consumers of the header (e.g. gameosmain.cpp in the mc2 target) must
+    # see the same layout, or getSceneFBO()/getWidth()/getHeight() read the wrong
+    # offset and return garbage (ODR violation -> broken FBO readback / capture).
+    # The gated header block only declares an opaque pointer + method decls, so no
+    # Vulkan headers leak to consumers.
     if(MC2_VULKAN_ISLAND)
-        target_compile_definitions(gameos PRIVATE MC2_VULKAN_ISLAND)
+        target_compile_definitions(gameos PUBLIC MC2_VULKAN_ISLAND)
     endif()
 endif()
 
