@@ -79,6 +79,8 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::LightDataSsbo:        return "LightDataSsbo";
         case RenderResourceId::DynamicFullMapFbo:    return "DynamicFullMapFbo";
         case RenderResourceId::DynamicPropShadowSsbo: return "DynamicPropShadowSsbo";
+        case RenderResourceId::PostprocessSubgraphColor: return "PostprocessSubgraphColor";
+        case RenderResourceId::PostprocessSubgraphDepth: return "PostprocessSubgraphDepth";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";

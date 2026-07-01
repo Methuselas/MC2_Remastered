@@ -45,6 +45,8 @@ enum class RenderResourceId : uint16_t {
     LightDataSsbo        = 34,  // LIGHTDATA-SSBO-OWNER-1: per-frame light-data SSBO (s_lightDataSsbo, GL binding LIGHT_DATA_SSBO_BINDING, gameos_graphics.cpp); LIVE default-path, grow-once/realloc (handle recreated on grow → re-registered). Persistent lifetime (lazy-created on first upload, destroyed in txmmgr.cpp mcTextureManager teardown). GL binding unrelated to id numbering.
     DynamicFullMapFbo    = 35,  // FBO-LEDGER-EXTEND-1: dynamic full-map render FBO (dynamicFullMapFbo_, gos_postprocess.cpp); registered observe-only in the FboLedger. No prior id (SsaoOcclusion=19/HzbPyramid=18 reused for the other two unaccounted FBOs).
     DynamicPropShadowSsbo = 36, // SCENE-SSBO-OWNER-SWEEP-1: dynamic prop-shadow caster instance SSBO (s_dynamicPropShadowSsbo, GL binding 0, gos_static_prop_batcher.cpp drawDynamicPropShadows); LIVE default-path (gate MC2_SHADOW_DYNAMIC_PROP_CASTERS default-ON, inside the always-on dynamic shadow pass). Mission lifetime: handle glGen'd once per map, per-frame orphan-on-write bufferData, freed on onMapUnload. GL binding 0 unrelated to id numbering. COMPLETENESS-SWEEP gap B#5. Siblings (s_staticBldgShadowSsbo, s_blockVisSsbo, particle s_ssbo/tube SSBOs) DEFERRED to exclusion ledger — created only under default-OFF gates.
+    PostprocessSubgraphColor = 37, // POSTPROCESS-VK-IMAGE-OWNERSHIP-1: Layer-4 subgraph OWNED intermediate COLOR image (R16G16B16A16_SFLOAT). Copied-in from GL sceneColor, blended by BOTH fog passes (edge then oob) in ONE render pass, copied-out to GL. Layout chain UNDEFINED->TRANSFER_DST->COLOR_ATTACHMENT->TRANSFER_SRC. Runtime VkImage handle lives in the future subgraph .cpp, NOT here. Proof-only enum id.
+    PostprocessSubgraphDepth = 38, // POSTPROCESS-VK-IMAGE-OWNERSHIP-1: Layer-4 subgraph OWNED intermediate DEPTH image (D32_SFLOAT). Copied-in from GL sceneDepth, SAMPLED (read-only) by both fog passes. Layout chain UNDEFINED->TRANSFER_DST->SHADER_READ_ONLY. Runtime VkImage handle lives in the future subgraph .cpp, NOT here. Proof-only enum id.
     Count
 };
 
@@ -62,16 +64,18 @@ enum class RenderResourceId : uint16_t {
 //     an id a value >= Count, fails to compile.
 static_assert(static_cast<int>(RenderResourceId::Unknown)                       < static_cast<int>(RenderResourceId::Count), "id >= Count would index out of bounds");
 static_assert(static_cast<int>(RenderResourceId::DynamicPropShadowSsbo)         < static_cast<int>(RenderResourceId::Count), "id >= Count would index out of bounds");
+static_assert(static_cast<int>(RenderResourceId::PostprocessSubgraphColor)      < static_cast<int>(RenderResourceId::Count), "id >= Count would index out of bounds");
+static_assert(static_cast<int>(RenderResourceId::PostprocessSubgraphDepth)      < static_cast<int>(RenderResourceId::Count), "id >= Count would index out of bounds");
 
-// (b) The run is DENSE: Count == number-of-real-slots. DynamicPropShadowSsbo is the
-//     last real id (value 36) and Count follows it, so Count must be 37. If a new id
+// (b) The run is DENSE: Count == number-of-real-slots. PostprocessSubgraphDepth is the
+//     last real id (value 38) and Count follows it, so Count must be 39. If a new id
 //     is inserted, or an existing one renumbered leaving a hole, this breaks — forcing
 //     a review of the dense-index consumers.
-static_assert(static_cast<int>(RenderResourceId::DynamicPropShadowSsbo) + 1
+static_assert(static_cast<int>(RenderResourceId::PostprocessSubgraphDepth) + 1
                   == static_cast<int>(RenderResourceId::Count),
               "RenderResourceId is not a dense 0..Count-1 run (Count must immediately "
               "follow the last real id); dense-index consumers assume no holes above Count");
-static_assert(static_cast<int>(RenderResourceId::Count) == 37,
+static_assert(static_cast<int>(RenderResourceId::Count) == 39,
               "RenderResourceId::Count changed; update dense-index consumers "
               "(frame_graph_validate.h, postprocess_subgraph.h) and this guard");
 
