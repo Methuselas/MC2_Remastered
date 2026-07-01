@@ -87,6 +87,9 @@ set(SOURCES ${SOURCES}
 # When OFF the TU is not added -> no Vulkan headers/loader pulled in.
 if(MC2_VULKAN)
     list(APPEND SOURCES vulkan_backend_skeleton.cpp)
+    # VK-BOOTSTRAP-INTEGRATE-1: swapchain probe TU + vendored vk-bootstrap impl.
+    list(APPEND SOURCES vulkan_swapchain_probe.cpp)
+    list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/3rdparty/vk_bootstrap/VkBootstrap.cpp")
     # VULKAN-VMA-INTEGRATION-1: single VMA_IMPLEMENTATION TU (header-only lib).
     list(APPEND SOURCES vma_impl.cpp)
     # VULKAN-VOLK-LOADER-1: volk meta-loader (dynamic Vulkan load; no hard link
@@ -130,6 +133,8 @@ if(MC2_VULKAN)
     target_include_directories(gameos PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vma")
     # VULKAN-VOLK-LOADER-1: vendored volk (volk.h/volk.c).
     target_include_directories(gameos PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/volk")
+    # VK-BOOTSTRAP-INTEGRATE-1: vendored vk-bootstrap (SwapchainBuilder).
+    target_include_directories(gameos PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vk_bootstrap")
 endif()
 
 # VULKAN-SHADER-TOOLCHAIN-1: compile the trivial fullscreen GLSL vert/frag to
@@ -195,6 +200,8 @@ if(MC2_VULKAN)
     target_include_directories(gameos_editor PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vma")
     # VULKAN-VOLK-LOADER-1: vendored volk (volk.h/volk.c).
     target_include_directories(gameos_editor PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/volk")
+    # VK-BOOTSTRAP-INTEGRATE-1: vendored vk-bootstrap (SwapchainBuilder).
+    target_include_directories(gameos_editor PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vk_bootstrap")
 endif()
 
 add_library(gameos_main ${MAIN_SRC})

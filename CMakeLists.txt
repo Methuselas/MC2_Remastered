@@ -122,9 +122,17 @@ endif()
 # Verifies the SPIR-V shader-module load path against the compiled .spv.
 # OFF -> target does not exist.
 if(MC2_VULKAN)
+    # VK-BOOTSTRAP-INTEGRATE-1: the swapchain probe needs a hidden SDL Vulkan
+    # window + surface, so this target now links SDL2. find_package(SDL2) runs
+    # again lower in this file for the main build; calling it here (config mode)
+    # makes the SDL2::SDL2 imported target available at probe-definition time.
+    find_package(SDL2 REQUIRED CONFIG REQUIRED COMPONENTS SDL2)
     add_executable(vulkan_shader_probe
         tools/vulkan_shader_probe_main.cpp
         GameOS/gameos/vulkan_backend_skeleton.cpp
+        # VK-BOOTSTRAP-INTEGRATE-1: swapchain probe TU + vendored vk-bootstrap impl.
+        GameOS/gameos/vulkan_swapchain_probe.cpp
+        3rdparty/vk_bootstrap/VkBootstrap.cpp
         # VULKAN-VMA-INTEGRATION-1: single VMA_IMPLEMENTATION TU.
         GameOS/gameos/vma_impl.cpp
         # VULKAN-VOLK-LOADER-1: volk meta-loader (dynamic Vulkan load; no hard
@@ -134,16 +142,30 @@ if(MC2_VULKAN)
         # VULKAN-VMA-INTEGRATION-1: vendored header-only VMA (3rdparty/vma).
         "${CMAKE_SOURCE_DIR}/3rdparty/vma"
         # VULKAN-VOLK-LOADER-1: vendored volk (volk.h/volk.c).
-        "${CMAKE_SOURCE_DIR}/3rdparty/volk")
+        "${CMAKE_SOURCE_DIR}/3rdparty/volk"
+        # VK-BOOTSTRAP-INTEGRATE-1: vendored vk-bootstrap (SwapchainBuilder).
+        "${CMAKE_SOURCE_DIR}/3rdparty/vk_bootstrap"
+        # VK-BOOTSTRAP-INTEGRATE-1: SDL2 headers (SDL_vulkan.h) for the probe.
+        "${CMAKE_SOURCE_DIR}/3rdparty/include")
     target_compile_definitions(vulkan_shader_probe PRIVATE MC2_VULKAN)
     # VULKAN-VOLK-LOADER-1: link Vulkan HEADERS only -- volk owns runtime
     # dispatch via LoadLibrary("vulkan-1.dll"), so we must NOT link the loader
     # import lib (Vulkan::Vulkan). Vulkan::Headers gives include paths with no
     # link dependency, which is exactly the point of the volk indirection.
-    target_link_libraries(vulkan_shader_probe PRIVATE Vulkan::Headers)
+    # VK-BOOTSTRAP-INTEGRATE-1: SDL2 for the hidden Vulkan window/surface.
+    target_link_libraries(vulkan_shader_probe PRIVATE Vulkan::Headers SDL2::SDL2)
     if(TARGET mc2_vulkan_shaders)
         add_dependencies(vulkan_shader_probe mc2_vulkan_shaders)
     endif()
+    # VK-BOOTSTRAP-INTEGRATE-1: the probe dynamically links SDL2, so SDL2.dll
+    # must sit beside vulkan_shader_probe.exe. Copy it post-build (anchored on
+    # the SDL2::SDL2 imported target's own dll location).
+    add_custom_command(TARGET vulkan_shader_probe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL2::SDL2>"
+            "$<TARGET_FILE_DIR:vulkan_shader_probe>"
+        COMMENT "VK-BOOTSTRAP-INTEGRATE-1: copy SDL2.dll beside vulkan_shader_probe.exe"
+        VERBATIM)
 endif()
 
 if(MC2_ASAN)

@@ -1731,9 +1731,11 @@ bool mc2_vulkan_probe_if_env() {
     bool descOk = mc2_vulkan_probe_descriptors();
     // VULKAN-SAMPLED-IMAGE-SMOKE-1: headless sampled-image + sampler descriptor.
     bool imgOk = mc2_vulkan_probe_sampled_image();
-    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d descriptors=%d sampled_image=%d",
-        ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0, descOk ? 1 : 0, imgOk ? 1 : 0);
-    return ok && shOk && triOk && descOk && imgOk;
+    // VK-BOOTSTRAP-INTEGRATE-1: swapchain probe (create+query+destroy, no present).
+    bool swOk = mc2_vulkan_probe_swapchain();
+    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d descriptors=%d sampled_image=%d swapchain=%d",
+        ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0, descOk ? 1 : 0, imgOk ? 1 : 0, swOk ? 1 : 0);
+    return ok && shOk && triOk && descOk && imgOk && swOk;
 }
 
 #endif // MC2_VULKAN

@@ -78,6 +78,15 @@ bool mc2_vulkan_probe_descriptors();
 // Fail-soft: any VkResult error -> log + return false.
 bool mc2_vulkan_probe_sampled_image();
 
+// VK-BOOTSTRAP-INTEGRATE-1: Vulkan swapchain PROBE (create + query + destroy).
+// Uses vk-bootstrap's vkb::SwapchainBuilder against a bespoke devs[0] device and
+// a hidden 256x256 SDL Vulkan window/surface. Creates a swapchain, queries its
+// image count / format / extent, logs "swapchain-probe: OK image_count=.. ..",
+// then destroys everything in reverse. NO present, NO frame loop. Fail-soft: any
+// step logs a reason + returns false, never crashes (this is the OpenGL-user
+// path too). Defined in vulkan_swapchain_probe.cpp (compiled only under MC2_VULKAN).
+bool mc2_vulkan_probe_swapchain();
+
 // Returns true if a VkInstance was created, at least one physical device was
 // enumerated, and the capability dump completed. Fail-soft: logs + returns
 // false on any error.
