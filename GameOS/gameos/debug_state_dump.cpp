@@ -71,6 +71,14 @@ extern "C" void mc2_vulkan_island_health(
     unsigned long* edgeFogAttempted, unsigned long* edgeFogUsedVulkan,
     const char** fallbackReason,
     double* readbackUs, double* copyDepthUs, double* renderUs);
+// VULKAN-OOB-FOG-ISLAND-1: OOB-fog Vulkan island health snapshot (defined in
+// GameOS/gameos/vulkan_oob_fog_island.cpp, same #ifdef MC2_VULKAN_ISLAND).
+extern "C" void mc2_vulkan_oob_island_health(
+    int* vulkanAvailable, int* islandBuildEnabled, int* islandRuntimeGate,
+    const char** deviceName, unsigned long* validationErrors,
+    unsigned long* oobFogAttempted, unsigned long* oobFogUsedVulkan,
+    const char** fallbackReason,
+    double* readbackUs, double* copyDepthUs, double* renderUs);
 #endif
 
 #include <chrono>
@@ -676,6 +684,32 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "    \"edgefog_attempted\": " << att << ",\n";
         s << "    \"edgefog_used_vulkan\": " << used << ",\n";
         s << "    \"edgefog_fallback_reason\": \"" << jsonEscape(fbr) << "\",\n";
+        s << "    \"readback_us\": " << rbUs << ",\n";
+        s << "    \"copy_depth_us\": " << cdUs << ",\n";
+        s << "    \"render_us\": " << rUs << "\n";
+        s << "  }\n";
+    }
+    // VULKAN-OOB-FOG-ISLAND-1: additive "vulkan_oob_island" section (same
+    // build64_island-only discipline). Byte-identical when the whole block is
+    // #ifdef'd out; zeros when compiled but the runtime gate is OFF.
+    {
+        int va = 0, be = 0, rg = 0;
+        const char* dev = "";
+        const char* fbr = "";
+        unsigned long ve = 0, att = 0, used = 0;
+        double rbUs = 0.0, cdUs = 0.0, rUs = 0.0;
+        mc2_vulkan_oob_island_health(&va, &be, &rg, &dev, &ve, &att, &used, &fbr,
+                                     &rbUs, &cdUs, &rUs);
+        s << "  ,\n";
+        s << "  \"vulkan_oob_island\": {\n";
+        s << "    \"vulkan_available\": " << va << ",\n";
+        s << "    \"island_build_enabled\": " << be << ",\n";
+        s << "    \"island_runtime_gate_enabled\": " << rg << ",\n";
+        s << "    \"device_name\": \"" << jsonEscape(dev) << "\",\n";
+        s << "    \"validation_errors\": " << ve << ",\n";
+        s << "    \"oobfog_attempted\": " << att << ",\n";
+        s << "    \"oobfog_used_vulkan\": " << used << ",\n";
+        s << "    \"oobfog_fallback_reason\": \"" << jsonEscape(fbr) << "\",\n";
         s << "    \"readback_us\": " << rbUs << ",\n";
         s << "    \"copy_depth_us\": " << cdUs << ",\n";
         s << "    \"render_us\": " << rUs << "\n";

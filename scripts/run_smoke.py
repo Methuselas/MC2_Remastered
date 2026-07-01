@@ -1505,6 +1505,13 @@ def main():
                             # the allowlist Popen drops it and the forced-fallback smoke
                             # runs the real Vulkan (or default GL) path instead.
                             "MC2_VULKAN_ISLAND_FORCE_FALLBACK",
+                            # VULKAN-OOB-FOG-ISLAND-1: the second offscreen Vulkan
+                            # island (OOB fog). Same allowlist rationale as the
+                            # edge-fog gate above -- without these Popen drops them
+                            # and the gate-ON / forced-fallback smoke silently runs
+                            # the GL OOB-fog path instead.
+                            "MC2_VULKAN_OOB_FOG_ISLAND",
+                            "MC2_VULKAN_OOB_FOG_ISLAND_FORCE_FALLBACK",
                             # VULKAN-ISLAND-VALIDATION-WIRING-1: opt-in Vulkan
                             # validation preset (off/core/sync/gpu-assisted/
                             # best-practices/debug-printf). Without this in the

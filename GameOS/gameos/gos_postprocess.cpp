@@ -760,6 +760,8 @@ void gosPostProcess::destroy()
     // VULKAN-EDGE-FOG-ISLAND-2a: tear down the headless Vulkan device + all
     // island resources (no-op if the island was never lazily initialized).
     destroyVulkanEdgeFogIsland();
+    // VULKAN-OOB-FOG-ISLAND-1: same teardown for the OOB-fog island.
+    destroyVulkanOobFogIsland();
 #endif
 
     // CLUSTER-DEPTH-PYRAMID-NATIVE-1: release the gated pass's GL resources.
@@ -2710,7 +2712,13 @@ void gosPostProcess::endScene()
     // After edge fog so the two cloud colors match seamlessly.
     // FRAME-GRAPH-EXECUTOR-ISLAND-2: validate->call-unchanged->validate (default-OFF).
     executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::FogOob);
-    runFogOob();
+#ifdef MC2_VULKAN_ISLAND
+    // VULKAN-OOB-FOG-ISLAND-1: route the OOB-fog composite through the Vulkan
+    // island when MC2_VULKAN_OOB_FOG_ISLAND=1 and lazy init succeeded. Otherwise
+    // (gate off, or init fail-soft) fall through to the unchanged GL path.
+    if (vulkanOobFogIslandEnabled()) { runFogOobVulkan(); } else
+#endif
+    { runFogOob(); }
     executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::FogOob);
 
     // Bind default framebuffer (the backbuffer) for the composite output edge.

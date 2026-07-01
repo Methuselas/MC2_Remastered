@@ -91,6 +91,15 @@ bool mc2_vulkan_probe_sampled_image();
 // validation errors is an additional proof.
 bool mc2_vulkan_probe_edgefog_fixture(const char* spvDir);
 
+// VULKAN-OOB-FOG-ISLAND-1: headless shader-MATH oracle for the OOB-fog Vulkan port.
+// Runs the shipped fog_oob.{vert,frag}.spv on a KNOWN synthetic depth + invViewProj
+// + fog uniforms, reads back the RGBA16F output, computes the SAME fog_oob.frag math
+// on the CPU, and compares GPU-vs-CPU per pixel within a tight 1/1024 tolerance.
+// LOAD_OP_CLEAR + blend DISABLED so the readback IS the raw frag output vec4(col,
+// alpha). Fail-soft: any VkResult error -> log + return false. spvDir = dir with the
+// compiled fog_oob .spv (build output).
+bool mc2_vulkan_probe_oobfog_fixture(const char* spvDir);
+
 // VK-BOOTSTRAP-INTEGRATE-1: Vulkan swapchain PROBE (create + query + destroy).
 // Uses vk-bootstrap's vkb::SwapchainBuilder against a bespoke devs[0] device and
 // a hidden 256x256 SDL Vulkan window/surface. Creates a swapchain, queries its

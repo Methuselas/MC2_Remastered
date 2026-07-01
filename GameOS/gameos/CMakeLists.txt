@@ -100,6 +100,11 @@ if(MC2_VULKAN)
     # the whole TU is #ifdef MC2_VULKAN_ISLAND). Only added when MC2_VULKAN_ISLAND=ON.
     if(MC2_VULKAN_ISLAND)
         list(APPEND SOURCES vulkan_edge_fog_island.cpp)
+        # VULKAN-OOB-FOG-ISLAND-1: the second offscreen Vulkan island (OOB fog).
+        # Same #ifdef MC2_VULKAN_ISLAND discipline; the layout-affecting header
+        # members are added under the same macro, already propagated to all
+        # consumers by the ODR-harden block in the root CMakeLists.
+        list(APPEND SOURCES vulkan_oob_fog_island.cpp)
     endif()
 endif()
 
@@ -177,7 +182,8 @@ if(MC2_VULKAN)
     # VULKAN-EDGE-FOG-ISLAND-2a: bake edge_fog.{vert,frag} alongside fullscreen.
     # These are only USED when MC2_VULKAN_ISLAND=ON, but baking them under plain
     # MC2_VULKAN is harmless (extra .spv outputs) and keeps the toolchain simple.
-    set(MC2_VK_SHADER_BASENAMES fullscreen edge_fog)
+    # VULKAN-OOB-FOG-ISLAND-1: bake fog_oob.{vert,frag} alongside edge_fog.
+    set(MC2_VK_SHADER_BASENAMES fullscreen edge_fog fog_oob)
     set(MC2_VK_SPV_OUTPUTS "")
     if(MC2_GLSLANG_VALIDATOR OR MC2_GLSLC)
         foreach(_base ${MC2_VK_SHADER_BASENAMES})

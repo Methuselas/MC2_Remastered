@@ -341,6 +341,21 @@ public:
     void  destroyVulkanEdgeFogIsland();
     struct VulkanEdgeFogIsland;   // defined in vulkan_edge_fog_island.cpp
     VulkanEdgeFogIsland* vkFogIsland_ = nullptr;
+
+    // VULKAN-OOB-FOG-ISLAND-1: the SECOND offscreen Vulkan island (proves the
+    // VULKAN-ISLAND-TEMPLATE-1 checklist repeats). When MC2_VULKAN_OOB_FOG_ISLAND=1
+    // AND lazy Vulkan init succeeds, the OOB-fog composite runs on a headless Vulkan
+    // device instead of the GL runFogOob() path. Opaque pointer only -- no Vulkan
+    // headers leak into this header.
+    // vulkanOobFogIslandEnabled(): reads MC2_VULKAN_OOB_FOG_ISLAND once, lazily
+    // initializes the device on first call; false on failure -> GL fallback.
+    // runFogOobVulkan(): per-frame GL->Vulkan->GL OOB-fog composite.
+    // destroyVulkanOobFogIsland(): torn down from destroy().
+    bool  vulkanOobFogIslandEnabled();
+    void  runFogOobVulkan();
+    void  destroyVulkanOobFogIsland();
+    struct VulkanOobFogIsland;   // defined in vulkan_oob_fog_island.cpp
+    VulkanOobFogIsland* vkOobFogIsland_ = nullptr;
 #endif
 
     // OOB-FOG-1: fullscreen fog over out-of-bounds far-plane pixels.
