@@ -434,6 +434,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tier", choices=["tier1", "tier2", "tier3"])
     ap.add_argument("--mission", action="append", default=[])
+    ap.add_argument("--allow-any-mission", action="store_true",
+                    help="allow --mission stems not present in "
+                         "tests/smoke/smoke_missions.txt, as long as a matching "
+                         "<stem>.fit or <stem>.pak exists under the resolved "
+                         "deploy's data/missions dir. Prints a WARNING per "
+                         "auto-accepted stem. Default (no flag) behavior is "
+                         "unchanged: unknown stems still hard-error (exit 2).")
     ap.add_argument("--menu-canary", action="store_true")
     ap.add_argument("--with-menu-canary", action="store_true")
     ap.add_argument("--menu-script", default=str(DEFAULT_MENU_SCRIPT))
@@ -814,12 +821,36 @@ def main():
     if args.mission:
         selected, unknown = select_missions(entries, args.mission)
         if unknown:
-            # Config-error class (exit 2, same as argparse / GOSFX fatal):
-            # a typo'd mission list must never read as PASS to a CI gate.
-            print(f"[runner] ERROR: unknown mission name(s) "
-                  f"{', '.join(unknown)} not found in {MANIFEST_PATH} "
-                  f"(or skip-tier).", file=sys.stderr)
-            sys.exit(2)
+            if args.allow_any_mission:
+                # --allow-any-mission: accept a stem not in smoke_missions.txt
+                # if <stem>.fit or <stem>.pak resolves under the deploy's
+                # data/missions dir. This exists so non-tier missions (e.g.
+                # freshly-baked terrain-gen output like gaea_mountain_01) can
+                # be smoke-tested without adding them to the curated manifest.
+                missions_dir = Path(args.exe).resolve().parent / "data" / "missions"
+                still_unknown = []
+                for stem in unknown:
+                    fit_path = missions_dir / f"{stem}.fit"
+                    pak_path = missions_dir / f"{stem}.pak"
+                    if fit_path.is_file() or pak_path.is_file():
+                        print(f"[runner] WARNING: --allow-any-mission auto-accepting "
+                              f"'{stem}' (not in {MANIFEST_PATH}, but found at "
+                              f"{fit_path if fit_path.is_file() else pak_path}). "
+                              "This mission is NOT part of the curated smoke tier "
+                              "and has no baseline/duration/heartbeat tuning — "
+                              "treat results as advisory.", file=sys.stderr)
+                        selected.append(manifest.Entry(tier="tier1", stem=stem))
+                    else:
+                        still_unknown.append(stem)
+                unknown = still_unknown
+            if unknown:
+                # Config-error class (exit 2, same as argparse / GOSFX fatal):
+                # a typo'd mission list must never read as PASS to a CI gate.
+                print(f"[runner] ERROR: unknown mission name(s) "
+                      f"{', '.join(unknown)} not found in {MANIFEST_PATH} "
+                      f"(or skip-tier), and not resolvable under data/missions "
+                      f"(--allow-any-mission checked).", file=sys.stderr)
+                sys.exit(2)
     elif args.tier:
         selected = [e for e in entries if e.tier == args.tier]
     else:
