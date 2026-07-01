@@ -20,6 +20,12 @@ public:
         // Verbatim the composite edge's prior direct GL. No behavior change.
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
+
+    void bindFramebuffer(unsigned int fbo) override {
+        // Verbatim the routed FBO-bind's prior direct GL. No behavior change.
+        // RENDER-BACKEND-IFACE-FBO-1.
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fbo);
+    }
 };
 
 }  // namespace

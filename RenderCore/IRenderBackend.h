@@ -29,6 +29,13 @@ struct IRenderBackend {
     // (GL_FRAMEBUFFER, 0). This is the single op the PostProcess composite edge
     // needs in this slice.
     virtual void bindBackbuffer() = 0;
+
+    // Bind an arbitrary framebuffer object as the current render target. GL impl
+    // == glBindFramebuffer(GL_FRAMEBUFFER, fbo). `fbo` is a plain uint handle so
+    // this file stays GL-free (no GLuint / GL headers). Added by
+    // RENDER-BACKEND-IFACE-FBO-1 to route one more PostProcess FBO-bind edge; the
+    // interface grows one edge at a time.
+    virtual void bindFramebuffer(unsigned int fbo) = 0;
 };
 
 }  // namespace RenderCore

@@ -57,6 +57,7 @@ DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe")
 # so an OFF-vs-ON diff is unambiguous about what gates were live for the capture.
 # (Anything relevant to a backend/opt slice can be added; recording is cheap.)
 GATE_KEYS = [
+    "MC2_RENDER_BACKEND_IFACE",
     "MC2_FRAMEGRAPH_EXECUTOR",
     "MC2_FRAMEGRAPH_DRYRUN",
     "MC2_FRAMEGRAPH_REORDER_SPMECH",
