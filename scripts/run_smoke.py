@@ -1497,7 +1497,14 @@ def main():
                             # these in the allowlist Popen drops them and the
                             # gate-ON island smoke silently runs the GL path.
                             "MC2_VULKAN_EDGE_FOG_ISLAND",
-                            "MC2_VULKAN_SPV_DIR")},
+                            "MC2_VULKAN_SPV_DIR",
+                            # VULKAN-ISLAND-FALLBACK-PROOF-1: debug hook that forces
+                            # ensure-init to fail with a chosen fallback_reason so the
+                            # GL fail-soft path can be exercised deterministically
+                            # without uninstalling the Vulkan runtime. Without this in
+                            # the allowlist Popen drops it and the forced-fallback smoke
+                            # runs the real Vulkan (or default GL) path instead.
+                            "MC2_VULKAN_ISLAND_FORCE_FALLBACK")},
             },
         )
         # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.

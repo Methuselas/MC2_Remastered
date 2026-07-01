@@ -294,6 +294,23 @@ void destroy_island(gosPostProcess::VulkanEdgeFogIsland* s) {
 // Build the whole persistent Vulkan pipeline sized to WxH. Returns false (fail-soft)
 // on any error, leaving *s in a torn-down-but-not-disabled state.
 bool build_island(gosPostProcess::VulkanEdgeFogIsland* s, int W, int H) {
+    // VULKAN-ISLAND-FALLBACK-PROOF-1: deterministic FORCE-FALLBACK debug hook.
+    // MC2_VULKAN_ISLAND_FORCE_FALLBACK=<reason> makes ensure-init fail immediately
+    // with the chosen fallback_reason, so the GL fail-soft path can be proven without
+    // uninstalling the Vulkan runtime. The reason string is surfaced in the health
+    // dump verbatim (prefixed "forced_"). Default build (env unset) is unaffected.
+    {
+        const char* fforce = std::getenv("MC2_VULKAN_ISLAND_FORCE_FALLBACK");
+        if (fforce && fforce[0]) {
+            std::string reason = "forced_";
+            reason += fforce;
+            vlog("FORCE-FALLBACK hook active (MC2_VULKAN_ISLAND_FORCE_FALLBACK=%s) "
+                 "-- init forced to fail, using GL edge fog.", fforce);
+            setFallback(reason.c_str());
+            return false;
+        }
+    }
+
     if (!ensure_volk_initialized()) return false;
 
     s->width = W; s->height = H;
