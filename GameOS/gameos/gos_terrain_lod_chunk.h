@@ -18,6 +18,11 @@ constexpr uint32_t TERRAIN_TYPE_SSBO_BINDING   = 24u;  // Step 5b: per-vertex te
 constexpr uint32_t TERRAIN_CEMENT_SSBO_BINDING = 25u;  // Step 5c: per-vertex cement word (valid|layerIdx)
 constexpr uint32_t TERRAIN_VISUAL_HEIGHT_SSBO_BINDING = 26u; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: 4x VISUAL heightfield (render-only)
 
+// TERRAIN-CONTROLMAP-SAMPLE-1: authored RGBA control-map texture unit (not an
+// SSBO — sampled with GL_LINEAR like the colormap). Gate MC2_TERRAIN_CONTROLMAP,
+// default OFF; upload is only called when a sidecar was found at mission load.
+constexpr int TERRAIN_CONTROLMAP_TEXUNIT = 12;
+
 // Submit block draw commands for the current frame.
 // count==0 is a strict no-op. mclib calls this via Terrain::flushDrawCommands() only.
 // skirtDepths: parallel float array [count], one depth value per command.
@@ -56,6 +61,15 @@ void gos_TerrainLodChunk_UploadTerrainTypeFull(const float* types, int mapSide);
 // layer index; 0 = not cement). words: uint32[count] indexed by vn = mx + my*mapSide
 // (matches the heightfield grid). Called after the cement catalog atlas is built.
 void gos_TerrainLodChunk_UploadCementWordsFull(const unsigned int* words, int count, int mapSide);
+
+// TERRAIN-CONTROLMAP-SAMPLE-1: upload the authored RGBA control map (vertex
+// resolution, side*side, row-major, 4 bytes/texel) as a GL_RGBA8 2D texture
+// bound at TERRAIN_CONTROLMAP_TEXUNIT. rgba may be null / side<=0 to mean
+// "no sidecar" — the caller (mclib/terrain.cpp) only calls this when a sidecar
+// was actually loaded; the driver uploads u_useControlMap=1 only when the
+// texture handle is valid. Passthrough (gate off or no sidecar) never calls
+// this and u_useControlMap uploads 0 (byte-identical legacy classifier path).
+void gos_TerrainLodChunk_UploadControlMap(const unsigned char* rgba, int side);
 
 // Patch a dirty block's heightfield rows after terrain edit.
 // rowData: float[(quadCountY+1)*(quadCountX+1)] row-major.

@@ -146,6 +146,7 @@ zero matches). The table below records the active units observed.
 | 7    | Post-process input variant                         | `gameos_graphics.cpp:4890`                                                                 | (varies) |
 | 9    | Shadow / scene auxiliary                           | `gameos_graphics.cpp:4810/5164/5278/5402`, `:7076`, `:7500`                                | `shadowMap` (`shaders/include/shadow.hglsl:4`) — typically unit 9 |
 | 10   | Dynamic shadow / scene normal                      | `gameos_graphics.cpp:5028/5174/5289/5413`, `:7092`, `:7512`                                | `dynamicShadowMap` (`shaders/include/shadow.hglsl:87`), `sceneNormalTex` |
+| 12   | Terrain LOD chunk authored control map (RGBA rock/grass/dirt/concrete weights, override-only, `MC2_TERRAIN_CONTROLMAP`) | `GameOS/gameos/gos_terrain_lod_chunk.cpp` (`TERRAIN_CONTROLMAP_TEXUNIT`, `gos_terrain_lod_chunk.h`) | `u_controlMap` (`shaders/terrain_lod_chunk.frag`) — TERRAIN-CONTROLMAP-SAMPLE-1 |
 
 Note: terrain `matNormal0..matNormal4` samplers (`shaders/gos_terrain.frag:44-48`)
 are assigned units via runtime `glUniform1i` at program-link rebind time; the

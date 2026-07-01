@@ -78,6 +78,7 @@ set(SOURCES ${SOURCES}
     terrtxm.cpp
     terrtxm2.cpp
     burnin_jpeg_decode.cpp
+    control_map_png_decode.cpp
     txmconv.cpp
     appear.cpp
     apprtype.cpp

@@ -61,6 +61,10 @@
 // Externals from quad.cpp / mapdata.cpp / mechcmd2.cpp used by the water fast path.
 extern float MaxMinUV;
 extern float cloudScrollX;
+
+// TERRAIN-CONTROLMAP-SAMPLE-1: stb_image PNG decode wrapper (mclib/control_map_png_decode.cpp).
+extern "C" unsigned char* ControlMapPng_DecodeRGBA(const unsigned char* data, int dataLen, int* outW, int* outH);
+extern "C" void ControlMapPng_FreePixels(unsigned char* px);
 extern float cloudScrollY;
 extern long  sprayFrame;
 extern bool  useWaterInterestTexture;
@@ -815,6 +819,101 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 			}
 			gos_TerrainLodChunk_UploadHeightFull(elev.data(), (int)realVerticesMapSide);
 			gos_TerrainLodChunk_UploadTerrainTypeFull(ttype.data(), (int)realVerticesMapSide);
+
+			// TERRAIN-CONTROLMAP-SAMPLE-1: v1 = OVERRIDE-ONLY PASSTHROUGH. Gate
+			// MC2_TERRAIN_CONTROLMAP default OFF (mirrors MC2_TERRAIN_LOD_CHUNK's
+			// read pattern above). When ON, load an authored sidecar PNG (RGBA8,
+			// vertex-resolution side*side) if present; when absent or gate OFF,
+			// no texture is created and u_useControlMap uploads 0 at draw ->
+			// byte-identical to the legacy chunkColorWeights() classifier path.
+			// MC2_TERRAIN_CONTROLMAP_FILE overrides the sidecar path (precedent:
+			// MC2_TERRAIN_VISUAL_HEIGHT_FILE above).
+			{
+				static const bool s_controlMapGate = []() {
+					const char* v = getenv("MC2_TERRAIN_CONTROLMAP");
+					return (v && v[0] && v[0] != '0');
+				}();
+				const int mapSide = (int)realVerticesMapSide;
+				if (s_controlMapGate && mapSide > 1)
+				{
+					char cmPath[600];
+					if (const char* ov = getenv("MC2_TERRAIN_CONTROLMAP_FILE"))
+					{
+						strncpy(cmPath, ov, sizeof(cmPath) - 1);
+						cmPath[sizeof(cmPath) - 1] = '\0';
+					}
+					else
+					{
+						const char* nm = terrainName ? terrainName : "";
+						const char* bs = strrchr(nm, '\\');
+						const char* fs = strrchr(nm, '/');
+						const char* slash = (fs > bs) ? fs : bs;
+						char stem[160];
+						strncpy(stem, slash ? slash + 1 : nm, sizeof(stem) - 1);
+						stem[sizeof(stem) - 1] = '\0';
+						if (char* dot = strrchr(stem, '.')) *dot = '\0';
+						snprintf(cmPath, sizeof(cmPath),
+						         "data/missions/%s.beauty/control_map.png", stem);
+					}
+					FILE* cf = fopen(cmPath, "rb");
+					if (!cf)
+					{
+						printf("[TERRAIN_CONTROLMAP v1] sidecar NOT FOUND path=%s (gate on, mapSide=%d)"
+						       " -- passthrough (legacy classifier)\n", cmPath, mapSide);
+						fflush(stdout);
+					}
+					else
+					{
+						fseek(cf, 0, SEEK_END);
+						long cFileSize = ftell(cf);
+						fseek(cf, 0, SEEK_SET);
+						if (cFileSize <= 0)
+						{
+							fclose(cf);
+							printf("[TERRAIN_CONTROLMAP v1] EMPTY FILE path=%s\n", cmPath);
+							fflush(stdout);
+						}
+						else
+						{
+							std::vector<unsigned char> pngBytes((size_t)cFileSize);
+							size_t rd = fread(pngBytes.data(), 1, (size_t)cFileSize, cf);
+							fclose(cf);
+							if (rd != (size_t)cFileSize)
+							{
+								printf("[TERRAIN_CONTROLMAP v1] READ FAIL path=%s read=%zu want=%ld\n",
+								       cmPath, rd, cFileSize);
+								fflush(stdout);
+							}
+							else
+							{
+								int pw = 0, ph = 0;
+								unsigned char* rgba = ControlMapPng_DecodeRGBA(
+									pngBytes.data(), (int)cFileSize, &pw, &ph);
+								if (!rgba)
+								{
+									printf("[TERRAIN_CONTROLMAP v1] PNG DECODE FAILED path=%s\n", cmPath);
+									fflush(stdout);
+								}
+								else if (pw != mapSide || ph != mapSide)
+								{
+									printf("[TERRAIN_CONTROLMAP v1] SIZE MISMATCH path=%s got=%dx%d want=%dx%d"
+									       " -- passthrough (legacy classifier)\n",
+									       cmPath, pw, ph, mapSide, mapSide);
+									fflush(stdout);
+									ControlMapPng_FreePixels(rgba);
+								}
+								else
+								{
+									gos_TerrainLodChunk_UploadControlMap(rgba, mapSide);
+									printf("[TERRAIN_CONTROLMAP v1] LOADED path=%s side=%d\n", cmPath, mapSide);
+									fflush(stdout);
+									ControlMapPng_FreePixels(rgba);
+								}
+							}
+						}
+					}
+				}
+			}
 
 			// TERRAIN-VISUAL-HEIGHT-SAMPLE-1 Stage 1 (loader, log-only). Gate
 			// MC2_TERRAIN_VISUAL_HEIGHT default-OFF -> no load, no SSBO

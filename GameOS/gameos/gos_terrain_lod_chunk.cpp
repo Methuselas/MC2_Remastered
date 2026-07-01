@@ -91,6 +91,13 @@ static RenderCore::GpuBufferOwner s_cementSsbo{ // Step 5c: per-vertex cement wo
 static int    s_mapSide    = 0;   // mapSide stored at last UploadHeightFull
 static float  s_halfMap    = 0.0f;// (mapSide * 128.0 * 0.5)
 
+// TERRAIN-CONTROLMAP-SAMPLE-1: authored RGBA override control-map texture
+// (unit 12). Plain GLuint (not GpuBufferOwner) — mirrors gos_terrain_height_tex.cpp's
+// self-contained texture handling for a single-owner render-only raster. glName
+// 0 = not loaded (gate off or no sidecar) -> u_useControlMap uploads 0 at draw.
+static GLuint s_controlMapTex  = 0;
+static int    s_controlMapSide = 0;
+
 // ---------------------------------------------------------------------------
 // Shader program + uniform locations (Phase 4).
 // ---------------------------------------------------------------------------
@@ -182,6 +189,8 @@ static GLint s_locVisualDisplace     = -1; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1
 static GLint s_locVisualSide         = -1;
 static GLint s_locPomParams      = -1;
 static GLint s_locMatProfile     = -1;
+static GLint s_locControlMap     = -1;  // TERRAIN-CONTROLMAP-SAMPLE-1: u_controlMap sampler
+static GLint s_locUseControlMap  = -1;  // u_useControlMap gate uniform
 // Step 5c: cement catalog atlas (tex3) accessors from gos_terrain_indirect.cpp.
 extern unsigned int gos_terrain_indirect_getCementAtlasGLTex();
 extern int          gos_terrain_indirect_getCementAtlasGridSide();
@@ -582,6 +591,8 @@ void gos_TerrainLodChunk_Init()
             s_locCementDiagConnect = glGetUniformLocation(s_terrainProgram, "u_cementDiagConnect");
             s_locTransitionMaskArray = glGetUniformLocation(s_terrainProgram, "u_transitionMaskArray");
             s_locUseTransitionMask   = glGetUniformLocation(s_terrainProgram, "u_useTransitionMask");
+            s_locControlMap    = glGetUniformLocation(s_terrainProgram, "u_controlMap");    // TERRAIN-CONTROLMAP-SAMPLE-1
+            s_locUseControlMap = glGetUniformLocation(s_terrainProgram, "u_useControlMap");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -626,6 +637,14 @@ void gos_TerrainLodChunk_Destroy()
         s_locLodStep        = -1;
         s_locSkirtDepth     = -1;
         s_locForceColor     = -1;
+    }
+
+    // TERRAIN-CONTROLMAP-SAMPLE-1: free the authored control-map texture (if loaded).
+    if (s_controlMapTex != 0)
+    {
+        glDeleteTextures(1, &s_controlMapTex);
+        s_controlMapTex  = 0;
+        s_controlMapSide = 0;
     }
 
     if (s_visualHeightSsbo.glName != 0)
@@ -1002,6 +1021,22 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             glUniform1i(s_locTransitionMaskArray, kChunkTexUnitTransitionMask);
             glActiveTexture(GL_TEXTURE0 + kChunkTexUnitTransitionMask);
             glBindTexture(GL_TEXTURE_2D_ARRAY, gos_terrain_indirect_getTransitionMaskArrayGL());
+            glActiveTexture(GL_TEXTURE0);
+        }
+    }
+
+    // TERRAIN-CONTROLMAP-SAMPLE-1: authored control map at unit 12. Only bound
+    // when a sidecar was actually loaded (s_controlMapTex != 0); u_useControlMap
+    // uploads 0 otherwise (gate off / no sidecar) -> frag takes the verbatim
+    // chunkColorWeights() else-branch -> byte-identical.
+    {
+        const bool controlMapReady = (s_controlMapTex != 0);
+        if (s_locUseControlMap >= 0)
+            glUniform1i(s_locUseControlMap, controlMapReady ? 1 : 0);
+        if (controlMapReady && s_locControlMap >= 0) {
+            glUniform1i(s_locControlMap, TERRAIN_CONTROLMAP_TEXUNIT);
+            glActiveTexture(GL_TEXTURE0 + TERRAIN_CONTROLMAP_TEXUNIT);
+            glBindTexture(GL_TEXTURE_2D, s_controlMapTex);
             glActiveTexture(GL_TEXTURE0);
         }
     }
@@ -1400,6 +1435,48 @@ void gos_TerrainLodChunk_UploadTerrainTypeFull(const float* types, int mapSide)
         d.valid     = true;
         RenderCore::registerOrUpdateRenderResource(d);
     }
+}
+
+// TERRAIN-CONTROLMAP-SAMPLE-1: upload the authored RGBA control map as a plain
+// GL_RGBA8 2D texture (GL_LINEAR / CLAMP_TO_EDGE, matches the colormap's
+// filtering so bilinear blend across cells is consistent with today's sampling).
+// Called ONLY when mclib/terrain.cpp actually loaded a sidecar (gate ON + file
+// present). rgba: uint8[side*side*4] row-major, R=rock G=grass B=dirt A=concrete.
+void gos_TerrainLodChunk_UploadControlMap(const unsigned char* rgba, int side)
+{
+    if (!rgba || side <= 0)
+        return;
+
+    if (s_controlMapTex == 0)
+        glGenTextures(1, &s_controlMapTex);
+    if (s_controlMapTex == 0)
+    {
+        fprintf(stderr, "[TERRAIN_CONTROLMAP v1] glGenTextures failed\n");
+        fflush(stderr);
+        return;
+    }
+
+    GLint prevActive = GL_TEXTURE0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActive);
+    GLint prev2D = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev2D);
+
+    glBindTexture(GL_TEXTURE_2D, s_controlMapTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, side, side, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prev2D);
+    glActiveTexture((GLenum)prevActive);
+
+    s_controlMapSide = side;
+
+    fprintf(stderr, "[TERRAIN_CONTROLMAP v1] uploaded handle=%u side=%d bytes=%zu\n",
+            (unsigned)s_controlMapTex, side, (size_t)side * (size_t)side * 4u);
+    fflush(stderr);
 }
 
 // Step 5c: per-vertex cement word upload (valid bit | atlas layer index). Built by

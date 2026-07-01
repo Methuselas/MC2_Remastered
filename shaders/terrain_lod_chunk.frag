@@ -41,6 +41,15 @@ uniform sampler2D u_colormap;
 uniform float u_atlasTopLeftX;            // = Terrain::mapTopLeft3d.x
 uniform float u_atlasTopLeftY;            // = Terrain::mapTopLeft3d.y
 uniform float u_atlasOneOverWorldUnits;   // = Terrain::oneOverWorldUnitsMapSide
+
+// TERRAIN-CONTROLMAP-SAMPLE-1: authored override control map (unit 12). RGBA =
+// rock/grass/dirt/concrete weights, same semantics as chunkColorWeights() output.
+// v1 = OVERRIDE-ONLY PASSTHROUGH: only takes effect when a sidecar was loaded at
+// mission load AND the gate is on (MC2_TERRAIN_CONTROLMAP). Gate OFF -> driver
+// uploads u_useControlMap=0 -> this branch never taken -> byte-identical to the
+// pre-slice classifier path (chunkColorWeights(base)).
+uniform sampler2D u_controlMap;
+uniform int       u_useControlMap;
 uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uniform as legacy)
 uniform int   u_shadowTier;               // Slice B: per-chunk shadow tier (0=high,1=low,2=static,3=none)
 uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_CHUNK_DIAG):
@@ -52,6 +61,8 @@ uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_
                                           //   32 = no material detail normals (Step 5a)
                                           //   64 = viz raw matNormalArray rock sample
                                           //  128 = viz v_terrainType (grey + red=concrete)
+                                          // 1024 = viz control-map weights (matWeights.rgb,
+                                          //        after selection): TERRAIN-CONTROLMAP-SAMPLE-1
 
 // LIGHTING-DEBUG-VIEWS-1A-CHUNK: unified lighting debug channel, SAME enum as
 // static_prop / gos_terrain.frag. Separate from u_diag (bitmask) to avoid
@@ -587,7 +598,31 @@ void main() {
 
     // Material weights + snow (shared by detail normal AND colour tint).
     vec4  matWeights; float snowWeight;
-    chunkWeights(base, matWeights, snowWeight);
+    if (u_useControlMap != 0) {
+        // TERRAIN-CONTROLMAP-SAMPLE-1: authored RGBA override replaces the
+        // colormap-colour classifier (chunkColorWeights). Snow stays HSV-
+        // derived from the colormap (control map has no snow channel in v1) —
+        // reuse the SAME HSV snow term chunkWeights() computes, applied to the
+        // overridden weights.
+        matWeights = texture(u_controlMap, uv);
+        vec3 hsv = rgb2hsvChunk(base);
+        float snowRaw = smoothstep(0.15, 0.03, hsv.y) * smoothstep(0.42, 0.62, hsv.z);
+        snowWeight = smoothstep(0.25, 0.55, snowRaw);
+        matWeights *= (1.0 - snowWeight);
+        float tot = matWeights.x + matWeights.y + matWeights.z + matWeights.w;
+        if (tot > 0.01) matWeights /= tot; else matWeights = vec4(1.0, 0.0, 0.0, 0.0);
+    } else {
+        chunkWeights(base, matWeights, snowWeight);
+    }
+
+    // DIAG bit 1024: visualize control-map/classified weights (rock=R,
+    // grass=G, dirt=B) AFTER selection so authored vs classified are directly
+    // comparable by toggling u_useControlMap. TERRAIN-CONTROLMAP-SAMPLE-1.
+    if ((u_diag & 1024) != 0) {
+        fragColor = vec4(matWeights.rgb, 1.0);
+        if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
+    }
 
     // TERRAIN-SLOPE-BIAS-VISUAL-1 (B4a): optionally push material weights toward
     // rock on steep MACRO slopes so the rock detail normal + tint (not just the
