@@ -15,8 +15,10 @@
 // single VMA_IMPLEMENTATION TU is vma_impl.cpp; here we only pull declarations.
 #include "vk_mem_alloc.h"
 
+#include <cmath>
 #include <cstdarg>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1592,6 +1594,836 @@ done:
     return ok;
 }
 
+// ============================================================================
+// VULKAN-EDGEFOG-SYNTHETIC-FIXTURE-1: headless shader-MATH oracle.
+//
+// Runs the SHIPPED edge_fog.{vert,frag}.spv on a fully KNOWN synthetic input and
+// checks the GPU output against a CPU reimplementation of edge_fog.frag. This is
+// the LOWER layer of the two-layer oracle (shader-math correctness); the golden
+// bookmark is the UPPER layer (frame-integration correctness).
+//
+// KNOWN INPUTS (documented so a human can hand-verify):
+//   Render target: 64x64, RGBA16F, LOAD_OP_CLEAR to (0,0,0,0), blend DISABLED.
+//     => the readback IS the raw frag output vec4(fogColor, fogFactor), NOT a
+//        blend over a scene. This isolates the shader math.
+//
+//   invViewProj (row-major, the SAME convention the GL path uploads / the Vk UBO
+//   declares layout(row_major)). Chosen to be trivially invertible + documented:
+//     row0 = [200, 0,   0,   0  ]   -> world.x = 200 * ndc.x
+//     row1 = [0,   200, 0,   0  ]   -> world.y = 200 * ndc.y
+//     row2 = [0,   0,   200, -100]  -> world.z = 200*depth - 100
+//     row3 = [0,   0,   0,   1  ]   -> w = 1
+//   So (row_major) p = invViewProj * vec4(ndc, depth, 1):
+//     world = ( 200*ndc.x, 200*ndc.y, 200*depth - 100, 1 ).
+//   Reverse-Z depth convention (matches the GL/Vk shader): depth=1 = near, 0 = far.
+//     wNear (depth 1) -> z = 100   ;  wFar (depth 0) -> z = -100.
+//   dz = wFar.z - wNear.z = -200 (< -0.001), so the ray always points DOWN and the
+//   ray-plane intersect branch is exercised (never the "looking up" early-out).
+//   ndc spans [-1,1] over the 64x64 quad, so world XY spans [-200,200].
+//
+//   Fog uniforms:
+//     u_fogColor       = (0.6, 0.7, 0.85)
+//     u_halfExtent     = 150.0   (map edge at |world.xy| = 150, inside the [-200,200] span)
+//     u_fogStart       = 40.0    (inner ramp begins 40 WU inside the edge)
+//     u_fogHeight      = 60.0    (cloud-bank top in world Z)
+//     u_fogMax         = 0.9
+//     u_waterElevation = 0.0     (sea level; water skip when geoZ <= 2.0)
+//
+//   Synthetic depth texture (64x64, D32_SFLOAT), three documented regions by row:
+//     rows  0..20  : depth = 0.0    -> VOID (rawDepth < 0.0001; geoZ := u_fogHeight)
+//     rows 21..42  : depth = 0.75   -> geoZ = 200*0.75 - 100 = 50  (mid, below fogHeight)
+//     rows 43..63  : depth = 0.20   -> geoZ = 200*0.20 - 100 = -60 (near/low; below water+2
+//                                       for most, exercises the water-skip early-out)
+//   Across columns the ndc.x sweep drives planeXY.x from -200..+200, so distFromEdge
+//   sweeps through the inner ramp, the edge, and the outside-fill regions -- every
+//   branch of the fog fill is exercised.
+//
+// TOLERANCE: RGBA16F stores each channel as an IEEE half (10-bit mantissa). The
+// worst-case representable-value spacing (ULP) for a half in [0.5,1) is 2^-11 ~=
+// 4.9e-4. The GPU rounds the frag's fp32 result to half on store; the CPU ref
+// computes in fp32 then we compare against the half-decoded GPU value. We allow
+// 1/1024 (~9.8e-4, ~2 half-ULP near 1.0) to cover half round-to-nearest plus any
+// fp32-vs-fp32 reassociation of the smoothstep/clamp between GLSL and C++. This is
+// TIGHT: a matrix/reverse-Z/smoothstep bug shifts fogFactor by >>1e-3 (often 0.1+),
+// far outside this band. Do NOT loosen it to force a pass.
+namespace {
+
+bool g_edgefog_validation_saw_error = false;
+
+VKAPI_ATTR VkBool32 VKAPI_CALL edgefog_debug_cb(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT /*types*/,
+    const VkDebugUtilsMessengerCallbackDataEXT* pData,
+    void* /*user*/) {
+    const char* msg = pData && pData->pMessage ? pData->pMessage : "(no message)";
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        g_edgefog_validation_saw_error = true;
+        log("edgefog-fixture: VALIDATION: %s", msg);
+    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        log("edgefog-fixture: validation-warning: %s", msg);
+    }
+    return VK_FALSE;
+}
+
+// Decode an IEEE-754 binary16 (half) to float. Handles subnormals/inf/nan; the
+// fixture values are all finite in [0,1] so the common path dominates.
+float half_to_float(uint16_t h) {
+    uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
+    uint32_t exp  = (h >> 10) & 0x1Fu;
+    uint32_t mant = h & 0x3FFu;
+    uint32_t bits;
+    if (exp == 0) {
+        if (mant == 0) {
+            bits = sign; // +-0
+        } else {
+            // subnormal: normalize
+            int e = -1;
+            do { mant <<= 1; ++e; } while ((mant & 0x400u) == 0);
+            mant &= 0x3FFu;
+            bits = sign | (uint32_t)((127 - 15 - e) << 23) | (mant << 13);
+        }
+    } else if (exp == 0x1Fu) {
+        bits = sign | 0x7F800000u | (mant << 13); // inf/nan
+    } else {
+        bits = sign | (uint32_t)((int)exp - 15 + 127) << 23 | (mant << 13);
+    }
+    float f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+// GLSL-semantics scalar helpers (match the shipped shader exactly).
+float glsl_clamp(float x, float lo, float hi) {
+    return x < lo ? lo : (x > hi ? hi : x);
+}
+// GLSL smoothstep(edge0, edge1, x). Note edge0 may be > edge1 (the shader relies on
+// this for the height-fade / inner-ramp inversions). GLSL clamps t to [0,1] first.
+float glsl_smoothstep(float e0, float e1, float x) {
+    float t = glsl_clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+float glsl_step(float edge, float x) { return x < edge ? 0.0f : 1.0f; }
+
+// CPU reimplementation of edge_fog.frag for one pixel. `depthTexUV` is the [0,1]
+// screen UV (== TexCoord); `rawDepth` is the sampled depth .r. Returns the RGBA
+// the frag would write (fogColor, fogFactor) into `out[4]`. Row-major invViewProj.
+void edgefog_cpu_ref(const float invVP[16], float rawDepth, float u, float v,
+                     const float fogColor[3], float halfExtent, float fogStart,
+                     float fogHeight, float fogMax, float waterElev, float out[4]) {
+    // vec2 ndc = TexCoord*2 - 1
+    float ndcx = u * 2.0f - 1.0f;
+    float ndcy = v * 2.0f - 1.0f;
+
+    // row-major mat4 * vec4(ndc, depth, 1): p[r] = sum_c invVP[r*4+c] * vin[c]
+    auto mul = [&](float dz_ndc, float* px, float* py, float* pz, float* pw) {
+        float vin[4] = { ndcx, ndcy, dz_ndc, 1.0f };
+        float r[4];
+        for (int rr = 0; rr < 4; ++rr) {
+            r[rr] = invVP[rr*4+0]*vin[0] + invVP[rr*4+1]*vin[1] +
+                    invVP[rr*4+2]*vin[2] + invVP[rr*4+3]*vin[3];
+        }
+        *px = r[0]; *py = r[1]; *pz = r[2]; *pw = r[3];
+    };
+
+    float nx, ny, nz, nw, fx, fy, fz, fw;
+    mul(1.0f, &nx, &ny, &nz, &nw);
+    mul(0.0f, &fx, &fy, &fz, &fw);
+    float wNearx = nx/nw, wNeary = ny/nw, wNearz = nz/nw;
+    float wFarx  = fx/fw, wFary  = fy/fw, wFarz  = fz/fw;
+
+    float geoZ = fogHeight;
+    if (rawDepth >= 0.0001f) {
+        float wx, wy, wz, ww;
+        mul(rawDepth, &wx, &wy, &wz, &ww);
+        geoZ = wz / ww;
+    }
+
+    out[0] = out[1] = out[2] = out[3] = 0.0f; // default vec4(0.0)
+    if (geoZ <= waterElev + 2.0f) return;
+
+    float heightFade = glsl_smoothstep(fogHeight + 20.0f, fogHeight, geoZ);
+    if (heightFade <= 0.0f) return;
+
+    float dz = wFarz - wNearz;
+    if (dz >= -0.001f) return;
+    float t = (fogHeight - wNearz) / dz;
+    if (t < 0.0f || t > 1.0f) return;
+    float planeX = wNearx + t * (wFarx - wNearx);
+    float planeY = wNeary + t * (wFary - wNeary);
+
+    float distFromEdge = halfExtent - std::fmax(std::fabs(planeX), std::fabs(planeY));
+
+    float innerRamp   = glsl_smoothstep(fogStart, 0.0f, distFromEdge);
+    float outsideFill = glsl_step(0.0f, -distFromEdge);
+
+    float fogFactor = glsl_clamp(std::fmax(innerRamp, outsideFill) * heightFade * fogMax, 0.0f, 1.0f);
+    out[0] = fogColor[0];
+    out[1] = fogColor[1];
+    out[2] = fogColor[2];
+    out[3] = fogFactor;
+}
+
+} // namespace
+
+bool mc2_vulkan_probe_edgefog_fixture(const char* spvDir) {
+    // VULKAN-VOLK-LOADER-1: open the Vulkan runtime via volk before any vk call.
+    if (!ensure_volk_initialized()) return false;
+
+    g_edgefog_validation_saw_error = false;
+
+    const uint32_t W = 64, H = 64;
+    const VkFormat kDepthFmt = VK_FORMAT_D32_SFLOAT;          // matches the island
+    const VkFormat kColorFmt = VK_FORMAT_R16G16B16A16_SFLOAT; // matches the island
+
+    // ---- KNOWN inputs (see the block comment above) -------------------------
+    // Row-major invViewProj.
+    const float invVP[16] = {
+        200.0f,   0.0f,   0.0f,    0.0f,
+          0.0f, 200.0f,   0.0f,    0.0f,
+          0.0f,   0.0f, 200.0f, -100.0f,
+          0.0f,   0.0f,   0.0f,    1.0f,
+    };
+    const float fogColor[3] = { 0.6f, 0.7f, 0.85f };
+    const float halfExtent  = 150.0f;
+    const float fogStart    = 40.0f;
+    const float fogHeight    = 60.0f;
+    const float fogMax      = 0.9f;
+    const float waterElev   = 0.0f;
+
+    // Synthetic depth (row-banded): void / mid / near.
+    std::vector<float> depthScratch((size_t)W * H);
+    for (uint32_t y = 0; y < H; ++y) {
+        float d;
+        if (y <= 20)      d = 0.0f;   // VOID
+        else if (y <= 42) d = 0.75f;  // geoZ = 50
+        else              d = 0.20f;  // geoZ = -60
+        for (uint32_t x = 0; x < W; ++x) depthScratch[(size_t)y * W + x] = d;
+    }
+
+    // The std140 EdgeFogParams POD (mirrors shaders/vulkan/edge_fog.frag +
+    // vulkan_edge_fog_island.cpp: invViewProj @0, fogColor @64, _pad0 @76,
+    // halfExtent @80, fogStart @84, fogHeight @88, fogMax @92, waterElev @96).
+    struct EdgeFogParams {
+        float invViewProj[16];
+        float fogColor[3];
+        float _pad0;
+        float halfExtent;
+        float fogStart;
+        float fogHeight;
+        float fogMax;
+        float waterElevation;
+    };
+    static_assert(sizeof(EdgeFogParams) == 100, "EdgeFogParams std140 offsets drifted");
+
+    // ---- Optional validation layer + debug-utils messenger ------------------
+    std::vector<const char*> layers;
+    std::vector<const char*> instExts;
+    std::vector<VkValidationFeatureEnableEXT> valFeatures;
+    const char* valPreset = "off";
+    bool wantValidation = resolve_validation_preset(valFeatures, valPreset);
+    if (wantValidation) {
+        uint32_t layerCount = 0;
+        vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+        std::vector<VkLayerProperties> avail(layerCount);
+        if (layerCount) vkEnumerateInstanceLayerProperties(&layerCount, avail.data());
+        const char* want = "VK_LAYER_KHRONOS_validation";
+        bool found = false;
+        for (const auto& lp : avail) {
+            if (std::strcmp(lp.layerName, want) == 0) { found = true; break; }
+        }
+        if (found) {
+            layers.push_back(want);
+            instExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            log("edgefog-fixture: validation layer %s enabled (preset=%s, +%zu feature(s))",
+                want, valPreset, valFeatures.size());
+        } else {
+            wantValidation = false;
+            log("edgefog-fixture: validation requested but %s not available; continuing without", want);
+        }
+    }
+
+    // ---- VkInstance (headless) ----------------------------------------------
+    VkApplicationInfo app{};
+    app.sType            = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app.pApplicationName = "MC2 (Vulkan edge-fog fixture)";
+    app.pEngineName      = "MC2-GameOS";
+    app.apiVersion       = VK_API_VERSION_1_1;
+
+    VkValidationFeaturesEXT valFeaturesInfo{};
+    valFeaturesInfo.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    valFeaturesInfo.enabledValidationFeatureCount = static_cast<uint32_t>(valFeatures.size());
+    valFeaturesInfo.pEnabledValidationFeatures    = valFeatures.empty() ? nullptr : valFeatures.data();
+
+    VkInstanceCreateInfo ici{};
+    ici.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    ici.pApplicationInfo        = &app;
+    ici.enabledLayerCount       = static_cast<uint32_t>(layers.size());
+    ici.ppEnabledLayerNames     = layers.empty() ? nullptr : layers.data();
+    ici.enabledExtensionCount   = static_cast<uint32_t>(instExts.size());
+    ici.ppEnabledExtensionNames = instExts.empty() ? nullptr : instExts.data();
+    if (wantValidation && !valFeatures.empty()) ici.pNext = &valFeaturesInfo;
+
+    VkInstance instance = VK_NULL_HANDLE;
+    VkResult r = vkCreateInstance(&ici, nullptr, &instance);
+    if (r != VK_SUCCESS) {
+        log("edgefog-fixture: vkCreateInstance failed (VkResult=%d). fail-soft.", (int)r);
+        return false;
+    }
+    volkLoadInstance(instance);
+
+    VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
+    if (wantValidation) {
+        auto pfnCreate = (PFN_vkCreateDebugUtilsMessengerEXT)
+            vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+        if (pfnCreate) {
+            VkDebugUtilsMessengerCreateInfoEXT mci{};
+            mci.sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+            mci.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+            mci.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+            mci.pfnUserCallback = edgefog_debug_cb;
+            pfnCreate(instance, &mci, nullptr, &messenger);
+        } else {
+            log("edgefog-fixture: vkCreateDebugUtilsMessengerEXT not found; continuing (no error capture)");
+        }
+    }
+    auto destroy_messenger = [&]() {
+        if (messenger) {
+            auto d = (PFN_vkDestroyDebugUtilsMessengerEXT)
+                vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+            if (d) d(instance, messenger, nullptr);
+        }
+    };
+
+    // ---- Physical device + graphics queue family ----------------------------
+    uint32_t devCount = 0;
+    r = vkEnumeratePhysicalDevices(instance, &devCount, nullptr);
+    if (r != VK_SUCCESS || devCount == 0) {
+        log("edgefog-fixture: no physical devices (VkResult=%d, count=%u). fail-soft.", (int)r, devCount);
+        destroy_messenger();
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+    std::vector<VkPhysicalDevice> devs(devCount);
+    vkEnumeratePhysicalDevices(instance, &devCount, devs.data());
+    VkPhysicalDevice phys = devs[0];
+
+    uint32_t qfCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, nullptr);
+    std::vector<VkQueueFamilyProperties> qfs(qfCount);
+    if (qfCount) vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, qfs.data());
+    uint32_t gfxFamily = UINT32_MAX;
+    for (uint32_t q = 0; q < qfCount; ++q) {
+        if (qfs[q].queueFlags & VK_QUEUE_GRAPHICS_BIT) { gfxFamily = q; break; }
+    }
+    if (gfxFamily == UINT32_MAX) {
+        log("edgefog-fixture: no graphics queue family. fail-soft.");
+        destroy_messenger();
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+
+    float prio = 1.0f;
+    VkDeviceQueueCreateInfo qci{};
+    qci.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    qci.queueFamilyIndex = gfxFamily;
+    qci.queueCount       = 1;
+    qci.pQueuePriorities = &prio;
+
+    VkDeviceCreateInfo dci{};
+    dci.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    dci.queueCreateInfoCount = 1;
+    dci.pQueueCreateInfos    = &qci;
+
+    VkDevice device = VK_NULL_HANDLE;
+    r = vkCreateDevice(phys, &dci, nullptr, &device);
+    if (r != VK_SUCCESS) {
+        log("edgefog-fixture: vkCreateDevice failed (VkResult=%d). fail-soft.", (int)r);
+        destroy_messenger();
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+    volkLoadDevice(device);
+    VkQueue queue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(device, gfxFamily, 0, &queue);
+
+    // Everything past here is cleaned up via the single `done` epilogue.
+    bool ok = false;
+    VmaAllocator   allocator = VK_NULL_HANDLE;
+    VkShaderModule vert = VK_NULL_HANDLE, frag = VK_NULL_HANDLE;
+    VkImage        depthImage = VK_NULL_HANDLE, colorImage = VK_NULL_HANDLE;
+    VmaAllocation  depthAlloc = VK_NULL_HANDLE, colorAlloc = VK_NULL_HANDLE;
+    VkImageView    depthView = VK_NULL_HANDLE, colorView = VK_NULL_HANDLE;
+    VkSampler      sampler   = VK_NULL_HANDLE;
+    VkBuffer       depthStaging = VK_NULL_HANDLE, colorReadback = VK_NULL_HANDLE, ubo = VK_NULL_HANDLE;
+    VmaAllocation  depthStagingAlloc = VK_NULL_HANDLE, colorReadbackAlloc = VK_NULL_HANDLE, uboAlloc = VK_NULL_HANDLE;
+    VkRenderPass   rpass  = VK_NULL_HANDLE;
+    VkFramebuffer  fb     = VK_NULL_HANDLE;
+    VkDescriptorSetLayout dsl = VK_NULL_HANDLE;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    VkDescriptorSet  set  = VK_NULL_HANDLE;
+    VkPipelineLayout playout = VK_NULL_HANDLE;
+    VkPipeline     pipe   = VK_NULL_HANDLE;
+    VkCommandPool  cpool  = VK_NULL_HANDLE;
+    VkCommandBuffer cbuf  = VK_NULL_HANDLE;
+    VkFence        fence  = VK_NULL_HANDLE;
+
+    if (!create_vma_allocator("edgefog-fixture", instance, phys, device, &allocator)) goto done;
+
+    // ---- Shader modules (the SHIPPED edge_fog .spv) -------------------------
+    {
+        std::string dir = spvDir ? spvDir : ".";
+        if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') dir += '/';
+        vert = mc2_vulkan_load_spv(device, (dir + "edge_fog.vert.spv").c_str());
+        frag = mc2_vulkan_load_spv(device, (dir + "edge_fog.frag.spv").c_str());
+        if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE) {
+            log("edgefog-fixture: edge_fog shader module load failed. fail-soft.");
+            goto done;
+        }
+    }
+
+    // ---- Images (depth: sampled+transfer-dst; color: attachment+transfer-src) ----
+    {
+        auto make_image = [&](VkFormat fmt, VkImageUsageFlags usage, VkImage* img, VmaAllocation* alloc) -> bool {
+            VkImageCreateInfo ii{};
+            ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            ii.imageType = VK_IMAGE_TYPE_2D;
+            ii.format = fmt;
+            ii.extent = {W, H, 1};
+            ii.mipLevels = 1;
+            ii.arrayLayers = 1;
+            ii.samples = VK_SAMPLE_COUNT_1_BIT;
+            ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+            ii.usage = usage;
+            ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            VmaAllocationCreateInfo aci{};
+            aci.usage = VMA_MEMORY_USAGE_AUTO;
+            aci.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+            VkResult rr = vmaCreateImage(allocator, &ii, &aci, img, alloc, nullptr);
+            if (rr != VK_SUCCESS) { log("edgefog-fixture: vmaCreateImage failed (%d). fail-soft.", (int)rr); return false; }
+            return true;
+        };
+        if (!make_image(kDepthFmt, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                        &depthImage, &depthAlloc)) goto done;
+        if (!make_image(kColorFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                        &colorImage, &colorAlloc)) goto done;
+
+        auto make_view = [&](VkImage img, VkFormat fmt, VkImageAspectFlags aspect, VkImageView* view) -> bool {
+            VkImageViewCreateInfo vi{};
+            vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            vi.image = img;
+            vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            vi.format = fmt;
+            vi.subresourceRange = {aspect, 0, 1, 0, 1};
+            VkResult rr = vkCreateImageView(device, &vi, nullptr, view);
+            if (rr != VK_SUCCESS) { log("edgefog-fixture: vkCreateImageView failed (%d). fail-soft.", (int)rr); return false; }
+            return true;
+        };
+        if (!make_view(depthImage, kDepthFmt, VK_IMAGE_ASPECT_DEPTH_BIT, &depthView)) goto done;
+        if (!make_view(colorImage, kColorFmt, VK_IMAGE_ASPECT_COLOR_BIT, &colorView)) goto done;
+    }
+
+    // ---- Depth sampler (nearest/clamp -- same as the island) ----------------
+    {
+        VkSamplerCreateInfo si{};
+        si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        si.magFilter = VK_FILTER_NEAREST;
+        si.minFilter = VK_FILTER_NEAREST;
+        si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        r = vkCreateSampler(device, &si, nullptr, &sampler);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkCreateSampler failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Buffers: depth staging (upload), color readback, UBO ---------------
+    {
+        auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer* buf, VmaAllocation* alloc) -> bool {
+            VkBufferCreateInfo bci{};
+            bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bci.size = size;
+            bci.usage = usage;
+            VmaAllocationCreateInfo aci{};
+            aci.usage = VMA_MEMORY_USAGE_AUTO;
+            aci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+            VkResult rr = vmaCreateBuffer(allocator, &bci, &aci, buf, alloc, nullptr);
+            if (rr != VK_SUCCESS) { log("edgefog-fixture: vmaCreateBuffer failed (%d). fail-soft.", (int)rr); return false; }
+            return true;
+        };
+        const VkDeviceSize depthBytes = (VkDeviceSize)W * H * 4;      // R32 float
+        const VkDeviceSize colorBytes = (VkDeviceSize)W * H * 4 * 2;  // RGBA16F
+        if (!make_buffer(depthBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &depthStaging, &depthStagingAlloc)) goto done;
+        if (!make_buffer(colorBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &colorReadback, &colorReadbackAlloc)) goto done;
+        if (!make_buffer(sizeof(EdgeFogParams), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &ubo, &uboAlloc)) goto done;
+
+        // upload depth into staging
+        void* p = nullptr;
+        r = vmaMapMemory(allocator, depthStagingAlloc, &p);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vmaMapMemory(depthStaging) failed (%d). fail-soft.", (int)r); goto done; }
+        std::memcpy(p, depthScratch.data(), (size_t)W * H * 4);
+        vmaUnmapMemory(allocator, depthStagingAlloc);
+
+        // fill UBO
+        EdgeFogParams params{};
+        std::memcpy(params.invViewProj, invVP, 16 * sizeof(float));
+        params.fogColor[0] = fogColor[0]; params.fogColor[1] = fogColor[1]; params.fogColor[2] = fogColor[2];
+        params._pad0 = 0.0f;
+        params.halfExtent = halfExtent;
+        params.fogStart = fogStart;
+        params.fogHeight = fogHeight;
+        params.fogMax = fogMax;
+        params.waterElevation = waterElev;
+        r = vmaMapMemory(allocator, uboAlloc, &p);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vmaMapMemory(ubo) failed (%d). fail-soft.", (int)r); goto done; }
+        std::memcpy(p, &params, sizeof(params));
+        vmaUnmapMemory(allocator, uboAlloc);
+    }
+
+    // ---- Render pass (CLEAR to 0 -> STORE; blend DISABLED = raw frag output) --
+    {
+        VkAttachmentDescription att{};
+        att.format = kColorFmt;
+        att.samples = VK_SAMPLE_COUNT_1_BIT;
+        att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        att.finalLayout   = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = 1;
+        sub.pColorAttachments = &ref;
+        VkRenderPassCreateInfo rpci{};
+        rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rpci.attachmentCount = 1;
+        rpci.pAttachments = &att;
+        rpci.subpassCount = 1;
+        rpci.pSubpasses = &sub;
+        r = vkCreateRenderPass(device, &rpci, nullptr, &rpass);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkCreateRenderPass failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkFramebufferCreateInfo fci{};
+        fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fci.renderPass = rpass;
+        fci.attachmentCount = 1;
+        fci.pAttachments = &colorView;
+        fci.width = W; fci.height = H; fci.layers = 1;
+        r = vkCreateFramebuffer(device, &fci, nullptr, &fb);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkCreateFramebuffer failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Descriptor set: binding0 = depth sampler, binding1 = UBO -----------
+    {
+        VkDescriptorSetLayoutBinding binds[2]{};
+        binds[0].binding = 0;
+        binds[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        binds[0].descriptorCount = 1;
+        binds[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        binds[1].binding = 1;
+        binds[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        binds[1].descriptorCount = 1;
+        binds[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutCreateInfo lci{};
+        lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        lci.bindingCount = 2;
+        lci.pBindings = binds;
+        r = vkCreateDescriptorSetLayout(device, &lci, nullptr, &dsl);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkCreateDescriptorSetLayout failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkDescriptorPoolSize sizes[2]{};
+        sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; sizes[0].descriptorCount = 1;
+        sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;         sizes[1].descriptorCount = 1;
+        VkDescriptorPoolCreateInfo pci{};
+        pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pci.maxSets = 1;
+        pci.poolSizeCount = 2;
+        pci.pPoolSizes = sizes;
+        r = vkCreateDescriptorPool(device, &pci, nullptr, &pool);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkCreateDescriptorPool failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkDescriptorSetAllocateInfo dsai{};
+        dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        dsai.descriptorPool = pool;
+        dsai.descriptorSetCount = 1;
+        dsai.pSetLayouts = &dsl;
+        r = vkAllocateDescriptorSets(device, &dsai, &set);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkAllocateDescriptorSets failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Pipeline layout + graphics pipeline (fullscreen tri; no vtx input) --
+    {
+        VkPipelineLayoutCreateInfo plci{};
+        plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        plci.setLayoutCount = 1;
+        plci.pSetLayouts = &dsl;
+        r = vkCreatePipelineLayout(device, &plci, nullptr, &playout);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkCreatePipelineLayout failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkPipelineShaderStageCreateInfo stages[2]{};
+        stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = vert;
+        stages[0].pName  = "main";
+        stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = frag;
+        stages[1].pName  = "main";
+
+        VkPipelineVertexInputStateCreateInfo vin{};
+        vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        VkPipelineInputAssemblyStateCreateInfo ia{};
+        ia.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkViewport vp{0.0f, 0.0f, (float)W, (float)H, 0.0f, 1.0f};
+        VkRect2D   sc{{0, 0}, {W, H}};
+        VkPipelineViewportStateCreateInfo vps{};
+        vps.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        vps.viewportCount = 1; vps.pViewports = &vp;
+        vps.scissorCount  = 1; vps.pScissors  = &sc;
+        VkPipelineRasterizationStateCreateInfo rs{};
+        rs.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rs.polygonMode = VK_POLYGON_MODE_FILL;
+        rs.cullMode    = VK_CULL_MODE_NONE;
+        rs.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rs.lineWidth   = 1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{};
+        ms.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        // Blend DISABLED: readback == raw frag output vec4(fogColor, fogFactor).
+        VkPipelineColorBlendAttachmentState cba{};
+        cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                             VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        cba.blendEnable = VK_FALSE;
+        VkPipelineColorBlendStateCreateInfo cb{};
+        cb.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        cb.attachmentCount = 1;
+        cb.pAttachments    = &cba;
+
+        VkGraphicsPipelineCreateInfo gp{};
+        gp.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        gp.stageCount          = 2;
+        gp.pStages             = stages;
+        gp.pVertexInputState   = &vin;
+        gp.pInputAssemblyState = &ia;
+        gp.pViewportState      = &vps;
+        gp.pRasterizationState = &rs;
+        gp.pMultisampleState   = &ms;
+        gp.pColorBlendState    = &cb;
+        gp.layout              = playout;
+        gp.renderPass          = rpass;
+        gp.subpass             = 0;
+        r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &gp, nullptr, &pipe);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkCreateGraphicsPipelines failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Bind depth image + UBO to the set ----------------------------------
+    {
+        VkDescriptorImageInfo imgInfo{};
+        imgInfo.sampler = sampler;
+        imgInfo.imageView = depthView;
+        imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorBufferInfo uboInfo{ ubo, 0, VK_WHOLE_SIZE };
+        VkWriteDescriptorSet writes[2]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = set;
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo      = &imgInfo;
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = set;
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[1].pBufferInfo     = &uboInfo;
+        vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+    }
+
+    // ---- Command buffer: upload depth -> render fog -> copy color to readback ----
+    {
+        VkCommandPoolCreateInfo pci{};
+        pci.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pci.queueFamilyIndex = gfxFamily;
+        r = vkCreateCommandPool(device, &pci, nullptr, &cpool);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkCreateCommandPool failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkCommandBufferAllocateInfo cai{};
+        cai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cai.commandPool        = cpool;
+        cai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cai.commandBufferCount = 1;
+        r = vkAllocateCommandBuffers(device, &cai, &cbuf);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkAllocateCommandBuffers failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkCommandBufferBeginInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        r = vkBeginCommandBuffer(cbuf, &bi);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkBeginCommandBuffer failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkImageSubresourceRange depthRange{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+
+        // depth: UNDEFINED -> TRANSFER_DST for the copy
+        VkImageMemoryBarrier toDst{};
+        toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toDst.image = depthImage;
+        toDst.subresourceRange = depthRange;
+        toDst.srcAccessMask = 0;
+        toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cbuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &toDst);
+
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+        region.imageExtent = {W, H, 1};
+        vkCmdCopyBufferToImage(cbuf, depthStaging, depthImage,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+        // depth: TRANSFER_DST -> SHADER_READ_ONLY for the frag sample
+        VkImageMemoryBarrier toRead{};
+        toRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        toRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toRead.image = depthImage;
+        toRead.subresourceRange = depthRange;
+        toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cbuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &toRead);
+
+        VkClearValue clear{};
+        clear.color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+        VkRenderPassBeginInfo rbi{};
+        rbi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rbi.renderPass = rpass;
+        rbi.framebuffer = fb;
+        rbi.renderArea = {{0, 0}, {W, H}};
+        rbi.clearValueCount = 1;
+        rbi.pClearValues = &clear;
+        vkCmdBeginRenderPass(cbuf, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+        vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, playout, 0, 1, &set, 0, nullptr);
+        vkCmdDraw(cbuf, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cbuf);
+        // color finalLayout is TRANSFER_SRC_OPTIMAL -> copy directly.
+
+        VkBufferImageCopy creg{};
+        creg.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        creg.imageExtent = {W, H, 1};
+        vkCmdCopyImageToBuffer(cbuf, colorImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               colorReadback, 1, &creg);
+
+        r = vkEndCommandBuffer(cbuf);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkEndCommandBuffer failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkFenceCreateInfo fnci{};
+        fnci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        r = vkCreateFence(device, &fnci, nullptr, &fence);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkCreateFence failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkSubmitInfo si{};
+        si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.commandBufferCount = 1;
+        si.pCommandBuffers    = &cbuf;
+        r = vkQueueSubmit(queue, 1, &si, fence);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkQueueSubmit failed (%d). fail-soft.", (int)r); goto done; }
+        r = vkWaitForFences(device, 1, &fence, VK_TRUE, 5ull * 1000 * 1000 * 1000);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vkWaitForFences failed/timeout (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Read back RGBA16F, compare against the CPU reference ----------------
+    {
+        void* mapped = nullptr;
+        r = vmaMapMemory(allocator, colorReadbackAlloc, &mapped);
+        if (r != VK_SUCCESS) { log("edgefog-fixture: vmaMapMemory(readback) failed (%d). fail-soft.", (int)r); goto done; }
+        const uint16_t* px = static_cast<const uint16_t*>(mapped); // 4 halfs per pixel
+
+        const float TOL = 1.0f / 1024.0f; // see block comment (justified)
+        double maxDiff = 0.0;
+        uint32_t maxX = 0, maxY = 0;
+        int maxCh = -1;
+        uint32_t beyond = 0;
+        uint32_t worstBeyondX = 0, worstBeyondY = 0;
+
+        for (uint32_t y = 0; y < H; ++y) {
+            for (uint32_t x = 0; x < W; ++x) {
+                // TexCoord for a fullscreen-triangle pass: pixel-center UV.
+                float u = (x + 0.5f) / (float)W;
+                float v = (y + 0.5f) / (float)H;
+                float rawDepth = depthScratch[(size_t)y * W + x];
+                float ref[4];
+                edgefog_cpu_ref(invVP, rawDepth, u, v, fogColor, halfExtent, fogStart,
+                                fogHeight, fogMax, waterElev, ref);
+                const uint16_t* p = px + ((size_t)y * W + x) * 4;
+                for (int c = 0; c < 4; ++c) {
+                    float g = half_to_float(p[c]);
+                    double d = std::fabs((double)g - (double)ref[c]);
+                    if (d > maxDiff) { maxDiff = d; maxX = x; maxY = y; maxCh = c; }
+                    if (d > TOL) {
+                        if (beyond == 0) { worstBeyondX = x; worstBeyondY = y; }
+                        ++beyond;
+                    }
+                }
+            }
+        }
+        vmaUnmapMemory(allocator, colorReadbackAlloc);
+
+        log("edgefog-fixture: max_abs_diff=%.6g at (x=%u,y=%u,ch=%d) tol=%.6g pixels_beyond_tol=%u",
+            maxDiff, maxX, maxY, maxCh, (double)TOL, beyond);
+        if (beyond) {
+            log("edgefog-fixture: FIRST beyond-tol pixel at (x=%u,y=%u) -- CHARACTERIZED DIVERGENCE, not loosening tolerance.",
+                worstBeyondX, worstBeyondY);
+        }
+        // Also require the render actually produced fog somewhere (guards a
+        // silent all-clear/all-zero output masquerading as a "match").
+        ok = (beyond == 0);
+    }
+
+    if (wantValidation) {
+        ok = ok && !g_edgefog_validation_saw_error;
+        log("edgefog-fixture: validation active; saw_error=%d", g_edgefog_validation_saw_error ? 1 : 0);
+    }
+    if (ok) log("edgefog-fixture: PASS -- GPU edge_fog output matches CPU reference within tolerance.");
+    else    log("edgefog-fixture: FAIL -- GPU vs CPU diverged (see max_abs_diff / beyond-tol above).");
+
+done:
+    if (fence)   vkDestroyFence(device, fence, nullptr);
+    if (cpool)   vkDestroyCommandPool(device, cpool, nullptr);
+    if (pipe)    vkDestroyPipeline(device, pipe, nullptr);
+    if (playout) vkDestroyPipelineLayout(device, playout, nullptr);
+    if (pool)    vkDestroyDescriptorPool(device, pool, nullptr);
+    if (dsl)     vkDestroyDescriptorSetLayout(device, dsl, nullptr);
+    if (fb)      vkDestroyFramebuffer(device, fb, nullptr);
+    if (rpass)   vkDestroyRenderPass(device, rpass, nullptr);
+    if (ubo)          vmaDestroyBuffer(allocator, ubo, uboAlloc);
+    if (colorReadback) vmaDestroyBuffer(allocator, colorReadback, colorReadbackAlloc);
+    if (depthStaging) vmaDestroyBuffer(allocator, depthStaging, depthStagingAlloc);
+    if (sampler) vkDestroySampler(device, sampler, nullptr);
+    if (colorView) vkDestroyImageView(device, colorView, nullptr);
+    if (depthView) vkDestroyImageView(device, depthView, nullptr);
+    if (colorImage) vmaDestroyImage(allocator, colorImage, colorAlloc);
+    if (depthImage) vmaDestroyImage(allocator, depthImage, depthAlloc);
+    mc2_vulkan_free_shader(device, vert);
+    mc2_vulkan_free_shader(device, frag);
+    if (allocator) vmaDestroyAllocator(allocator);
+    vkDestroyDevice(device, nullptr);
+    destroy_messenger();
+    vkDestroyInstance(instance, nullptr);
+    log("edgefog-fixture: %s -- cleaned up (device+instance destroyed).", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 bool mc2_vulkan_probe() {
     // VULKAN-VOLK-LOADER-1: open the Vulkan runtime via volk before any vk call.
     // This is the primary fail-soft gate: on an OpenGL-only machine with no
@@ -1733,9 +2565,11 @@ bool mc2_vulkan_probe_if_env() {
     bool imgOk = mc2_vulkan_probe_sampled_image();
     // VK-BOOTSTRAP-INTEGRATE-1: swapchain probe (create+query+destroy, no present).
     bool swOk = mc2_vulkan_probe_swapchain();
-    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d descriptors=%d sampled_image=%d swapchain=%d",
-        ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0, descOk ? 1 : 0, imgOk ? 1 : 0, swOk ? 1 : 0);
-    return ok && shOk && triOk && descOk && imgOk && swOk;
+    // VULKAN-EDGEFOG-SYNTHETIC-FIXTURE-1: shader-math oracle for the edge-fog port.
+    bool efOk = mc2_vulkan_probe_edgefog_fixture(spvDir ? spvDir : "shaders/vulkan");
+    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d descriptors=%d sampled_image=%d swapchain=%d edgefog_fixture=%d",
+        ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0, descOk ? 1 : 0, imgOk ? 1 : 0, swOk ? 1 : 0, efOk ? 1 : 0);
+    return ok && shOk && triOk && descOk && imgOk && swOk && efOk;
 }
 
 #endif // MC2_VULKAN

@@ -71,7 +71,9 @@ CANONICAL_CMAKE = (
 
 # Probe success tokens (see tools/vulkan_shader_probe_main.cpp). ALL must be 1.
 # VK-BOOTSTRAP-INTEGRATE-1 added "swapchain" (create+query+destroy, no present).
-SUCCESS_TOKENS = ("caps", "shaders", "triangle", "descriptors", "swapchain", "failSoftOK")
+# VULKAN-EDGEFOG-SYNTHETIC-FIXTURE-1 added "edgefog_fixture" (shader-math oracle:
+# runs the shipped edge_fog .spv on a known input, checks GPU vs a CPU reference).
+SUCCESS_TOKENS = ("caps", "shaders", "triangle", "descriptors", "swapchain", "edgefog_fixture", "failSoftOK")
 
 # Validation-layer error signature emitted by the skeleton's debug messenger
 # (vulkan_backend_skeleton.cpp: "[VULKAN_SKELETON] <probe>: VALIDATION: <msg>").
@@ -351,6 +353,7 @@ def main(argv: list[str]) -> int:
         "triangle": "triangle",
         "descriptors": "desc",
         "swapchain": "swapchain",
+        "edgefog_fixture": "edgefog",
         "failSoftOK": "failsoft",
     }
     probe_summary = "/".join(f"{short_names[t]}{token_vals[t]}" for t in SUCCESS_TOKENS)

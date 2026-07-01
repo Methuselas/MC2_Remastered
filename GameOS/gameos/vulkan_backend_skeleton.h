@@ -78,6 +78,19 @@ bool mc2_vulkan_probe_descriptors();
 // Fail-soft: any VkResult error -> log + return false.
 bool mc2_vulkan_probe_sampled_image();
 
+// VULKAN-EDGEFOG-SYNTHETIC-FIXTURE-1: headless shader-MATH oracle for the edge-fog
+// Vulkan port. Runs the shipped edge_fog.{vert,frag}.spv on a KNOWN synthetic depth
+// texture + KNOWN invViewProj + KNOWN fog uniforms (documented in the .cpp), reads
+// back the RGBA16F fog output, computes the SAME edge_fog.frag math on the CPU, and
+// compares GPU-vs-CPU per pixel within a tight tolerance. Unlike the golden-bookmark
+// oracle (frame-integration correctness), this proves the shader MATH in isolation
+// (no mission/camera/GL depth-copy). The pass uses LOAD_OP_CLEAR + blend DISABLED so
+// the readback IS the raw frag output vec4(fogColor, fogFactor) -- not blended over a
+// scene. Fail-soft: any VkResult error -> log + return false. spvDir = dir with the
+// compiled edge_fog .spv (build output). With MC2_VULKAN_VALIDATION set, ZERO
+// validation errors is an additional proof.
+bool mc2_vulkan_probe_edgefog_fixture(const char* spvDir);
+
 // VK-BOOTSTRAP-INTEGRATE-1: Vulkan swapchain PROBE (create + query + destroy).
 // Uses vk-bootstrap's vkb::SwapchainBuilder against a bespoke devs[0] device and
 // a hidden 256x256 SDL Vulkan window/surface. Creates a swapchain, queries its
