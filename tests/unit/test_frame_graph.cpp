@@ -213,6 +213,37 @@ TEST_CASE("compareAmbient: blend + depth-write axes cross-check (pure, synthetic
     CHECK(compareAmbient(decl, inheritBlend).blend == false);
 }
 
+TEST_CASE("AMBIENT-VIEWPORT-PROBE-1: classifyViewport + viewport axis cross-check (pure)") {
+    // classifyViewport: square -> ShadowMap, non-square -> MainScene, degenerate -> Inherit.
+    CHECK(classifyViewport(0, 0, 4096, 4096) == ViewportKind::ShadowMap);   // shadow atlas
+    CHECK(classifyViewport(0, 0, 2048, 2048) == ViewportKind::ShadowMap);
+    CHECK(classifyViewport(0, 0, 1920, 1080) == ViewportKind::MainScene);   // 16:9 backbuffer
+    CHECK(classifyViewport(0, 0, 1024,  768) == ViewportKind::MainScene);   // 4:3
+    CHECK(classifyViewport(0, 0,    0,    0) == ViewportKind::Inherit);     // degenerate -> skip
+    CHECK(classifyViewport(0, 0, 1920,    0) == ViewportKind::Inherit);
+
+    // compareAmbient viewport axis: declared MainScene vs sampled kinds.
+    AmbientContract decl{};                      // all Inherit
+    decl.viewport = ViewportKind::MainScene;
+
+    AmbientSample good; good.viewport = ViewportKind::MainScene;
+    CHECK(compareAmbient(decl, good).viewport == false);
+    CHECK(compareAmbient(decl, good).any()    == false);
+
+    // The suspected leak: a shadow-square viewport bleeding into a MainScene pass.
+    AmbientSample leak; leak.viewport = ViewportKind::ShadowMap;
+    CHECK(compareAmbient(decl, leak).viewport == true);
+    CHECK(compareAmbient(decl, leak).any()    == true);
+
+    // Inherit live -> skipped (no false positive even though declared).
+    AmbientSample unclass; unclass.viewport = ViewportKind::Inherit;
+    CHECK(compareAmbient(decl, unclass).viewport == false);
+
+    // Inherit decl -> skipped regardless of live.
+    AmbientContract noDecl{};
+    CHECK(compareAmbient(noDecl, leak).viewport == false);
+}
+
 TEST_CASE("fbo ledger: register/resolve + default-FBO + unregistered") {
     FboLedger led;
     led.reset();

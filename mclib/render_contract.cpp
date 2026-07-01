@@ -951,6 +951,11 @@ unsigned long g_ambientMismatchCount = 0;
 unsigned long g_ambientProbeSamples  = 0;  // declared passes actually compared (proves it ran)
 unsigned long g_fboMismatchCount     = 0;  // FRAME-GRAPH-FBO-LEDGER-1
 unsigned long g_fboSamples           = 0;
+// AMBIENT-VIEWPORT-PROBE-1: OBSERVE-ONLY viewport-axis mismatch counter. Kept SEPARATE
+// from g_ambientMismatchCount so the new axis never trips the existing guard's fatal /
+// CI path — this slice measures first. Non-fatal even under MC2_FRAMEGRAPH_AMBIENT_FATAL.
+unsigned long g_viewportMismatchCount = 0;
+unsigned long g_viewportProbeSamples  = 0;
 
 RenderCore::framegraph::ColorMaskState sampleColorMask() {
     GLboolean m[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
@@ -977,6 +982,13 @@ RenderCore::framegraph::DepthWriteState sampleDepthWrite() {
     glGetBooleanv(GL_DEPTH_WRITEMASK, &w);
     using D = RenderCore::framegraph::DepthWriteState;
     return w ? D::On : D::Off;
+}
+// AMBIENT-VIEWPORT-PROBE-1: glGet-only sample of GL_VIEWPORT, classified by the pure
+// classifyViewport(). No GL state change.
+RenderCore::framegraph::ViewportKind sampleViewport() {
+    GLint vp[4] = { 0, 0, 0, 0 };
+    glGetIntegerv(GL_VIEWPORT, vp);
+    return RenderCore::framegraph::classifyViewport(vp[0], vp[1], vp[2], vp[3]);
 }
 } // namespace
 
@@ -1008,8 +1020,40 @@ void ambientProbeAtPassBegin(RenderCore::RenderPassId id) {
         live.depthFunc  = sampleDepthFunc();
         live.blend      = sampleBlend();
         live.depthWrite = sampleDepthWrite();
+        // NOTE: viewport is deliberately NOT set on `live` here, so the shared mm/fatal
+        // path below stays byte-identical to the pre-slice guard. The viewport axis is
+        // measured OBSERVE-ONLY in a separate block (its own counter, never fatal).
         const RenderCore::framegraph::AmbientMismatch mm =
             RenderCore::framegraph::compareAmbient(*decl, live);
+
+        // --- AMBIENT-VIEWPORT-PROBE-1 (OBSERVE-ONLY) -----------------------------
+        // Sample GL_VIEWPORT, classify, compare only against a declared viewport kind.
+        // Counts divergences (detects the suspected shadow-viewport save/restore leak);
+        // NEVER aborts and NEVER changes control flow, so a pre-existing viewport leak
+        // measures rather than breaks. glGet only — no GL state change.
+        if (decl->viewport != RenderCore::framegraph::ViewportKind::Inherit) {
+            ++g_viewportProbeSamples;
+            RenderCore::framegraph::AmbientSample vpLive;
+            vpLive.viewport = sampleViewport();
+            RenderCore::framegraph::AmbientMismatch vpm;
+            if (vpLive.viewport != RenderCore::framegraph::ViewportKind::Inherit)
+                vpm.viewport = (decl->viewport != vpLive.viewport);
+            if (vpm.viewport) {
+                ++g_viewportMismatchCount;
+                static unsigned s_vpLogged = 0;
+                if (s_vpLogged < 32u) {
+                    ++s_vpLogged;
+                    fprintf(stderr,
+                        "[VIEWPORT_PROBE] phase=begin pass=\"%s\" vpMiss=1 "
+                        "(decl vp=%d | live vp=%d) [observe-only]\n",
+                        decl->note ? decl->note : "?",
+                        (int)decl->viewport, (int)vpLive.viewport);
+                    fflush(stderr);
+                }
+                // Intentionally NO abort() — observe-only.
+            }
+        }
+
         if (mm.any()) {
             ++g_ambientMismatchCount;
             static unsigned s_logged = 0;
@@ -1060,6 +1104,9 @@ extern "C" unsigned long mc2_ambient_mismatch_count() { return g_ambientMismatch
 extern "C" unsigned long mc2_ambient_probe_samples()  { return g_ambientProbeSamples;  }
 extern "C" unsigned long mc2_fbo_mismatch_count()     { return g_fboMismatchCount;     }
 extern "C" unsigned long mc2_fbo_samples()            { return g_fboSamples;           }
+// AMBIENT-VIEWPORT-PROBE-1 (observe-only).
+extern "C" unsigned long mc2_viewport_mismatch_count() { return g_viewportMismatchCount; }
+extern "C" unsigned long mc2_viewport_probe_samples()  { return g_viewportProbeSamples;  }
 
 // --- UI-PASS-DRAWCOUNT-AMBIENT-MEASURE-1 ------------------------------------------
 // Observe-only telemetry for the EXISTING PassIdentity::UI RAII scope

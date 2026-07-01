@@ -1073,6 +1073,9 @@ def get_executor_health() -> str:
     amb_samp  = fg.get("ambient_probe_samples", 0)
     fbo_miss  = fg.get("fbo_mismatches", 0)
     fbo_samp  = fg.get("fbo_samples", 0)
+    # AMBIENT-VIEWPORT-PROBE-1: observe-only — displayed but NOT in fail_axes (measure-first).
+    vp_miss   = fg.get("viewport_probe_mismatches", 0)
+    vp_samp   = fg.get("viewport_probe_samples", 0)
 
     # --- verdict ---
     fail_axes: list[str] = []
@@ -1138,6 +1141,8 @@ def get_executor_health() -> str:
         f"  ambient_probe_mismatches: {amb_miss}{_flag(amb_miss)}",
         f"  fbo_samples:              {fbo_samp}",
         f"  fbo_mismatches:           {fbo_miss}{_flag(fbo_miss)}",
+        f"  viewport_probe_samples:   {vp_samp}",
+        f"  viewport_probe_mismatches:{vp_miss}  (observe-only, not a health gate)",
     ]
 
     banner = _stale_banner()

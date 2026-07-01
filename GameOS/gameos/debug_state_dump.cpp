@@ -23,6 +23,9 @@ extern "C" unsigned long mc2_ambient_probe_samples();
 // FRAME-GRAPH-FBO-LEDGER-1: bound-FBO-vs-declared-target guard counters.
 extern "C" unsigned long mc2_fbo_mismatch_count();
 extern "C" unsigned long mc2_fbo_samples();
+// AMBIENT-VIEWPORT-PROBE-1: observe-only viewport-axis mismatch counters.
+extern "C" unsigned long mc2_viewport_mismatch_count();
+extern "C" unsigned long mc2_viewport_probe_samples();
 // FRAME-GRAPH-EXECUTOR-ISLAND-1: executor-owned pass counters (default-OFF gate).
 extern "C" unsigned long mc2_framegraph_executor_owned_passes();
 extern "C" unsigned long mc2_framegraph_executor_validation_failures();
@@ -277,6 +280,12 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         // FRAME-GRAPH-FBO-LEDGER-1: passes rendering into the WRONG logical target.
         s << "    \"fbo_mismatches\": " << mc2_fbo_mismatch_count() << ",\n";
         s << "    \"fbo_samples\": " << mc2_fbo_samples() << ",\n";
+        // AMBIENT-VIEWPORT-PROBE-1: observe-only. viewport_probe_mismatches>0 =>
+        // a pass ran under a viewport kind other than its declared one (e.g. a leaked
+        // shadow-atlas viewport bleeding into a MainScene pass). samples=0 => guard off
+        // or never fired. Non-fatal by design (this axis measures first).
+        s << "    \"viewport_probe_mismatches\": " << mc2_viewport_mismatch_count() << ",\n";
+        s << "    \"viewport_probe_samples\": " << mc2_viewport_probe_samples() << ",\n";
         // FRAME-GRAPH-EXECUTOR-ISLAND-1: passes owned+validated by the executor
         // (gate MC2_FRAMEGRAPH_EXECUTOR, default-OFF). executor_owned_passes > 0
         // means at least one island validated clean this process lifetime.

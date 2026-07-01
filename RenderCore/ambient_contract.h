@@ -163,14 +163,38 @@ struct AmbientSample {
     DepthFuncState  depthFunc  = DepthFuncState::Inherit;
     BlendState      blend      = BlendState::Inherit;
     DepthWriteState depthWrite = DepthWriteState::Inherit;
+    // AMBIENT-VIEWPORT-PROBE-1: live GL_VIEWPORT classified to a ViewportKind. The
+    // classify (classifyViewport, below) is pure so it is offline-testable; only the
+    // glGetIntegerv(GL_VIEWPORT) read is runtime (render_contract.cpp). Inherit =
+    // unclassifiable -> SKIPPED by compareAmbient (never a false positive).
+    ViewportKind    viewport   = ViewportKind::Inherit;
 };
 struct AmbientMismatch {
     bool colorMask  = false;
     bool depthFunc  = false;
     bool blend      = false;
     bool depthWrite = false;
-    bool any() const { return colorMask || depthFunc || blend || depthWrite; }
+    bool viewport   = false;
+    bool any() const { return colorMask || depthFunc || blend || depthWrite || viewport; }
 };
+
+// AMBIENT-VIEWPORT-PROBE-1: pure classifier for a sampled GL_VIEWPORT rect {x,y,w,h}
+// into the declared ViewportKind. The two declared kinds have distinct geometry:
+//   ShadowMap = the shadow atlas, always SQUARE (w==h; gameos_graphics.cpp glViewport
+//               (0,0,smSize,smSize)).
+//   MainScene = the color render target, always NON-square (16:9 / 4:3 backbuffer;
+//               gos_postprocess.cpp glViewport(0,0,width_,height_)).
+// So a non-degenerate rect classifies purely on shape: square -> ShadowMap, else
+// MainScene. This is drift-free (no hardcoded dims) and is exactly what detects the
+// suspected latent bug: a leaked 4096-square shadow viewport bleeding into a MainScene
+// pass samples ShadowMap != declared MainScene -> a viewport mismatch on that pass.
+// Degenerate (w<=0 || h<=0) -> Inherit (skipped). A genuinely square main window is the
+// one ambiguity; observe-only + the note make that a documented caveat, not a fatal.
+inline ViewportKind classifyViewport(int x, int y, int w, int h) {
+    (void)x; (void)y;
+    if (w <= 0 || h <= 0) return ViewportKind::Inherit;
+    return (w == h) ? ViewportKind::ShadowMap : ViewportKind::MainScene;
+}
 inline AmbientMismatch compareAmbient(const AmbientContract& decl, const AmbientSample& live) {
     AmbientMismatch m;
     if (decl.colorMaskOnEntry != ColorMaskState::Inherit &&
@@ -185,6 +209,11 @@ inline AmbientMismatch compareAmbient(const AmbientContract& decl, const Ambient
     if (decl.depthWrite != DepthWriteState::Inherit &&
         live.depthWrite != DepthWriteState::Inherit)
         m.depthWrite = (decl.depthWrite != live.depthWrite);
+    // AMBIENT-VIEWPORT-PROBE-1: same Inherit-skips-both pattern. Only compared when the
+    // row DECLARES a viewport kind and the live sample classified to one.
+    if (decl.viewport != ViewportKind::Inherit &&
+        live.viewport != ViewportKind::Inherit)
+        m.viewport = (decl.viewport != live.viewport);
     return m;
 }
 
