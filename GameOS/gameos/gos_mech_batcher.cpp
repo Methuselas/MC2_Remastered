@@ -1599,6 +1599,7 @@ void GpuMechBatcher::finalizeGeometry() {
     // have mipmaps generated — sampling a mipmap chain that doesn't exist
     // is undefined behavior on AMD, often black. Slice A+ can revisit if
     // mech textures get mipmaps from the upscaler pipeline.
+    // TEX-CLASS: per-pass-rebind -- mech-skin sampler object (bound per draw)
     glGenSamplers(1, &s_sampler);
     glSamplerParameteri(s_sampler, GL_TEXTURE_WRAP_S,     GL_REPEAT);
     glSamplerParameteri(s_sampler, GL_TEXTURE_WRAP_T,     GL_REPEAT);

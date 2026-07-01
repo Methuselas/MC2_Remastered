@@ -2910,6 +2910,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 // linear BC7 (UNORM): matches GL_RGBA8 baseline; engine has no GL_FRAMEBUFFER_SRGB
                 const GLenum internalformat = GL_COMPRESSED_RGBA_BPTC_UNORM;
                 const int levels = (bc7MipCount > 0) ? bc7MipCount : 1;
+                // TEX-CLASS: asset-pool -- static-prop BC7 albedo 2D_ARRAY (content)
                 glGenTextures(1, &arr);
                 glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
                 glTexStorage3D(GL_TEXTURE_2D_ARRAY, levels, internalformat,
@@ -2953,6 +2954,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
 
         // ---- RGBA8 fallback (mirrors the group-level RGBA8 path; uniform-dim
         //      so every layer fills the whole level → no sub-region blits) ----
+        // TEX-CLASS: asset-pool -- static-prop albedo/normal 2D_ARRAY (content)
         glGenTextures(1, &arr);
         glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
         glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, bw, bh,
@@ -3064,6 +3066,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             if (ok) {
                 const GLenum internalformat = bptcInternalFormatFor(false); // LINEAR
                 const int levels = (mipCount > 0) ? mipCount : 1;
+                // TEX-CLASS: asset-pool -- static-prop albedo/normal 2D_ARRAY (content)
                 glGenTextures(1, &arr);
                 glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
                 glTexStorage3D(GL_TEXTURE_2D_ARRAY, levels, internalformat,
@@ -3099,6 +3102,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         }
 
         // ---- RGBA8 fallback (per-layer: real sidecar or neutral fill) ----
+        // TEX-CLASS: asset-pool -- static-prop albedo/normal 2D_ARRAY (content)
         glGenTextures(1, &arr);
         glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
         glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, bw, bh,
@@ -3534,6 +3538,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 const GLenum internalformat = GL_COMPRESSED_RGBA_BPTC_UNORM;
                 const int levels = (bc7MipCount > 0) ? bc7MipCount : 1;
 
+                // TEX-CLASS: asset-pool -- static-prop material 2D_ARRAY (content)
                 glGenTextures(1, &outArray);
                 glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
                 glTexStorage3D(GL_TEXTURE_2D_ARRAY, levels, internalformat,
@@ -3606,6 +3611,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         }
 
         // 5.10.d — allocate the array at max dims.
+        // TEX-CLASS: asset-pool -- static-prop material 2D_ARRAY (content)
         glGenTextures(1, &outArray);
         glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
         glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8,

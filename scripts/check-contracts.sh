@@ -112,6 +112,7 @@ run_check "static_prop_family"     "py -3 scripts/check-static-prop-family.py --
 run_check "mdi_submission"         "py -3 scripts/check-mdi-submission-ownership.py --quiet"
 run_check "buffer_lifetime"        "py -3 scripts/check-buffer-lifetime-ownership.py --quiet"
 run_check "gpu_buffer_owners"      "py -3 scripts/check-gpu-buffer-owners.py --quiet"
+run_check "texture_owners"         "py -3 scripts/check-texture-owners.py --quiet"
 run_check "render_resource_ids"    "py -3 scripts/check-render-resource-ids.py"
 run_check "shader_variant"         "py -3 scripts/check-shader-variant.py --quiet"
 run_check "spirv_artifacts"        "py -3 scripts/check-spirv-artifacts.py --quiet"

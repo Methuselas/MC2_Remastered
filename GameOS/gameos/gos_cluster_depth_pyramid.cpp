@@ -125,6 +125,7 @@ void ensureTileTexture(int width, int height) {
 
     if (s_tileTex != 0) { glDeleteTextures(1, &s_tileTex); s_tileTex = 0; }
 
+    // TEX-CLASS: render-target -- cluster/froxel depth tile (FBO attach)
     glGenTextures(1, &s_tileTex);
     glBindTexture(GL_TEXTURE_2D, s_tileTex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);

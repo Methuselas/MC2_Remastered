@@ -85,6 +85,7 @@ void ensureInitialized() {
     if (s_prog != nullptr && s_sampler != 0 && s_whiteTex != 0) return;
 
     if (s_sampler == 0) {
+        // TEX-CLASS: per-pass-rebind -- vfx-mesh sampler object
         glGenSamplers(1, &s_sampler);
         glSamplerParameteri(s_sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glSamplerParameteri(s_sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -97,6 +98,7 @@ void ensureInitialized() {
         // bound to an active sampler trips GL_INVALID_OPERATION on AMD).
         const unsigned char px[4] = {255, 255, 255, 255};
         GLint prevTex = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
+        // TEX-CLASS: asset-pool -- 1x1 white VFX fallback content texture
         glGenTextures(1, &s_whiteTex);
         glBindTexture(GL_TEXTURE_2D, s_whiteTex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA,

@@ -167,6 +167,7 @@ static GLuint loadLinearPng(const char* path, int& w_out, int& h_out) {
     }
 
     GLuint tex = 0;
+    // TEX-CLASS: asset-pool -- PBR material LUT content texture
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, glInternal,
@@ -248,6 +249,7 @@ static GLuint buildPackedOrm(const char* roughPath, const char* metalPath,
     }
 
     GLuint tex = 0;
+    // TEX-CLASS: asset-pool -- PBR material LUT content texture
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, w, h, 0,
@@ -272,6 +274,7 @@ static GLuint buildPackedOrm(const char* roughPath, const char* metalPath,
 static GLuint buildFlatNormalTex() {
     const uint8_t pixel[3] = {128u, 128u, 255u};
     GLuint tex = 0;
+    // TEX-CLASS: asset-pool -- PBR material LUT content texture
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 1, 1, 0,

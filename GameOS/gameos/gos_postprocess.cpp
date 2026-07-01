@@ -858,6 +858,7 @@ void gosPostProcess::createFBOs(int w, int h)
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
 
     // Color attachment: RGBA16F
+    // TEX-CLASS: render-target -- scene HDR color (MRT0, FBO attach)
     glGenTextures(1, &sceneColorTex_);
     glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
@@ -896,6 +897,7 @@ void gosPostProcess::createFBOs(int w, int h)
     }
 
     // Depth/stencil texture (sampleable for post-process depth reconstruction)
+    // TEX-CLASS: render-target -- scene depth (sampleable, FBO attach)
     glGenTextures(1, &sceneDepthTex_);
     glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, w, h);
@@ -907,6 +909,7 @@ void gosPostProcess::createFBOs(int w, int h)
                            GL_TEXTURE_2D, sceneDepthTex_, 0);
 
     // Normal buffer: MRT attachment 1 (rgb=world normal encoded, a=shadow skip flag)
+    // TEX-CLASS: render-target -- GBuffer normal (MRT1, FBO attach)
     glGenTextures(1, &sceneNormalTex_);
     glBindTexture(GL_TEXTURE_2D, sceneNormalTex_);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
@@ -922,6 +925,7 @@ void gosPostProcess::createFBOs(int w, int h)
     // the FBO side. glTexImage2D matches the sceneNormalTex_ pattern
     // above (decision m4); glTexStorage2D migration deferred.
     if (RenderWorld::IsObjectIdBufferEnabled()) {
+        // TEX-CLASS: render-target -- objectID GBuffer (MRT2, FBO attach)
         glGenTextures(1, &sceneObjectIdTex_);
         glBindTexture(GL_TEXTURE_2D, sceneObjectIdTex_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, w, h, 0,
@@ -1016,6 +1020,7 @@ void gosPostProcess::createFBOs(int w, int h)
         ssaoW_ = w / 2; if (ssaoW_ < 1) ssaoW_ = 1;
         ssaoH_ = h / 2; if (ssaoH_ < 1) ssaoH_ = 1;
 
+        // TEX-CLASS: render-target -- SSAO occlusion (FBO attach)
         glGenTextures(1, &ssaoColorTex_);
         glBindTexture(GL_TEXTURE_2D, ssaoColorTex_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, ssaoW_, ssaoH_, 0, GL_RED, GL_FLOAT, nullptr);
@@ -1054,6 +1059,7 @@ void gosPostProcess::createFBOs(int w, int h)
         waterReflW_ = w / 4; if (waterReflW_ < 1) waterReflW_ = 1;
         waterReflH_ = h / 4; if (waterReflH_ < 1) waterReflH_ = 1;
 
+        // TEX-CLASS: render-target -- water reflection color (FBO attach)
         glGenTextures(1, &waterReflColorTex_);
         glBindTexture(GL_TEXTURE_2D, waterReflColorTex_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, waterReflW_, waterReflH_, 0, GL_RGBA, GL_FLOAT, nullptr);
@@ -1062,6 +1068,7 @@ void gosPostProcess::createFBOs(int w, int h)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
+        // TEX-CLASS: render-target -- water reflection depth (FBO attach)
         glGenTextures(1, &waterReflDepthTex_);
         glBindTexture(GL_TEXTURE_2D, waterReflDepthTex_);
         // GL_FLOAT type + CLAMP_TO_EDGE wrap: match the project's other depth
@@ -1131,6 +1138,7 @@ void gosPostProcess::createFBOs(int w, int h)
         // read/write feedback (source and dest are distinct objects).
         int lw = w, lh = h;
         for (int level = 0; level < hzbMipCount_; ++level) {
+            // TEX-CLASS: render-target -- Hi-Z pyramid per-level (FBO attach)
             glGenTextures(1, &hzbLevelTex_[level]);
             glBindTexture(GL_TEXTURE_2D, hzbLevelTex_[level]);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, lw, lh, 0,
@@ -1185,6 +1193,7 @@ void gosPostProcess::copySceneDepthForParticles()
     if (width_ <= 0 || height_ <= 0 || sceneDepthTex_ == 0) return;
 
     if (sceneDepthCopyTex_ == 0) {
+        // TEX-CLASS: render-target -- depth snapshot for soft particles (copy dst)
         glGenTextures(1, &sceneDepthCopyTex_);
         glBindTexture(GL_TEXTURE_2D, sceneDepthCopyTex_);
         glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, width_, height_);
@@ -1231,6 +1240,7 @@ void gosPostProcess::copySceneColorForVfx()
     if (width_ <= 0 || height_ <= 0 || sceneColorTex_ == 0) return;
 
     if (sceneColorCopyTex_ == 0) {
+        // TEX-CLASS: render-target -- scene-color snapshot for VFX feedback (copy dst)
         glGenTextures(1, &sceneColorCopyTex_);
         glBindTexture(GL_TEXTURE_2D, sceneColorCopyTex_);
         glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, width_, height_);
@@ -3617,6 +3627,7 @@ void gosPostProcess::initShadows()
     RenderCore::framegraph::fboLedger().registerFbo(shadowFBO_, RenderCore::RenderResourceId::ShadowStaticMap);  // FBO-LEDGER-1
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO_);
 
+    // TEX-CLASS: render-target -- STATIC shadow map depth (FBO attach)
     glGenTextures(1, &shadowDepthTex_);
     glBindTexture(GL_TEXTURE_2D, shadowDepthTex_);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
@@ -3632,6 +3643,7 @@ void gosPostProcess::initShadows()
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowDepthTex_, 0);
 
     // Dummy color attachment — AMD drivers skip rasterization on depth-only FBOs
+    // TEX-CLASS: render-target -- AMD dummy color for depth-only FBO
     glGenTextures(1, &shadowDummyColorTex_);
     glBindTexture(GL_TEXTURE_2D, shadowDummyColorTex_);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R8,
@@ -3946,6 +3958,7 @@ void gosPostProcess::initDynamicShadows()
     RenderCore::framegraph::fboLedger().registerFbo(dynShadowFBO_, RenderCore::RenderResourceId::ShadowDynamicMap);  // FBO-LEDGER-1
     glBindFramebuffer(GL_FRAMEBUFFER, dynShadowFBO_);
 
+    // TEX-CLASS: render-target -- DYNAMIC shadow map depth (FBO attach)
     glGenTextures(1, &dynShadowDepthTex_);
     glBindTexture(GL_TEXTURE_2D, dynShadowDepthTex_);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
@@ -3961,6 +3974,7 @@ void gosPostProcess::initDynamicShadows()
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, dynShadowDepthTex_, 0);
 
     // AMD dummy color attachment
+    // TEX-CLASS: render-target -- AMD dummy color for depth-only FBO
     glGenTextures(1, &dynShadowDummyColorTex_);
     glBindTexture(GL_TEXTURE_2D, dynShadowDummyColorTex_);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R8,
@@ -4020,6 +4034,7 @@ void gosPostProcess::initDynamicShadows()
         const int nearCascades = (csmCount_ > 1) ? (csmCount_ - 1) : 0;
         const int arrayLayers  = (nearCascades > 0) ? nearCascades : 1;
 
+        // TEX-CLASS: render-target -- CSM near-cascade 2D_ARRAY (layered FBO attach)
         glGenTextures(1, &dynShadowArrayTex_);
         glBindTexture(GL_TEXTURE_2D_ARRAY, dynShadowArrayTex_);
         glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT24,
@@ -4036,6 +4051,7 @@ void gosPostProcess::initDynamicShadows()
 
         // Dummy color array (7900 XTX FBO-completeness workaround, mirrors the
         // legacy dummy at the single-map FBO above). One layer per cascade.
+        // TEX-CLASS: render-target -- AMD dummy color array
         glGenTextures(1, &dynShadowArrayDummyColorTex_);
         glBindTexture(GL_TEXTURE_2D_ARRAY, dynShadowArrayDummyColorTex_);
         glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_R8,
@@ -4077,6 +4093,7 @@ void gosPostProcess::initDynamicShadows()
                               ? mc2ShadowFullMapSize()
                               : dynShadowMapSize_;
 
+        // TEX-CLASS: render-target -- CSM full-map cascade depth (FBO attach)
         glGenTextures(1, &dynamicFullMapTex_);
         glBindTexture(GL_TEXTURE_2D, dynamicFullMapTex_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
@@ -4091,6 +4108,7 @@ void gosPostProcess::initDynamicShadows()
         glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, fmBorder);
 
         // 7900 XTX FBO-completeness dummy color (mirrors the array/single-map FBOs).
+        // TEX-CLASS: render-target -- AMD dummy color
         glGenTextures(1, &dynamicFullMapDummyColorTex_);
         glBindTexture(GL_TEXTURE_2D, dynamicFullMapDummyColorTex_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R8,

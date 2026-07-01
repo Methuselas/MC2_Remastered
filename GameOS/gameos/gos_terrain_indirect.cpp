@@ -832,6 +832,7 @@ static void BuildTransitionMaskArray() {
             }
         }
     }
+    // TEX-CLASS: asset-pool -- terrain transition-mask 2D_ARRAY (content)
     if (g_transitionMaskArrayGL == 0) glGenTextures(1, &g_transitionMaskArrayGL);
     glBindTexture(GL_TEXTURE_2D_ARRAY, g_transitionMaskArrayGL);
     glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_R8, S, S, N, 0, GL_RED, GL_UNSIGNED_BYTE, buf.data());
@@ -1020,6 +1021,7 @@ void BuildColormapAtlas() {
                 ? (size_t)img.mipByteOffsets[1]
                 : img.pixels.size();
 
+            // TEX-CLASS: asset-pool -- terrain colormap atlas (content)
             if (g_atlasGLTex == 0) glGenTextures(1, &g_atlasGLTex);
             MC2_GL_BindTexture(GL_TEXTURE_2D, g_atlasGLTex);
             glCompressedTexImage2D(GL_TEXTURE_2D, 0, glIF,
@@ -1067,6 +1069,7 @@ void BuildColormapAtlas() {
             return;
         }
 
+        // TEX-CLASS: asset-pool -- terrain colormap atlas (content, alt path)
         if (g_atlasGLTex == 0) glGenTextures(1, &g_atlasGLTex);
         MC2_GL_BindTexture(GL_TEXTURE_2D, g_atlasGLTex);
         // cpuColorMap is BGRA-in-memory (mc2_argb_packing memory note: MC2's
@@ -1277,6 +1280,7 @@ void BuildCementCatalogAtlas() {
         }
     }
 
+    // TEX-CLASS: asset-pool -- cement/road overlay atlas (content)
     if (g_cementAtlasGLTex == 0) glGenTextures(1, &g_cementAtlasGLTex);
     MC2_GL_BindTexture(GL_TEXTURE_2D, g_cementAtlasGLTex);
     MC2_GL_TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
@@ -4135,6 +4139,7 @@ void BuildMineTextureArray() {
     glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, blownBuf.data());
     MINE_GLPROBE("after_getteximage_blown");
 
+    // TEX-CLASS: asset-pool -- minefield 2D_ARRAY (content)
     if (g_mineTextureArrayGL == 0) glGenTextures(1, &g_mineTextureArrayGL);
     MC2_GL_BindTexture(GL_TEXTURE_2D_ARRAY, g_mineTextureArrayGL);
     // Allocate 2-layer storage. glTexImage3D with NULL data orphans / reserves.

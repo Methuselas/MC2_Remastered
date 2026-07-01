@@ -153,6 +153,7 @@ bool ensurePrograms() {
 
 GLuint makeHalfResImage(int w, int h) {
     GLuint t = 0;
+    // TEX-CLASS: render-target -- bloom/blur ping-pong target (FBO attach)
     glGenTextures(1, &t);
     glBindTexture(GL_TEXTURE_2D, t);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);

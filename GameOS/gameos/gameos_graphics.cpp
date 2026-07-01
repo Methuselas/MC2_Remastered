@@ -1417,6 +1417,7 @@ GLuint g_overlayFallbackTex = 0;
 GLuint getOverlayFallbackTexture() {
     if (g_overlayFallbackTex == 0) {
         const unsigned char magenta[4] = { 255, 0, 255, 255 };  // 1x1 RGBA debug
+        // TEX-CLASS: asset-pool -- overlay magenta/fallback content texture
         glGenTextures(1, &g_overlayFallbackTex);
         glBindTexture(GL_TEXTURE_2D, g_overlayFallbackTex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, magenta);
@@ -2056,6 +2057,7 @@ class gosRenderer {
             // Allocate 9-layer GL_TEXTURE_2D_ARRAY (slots 0-4 required, 5-8 optional).
             // glGetTexImage always decompresses if the source is compressed; we
             // receive RGBA8 regardless of the source internal format.
+            // TEX-CLASS: asset-pool -- terrain per-material normal-map 2D_ARRAY (content)
             glGenTextures(1, &terrain_normal_array_tex_);
             glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
             glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8,
@@ -3338,6 +3340,7 @@ void gosRenderer::renderWaterFastPath(
     // matching REPEAT.
     static GLuint s_waterFastSampler = 0;
     if (s_waterFastSampler == 0) {
+        // TEX-CLASS: per-pass-rebind -- water-fast sampler object (REPEAT+LINEAR)
         glGenSamplers(1, &s_waterFastSampler);
         glSamplerParameteri(s_waterFastSampler, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glSamplerParameteri(s_waterFastSampler, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -3872,6 +3875,7 @@ void gos_terrain_surface_bridge_draw()
     // ---- Sampler 0: CLAMP_TO_EDGE / LINEAR (matches indirect atlas path) --
     static GLuint s_surfaceSampler = 0;
     if (s_surfaceSampler == 0) {
+        // TEX-CLASS: per-pass-rebind -- surface sampler object (CLAMP+LINEAR)
         glGenSamplers(1, &s_surfaceSampler);
         glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -4086,6 +4090,7 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     // ---- Sampler: CLAMP_TO_EDGE / LINEAR (matches M2 atlas-tiled path) ----
     static GLuint s_indirectTerrainSampler = 0;
     if (s_indirectTerrainSampler == 0) {
+        // TEX-CLASS: per-pass-rebind -- indirect-terrain sampler object
         glGenSamplers(1, &s_indirectTerrainSampler);
         glSamplerParameteri(s_indirectTerrainSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glSamplerParameteri(s_indirectTerrainSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -4457,6 +4462,7 @@ bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
     // ---- Sampler unit 0: CLAMP_TO_EDGE / LINEAR (matches drawIndirect) -----
     static GLuint s_maskSolidSampler = 0;
     if (s_maskSolidSampler == 0) {
+        // TEX-CLASS: per-pass-rebind -- mask-solid sampler object
         glGenSamplers(1, &s_maskSolidSampler);
         glSamplerParameteri(s_maskSolidSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glSamplerParameteri(s_maskSolidSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -4674,6 +4680,7 @@ bool gos_terrain_bridge_drawMaskWater(uint32_t waterMaskSSBO,
     // ---- Sampler unit 0 ----------------------------------------------------
     static GLuint s_maskWaterSampler = 0;
     if (s_maskWaterSampler == 0) {
+        // TEX-CLASS: per-pass-rebind -- mask-water sampler object
         glGenSamplers(1, &s_maskWaterSampler);
         glSamplerParameteri(s_maskWaterSampler, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glSamplerParameteri(s_maskWaterSampler, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -8077,6 +8084,7 @@ DWORD __stdcall gos_NewCompressedTexture2D( uint32_t glInternalFormat, int w, in
     while(glGetError() != GL_NO_ERROR) { /* drain */ }
 
     GLuint texID = 0;
+    // TEX-CLASS: asset-pool -- gos_NewCompressedTexture2D content factory (BC7)
     glGenTextures(1, &texID);
     if(texID == 0)
         return INVALID_TEXTURE_ID;
@@ -9529,6 +9537,7 @@ void gos_SetTerrainViewDir(float x, float y, float z) {
 }
 unsigned int gos_CreateTerrainNormalTexture(const unsigned char* rgbaData, int width) {
     GLuint texId = 0;
+    // TEX-CLASS: asset-pool -- terrain normal content texture factory
     glGenTextures(1, &texId);
     glBindTexture(GL_TEXTURE_2D, texId);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, width, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaData);
@@ -9548,6 +9557,7 @@ unsigned int gos_CreateTerrainNormalTexture(const unsigned char* rgbaData, int w
 unsigned int gos_CreateAsphaltAlbedoTexture(const unsigned char* bgraData, int width) {
     if (!bgraData || width <= 0) return 0;
     GLuint texId = 0;
+    // TEX-CLASS: asset-pool -- asphalt albedo content texture factory
     glGenTextures(1, &texId);
     glBindTexture(GL_TEXTURE_2D, texId);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, width, 0, GL_BGRA, GL_UNSIGNED_BYTE, bgraData);
@@ -9572,6 +9582,7 @@ void gos_SetTerrainAsphaltAlbedoTexture(unsigned int glTexId) {
 unsigned int gos_CreateGravelAlbedoTexture(const unsigned char* bgraData, int width) {
     if (!bgraData || width <= 0) return 0;
     GLuint texId = 0;
+    // TEX-CLASS: asset-pool -- gravel albedo content texture factory
     glGenTextures(1, &texId);
     glBindTexture(GL_TEXTURE_2D, texId);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, width, 0, GL_BGRA, GL_UNSIGNED_BYTE, bgraData);

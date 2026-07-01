@@ -297,6 +297,7 @@ void ensureInitialized() {
         glGenVertexArrays(1, &s_vao);
     }
     if (s_sampler == 0) {
+        // TEX-CLASS: per-pass-rebind -- particle sampler object
         glGenSamplers(1, &s_sampler);
         glSamplerParameteri(s_sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glSamplerParameteri(s_sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -424,6 +425,7 @@ void tubeEnsureInitialized() {
 
     if (s_tubeVao == 0) glGenVertexArrays(1, &s_tubeVao);
     if (s_tubeSampler == 0) {
+        // TEX-CLASS: per-pass-rebind -- particle-tube sampler object
         glGenSamplers(1, &s_tubeSampler);
         glSamplerParameteri(s_tubeSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glSamplerParameteri(s_tubeSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);

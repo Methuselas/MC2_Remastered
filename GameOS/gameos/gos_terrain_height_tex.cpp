@@ -154,6 +154,7 @@ void __stdcall gos_uploadTerrainHeightTex(
     const size_t uploadCount = (size_t)uploadSide * (size_t)uploadSide;
 
     if (g_handle == 0) {
+        // TEX-CLASS: asset-pool -- terrain height authority R32F (content)
         glGenTextures(1, &g_handle);
     }
 

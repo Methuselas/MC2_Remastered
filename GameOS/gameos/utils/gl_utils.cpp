@@ -166,6 +166,7 @@ void destroyTexture(Texture* tex)
 Texture create2DTexture(int w, int h, TexFormat fmt, const uint8_t* texdata, bool wantMipmaps)
 {
 	GLuint texID;
+	// TEX-CLASS: asset-pool -- create2DTexture content factory
 	glGenTextures(1, &texID);
 	glBindTexture(GL_TEXTURE_2D, texID);
 
@@ -204,6 +205,7 @@ Texture create2DTexture(int w, int h, TexFormat fmt, const uint8_t* texdata, boo
 Texture createDynamicTexture(int w, int h, TexFormat fmt)
 {
 	GLuint texID;
+	// TEX-CLASS: asset-pool -- content texture factory
 	glGenTextures(1, &texID);
 	glBindTexture(GL_TEXTURE_2D, texID);
 
@@ -229,6 +231,7 @@ Texture createDynamicTexture(int w, int h, TexFormat fmt)
 Texture create3DTextureF(int w, int h, int depth)
 {
 	GLuint texID;
+	// TEX-CLASS: asset-pool -- content texture factory
 	glGenTextures(1, &texID);
 	glBindTexture(GL_TEXTURE_3D, texID);
 
@@ -539,6 +542,7 @@ Texture load_texture_from_file(const char* texName)
 	assert(bpp == 3 || bpp == 4);
 	GLenum format = bpp==3 ? GL_RGB : GL_RGBA;
 
+	// TEX-CLASS: asset-pool -- font texture content factory
 	glGenTextures(1, &t.id);
 	glBindTexture(GL_TEXTURE_2D, t.id);
 

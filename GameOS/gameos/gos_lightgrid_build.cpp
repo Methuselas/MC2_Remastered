@@ -185,6 +185,7 @@ void ensureBuffers(int tileW, int tileH) {
     // Header image RG32UI, one texel per tile (offset,count).
     if (s_headerTex == 0 || tileW != s_headerW || tileH != s_headerH) {
         if (s_headerTex != 0) { glDeleteTextures(1, &s_headerTex); s_headerTex = 0; }
+        // TEX-CLASS: per-pass-rebind -- clustered-light grid header image (compute-written, sampled per pass; Vk needs image+layout)
         glGenTextures(1, &s_headerTex);
         glBindTexture(GL_TEXTURE_2D, s_headerTex);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);

@@ -141,6 +141,7 @@ GLuint loadHdriTexture(const char* path,
                 while (glGetError() != GL_NO_ERROR) { /* drain */ }
 
                 GLuint tex = 0;
+                // TEX-CLASS: asset-pool -- HDRI sky BC6H content texture
                 glGenTextures(1, &tex);
                 if (!tex) {
                     std::fprintf(stderr,
@@ -243,6 +244,7 @@ GLuint loadHdriTexture(const char* path,
     while (glGetError() != GL_NO_ERROR) { /* drain */ }
 
     GLuint tex = 0;
+    // TEX-CLASS: asset-pool -- HDRI sky LDR content texture
     glGenTextures(1, &tex);
     if (!tex) {
         std::fprintf(stderr,
