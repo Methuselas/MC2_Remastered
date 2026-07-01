@@ -1157,126 +1157,7 @@ void MissionMap::placeTerrainObject(long objectClass,
 									 __int64 footPrint,
 									 bool blocksLineOfFire,
 									 long mineType) {
-
-#if 0
-
-	Assert(objectClass != -1, 0, " MissionMap.placeTerrainObject: bad ObjectClass ");
-
-	long maskTemplateLo = footPrint;
-	long maskTemplateHi = footPrint >> 32;
-	
-	long posTileR = cellRow / MAPCELL_DIM;
-	long posTileC = cellCol / MAPCELL_DIM;
-
-	long tileOriginR = posTileR;
-	long tileOriginC = posTileC;
-
-	long startCellR = cellRow % MAPCELL_DIM;
-	long startCellC = cellCol % MAPCELL_DIM;
-	
-	long cellR = startCellR - 4;
-	long cellC = startCellC - 4;
-
-	while (cellR < 0) {
-		posTileR--;
-		cellR += MAPCELL_DIM;
-	}
-	
-	while (cellC < 0) {
-		posTileC--;
-		cellC += MAPCELL_DIM;
-	}
-	
-	if (objectClass == GATE)
-		blocksLineOfFire = false;
-
-	long startCol = posTileC;
-	long firstCellC = cellC;
-	//------------------------------------------------------------------
-	// We now use the objectClass to do this correctly.
-	if ((objectClass == BUILDING) ||
-		(objectClass == TREEBUILDING) ||
-		(objectClass == GATE) ||
-		(objectClass == TURRET) ||
-		(objectClass == TERRAINOBJECT)) {
-		if (maskTemplateLo || maskTemplateHi) {
-			//---------------------------------------------------------------------
-			// We also need to set the BUILDING flag in the scenario map to indicate
-			// a building exists in this tile...
-			//map[tileOriginR * width + tileOriginC].setBuildingHere(true);
-			switch (objectTypeID) {
-				case 644:
-				case 647:
-				case 690:
-				case 691:
-					map[tileOriginR * width + tileOriginC].setOverlayType(OVERLAY_GATE_CLAN_EW_CLOSED);
-					break;
-				case 645:
-				case 646:
-				case 693:
-				case 692:
-					map[tileOriginR * width + tileOriginC].setOverlayType(OVERLAY_GATE_CLAN_NS_CLOSED);
-					break;
-			}
-				
-			long bits = 0;
-				
-			for (long totalCelRSet = 0;totalCelRSet<8;totalCelRSet++) {
-				for (long totalCelCSet = 0;totalCelCSet<8;totalCelCSet++) {
-					long bitMask = 1 << bits;
-					long maskTemplate = maskTemplateLo;
-					
-					if (bits >= 32) {
-						bitMask = 1 << (bits-32);
-						maskTemplate = maskTemplateHi;
-					}
-					
-					if ((bitMask & maskTemplate) == bitMask) {
-						map[posTileR * width + posTileC].setCellPassable(cellR, cellC, 0);
-						if (blocksLineOfFire)
-							map[posTileR * width + posTileC].setCellLOS(cellR, cellC, 0);
-					}
-						
-					cellC++;
-					if (cellC == MAPCELL_DIM) {
-						cellC = 0;
-						posTileC++;
-					}
-						
-					bits++;
-				}
-					
-				posTileC = startCol;
-				cellC = firstCellC;
-				cellR++;
-				if (cellR == MAPCELL_DIM) {
-					cellR = 0;
-					posTileR++;
-				}
-			}
-		}
-		}
-	else if (objectClass == MINE) {
-
-		//-----------------------------------------------------------
-		// We need to know what cell is in the center of this MINE
-		// We then mark the tile as MINED!!!!
-		// We base it on the MineTypeNumber stored in the Mine Class.
-		if (mineType == 3)		//Force into only one slots instead of three
-			mineType = 2;
-		if (mineType == 1)		//Force into only one slots instead of three
-			mineType = 2;
-		if (mineType == 13)		//Force into only one slots instead of three
-			mineType = 12;
-		if (mineType == 11)		//Force into only one slots instead of three
-			mineType = 12;
-		if (mineType > 10) // 10-07-98 HKG hack!  Mines are off by a tile in each direction
-			map[(tileOriginR) * width + tileOriginC].setInnerSphereMine(mineType - 10);
-		else
-			map[(tileOriginR)* width + tileOriginC].setClanMine(mineType);
-	}
-#endif
-}	
+}
 
 //---------------------------------------------------------------------------
 
@@ -1485,13 +1366,6 @@ long MovePath::crossesBridge (long start, long range) {
 	if (lastStep >= numStepsWhenNotPaused)
 		lastStep = numStepsWhenNotPaused;
 	//We need to redo this code when bridges are in cause they are objects now!!
-#if 0
-	for (long i = start; i < lastStep; i++) {
-		long overlayType = GameMap->getOverlay(stepList[i].cell[0], stepList[i].cell[1]);
-		if (OverlayIsBridge[overlayType])
-			return(GlobalMoveMap[0]->calcArea(stepList[i].cell[0], stepList[i].cell[1]));
-	}
-#endif
 	return(-1);
 }
 
@@ -1535,13 +1409,6 @@ long MovePath::crossesClosedGate (long start, long range) {
 	if (lastStep >= numStepsWhenNotPaused)
 		lastStep = numStepsWhenNotPaused;
 	//Probably should have redone this code cause gates aren't overlays anymore?
-#if 0
-	for (long i = start; i < lastStep; i++) {
-		long overlayType = GameMap->getOverlay(stepList[i].cell[0], stepList[i].cell[1]);
-		if (OverlayIsClosedGate[overlayType])
-			return(i);
-	}
-#endif
 	return(-1);
 }
 
@@ -6346,23 +6213,6 @@ long MoveMap::calcPathJUMP (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int
 		}
 	#endif
 
-#if 0		//REdo when bridges are done
-	if (ClearBridgeTiles) {
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 1] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 4] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 7] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 1] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 4] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 7] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 1] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 4] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 7] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 1] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 4] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 7] += COST_BLOCKED;
-	}
-#endif
-
 	if (goalFound) {
 		//-------------------------------------------
 		// First, let's count how long the path is...
@@ -6832,23 +6682,6 @@ long MoveMap::calcEscapePath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, l
 			pathDebugFile = NULL;
 		}
 	#endif
-
-#if 0	//Redo when bridges are done
-	if (ClearBridgeTiles) {
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 1] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 4] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 7] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 1] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 4] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 7] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 1] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 4] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_NS * MAPCELL_DIM * MAPCELL_DIM + 7] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 1] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 4] += COST_BLOCKED;
-		overlayWeightTable[OVERLAY_RAILROAD_WATER_BRIDGE_EW * MAPCELL_DIM * MAPCELL_DIM + 7] += COST_BLOCKED;
-	}
-#endif
 
 	if (goalFound) {
 		//-------------------------------------------

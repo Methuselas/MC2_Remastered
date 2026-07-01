@@ -1794,39 +1794,6 @@ long File::readLong (void)
 {
     //gosASSERT(0 && "readLong: Most probably this function should not be called!!!");
     return readInt();
-#if 0
-	long value = 0;
-	unsigned long result = 0;
-
-	if (inRAM && fileImage)	
-	{
-		char *readAddress = (char*)fileImage+logicalPosition;
-		memcpy((char *)(&value),readAddress,sizeof(value));
-		logicalPosition += sizeof(value);
-	}
-	else if (fastFile)
-	{
-		result = fastFile->readFast(fastFileHandle,(char *)&value,sizeof(value));
-		logicalPosition += sizeof(value);
-	}
-	else
-	{
-		if (isOpen())
-		{
-			result = _read(handle,(void*)(&value),sizeof(value));
-			logicalPosition += sizeof(value);
-
-			if (result != sizeof(value))
-				lastError = errno;
-		}
-		else
-		{
-			lastError = FILE_NOT_OPEN;
-		}
-	}
-
-	return value;
-#endif
 }
 
 bool isNAN(float *pFloat)

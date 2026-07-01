@@ -232,9 +232,6 @@ extern SDL_Window* g_sdl_window;
 // data-tool executables that link mclib but not gameos_main still resolve
 // the symbol. Toggled at runtime via RAlt+0 (see handle_key_down).
 extern bool g_useGpuStaticProps;
-#if 0
-static camera g_camera;
-#endif
 
 static void handle_key_down( SDL_Keysym* keysym ) {
     const bool alt_debug = (keysym->mod & KMOD_ALT) != 0;
@@ -521,29 +518,6 @@ static void draw_screen( void )
     glViewport(0, 0, viewport_w, viewport_h);
     glClearDepth(0.0f);   // reverse-Z (U2): far plane = depth 0
     glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
-#if 0
-    mat4 proj;
-    g_camera.get_projection(&proj);
-    mat4 viewM;
-    g_camera.get_view(&viewM);
-#endif
-
-#if 0
-    gos_VERTEX q[4];
-    q[0].x = 10; q[0].y = 10;
-    q[0].z = 0.0;
-    q[0].rhw = 1;
-    q[0].argb = 0xffff0000;
-    q[1] = q[2] = q[3] = q[0];
-
-    q[1].x = 210; q[1].y = 10;
-    q[2].x = 110; q[2].y = 210;
-    q[3].x = 10; q[3].y = 210;
-
-    g_disable_quads = false;
-    gos_DrawQuads(&q[0], 4);
-    g_disable_quads = true;
-#endif
 	/*
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
@@ -1212,13 +1186,6 @@ int main(int argc, char** argv)
     AssetScale::init("data/art/asset_sizes.csv");
     Environment.InitializeGameEngine();
     startup_phase("engine_init_done");
-
-#if 0
-	float aspect = (float)w/(float)h;
-	mat4 proj_mat = frustumProjMatrix(-aspect*0.5f, aspect*0.5f, -.5f, .5f, 1.0f, 100.0f);
-	g_camera.set_projection(proj_mat);
-	g_camera.set_view(mat4::translation(vec3(0, 0, -16)));
-#endif
 
 	timing::init();
     TracyGpuContext;

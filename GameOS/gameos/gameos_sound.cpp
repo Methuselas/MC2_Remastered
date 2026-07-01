@@ -154,19 +154,6 @@ bool SoundEngine::init(int frequency, bool b_fmt_16_bit, bool b_fmt_signed, bool
     int num_allocated_chanels = Mix_AllocateChannels(NUM_CHANNELS);
     gosASSERT(NUM_CHANNELS == num_allocated_chanels);
 
-#if 0
-    HGOSAUDIO hres;
-    gosAudio_CreateResource(&hres, gosAudio_StreamedFile, "./data/sound/mc2_01.wav");
-    // play sample on first free unreserved channel
-    // play it exactly once through
-    // Mix_Chunk *sample; //previously loaded
-    if(Mix_PlayChannel(-1, &hres->mix_chunk, 0)==-1) {
-        printf("Mix_PlayChannel: %s\n",Mix_GetError());
-            // may be critical error, or maybe just no channels were free.
-                // you could allocated another channel in that case...
-    }
-#endif
-
     memset(&channel_info_, 0, sizeof(channel_info_));
     for(int i=0;i<NUM_CHANNELS;++i) {
         channel_info_[i].ePlayMode = gosAudio_Stop;
