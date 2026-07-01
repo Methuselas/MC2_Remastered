@@ -14,7 +14,10 @@ USER+ADVISOR RULINGS (locked, v0):
      shoreline). No painted .beauty/scatter_*.png override yet (v1); the
      mask-ingest interface below is written so a PNG can slot in later
      (see `load_density_mask`).
-  2. Prop = MarbleCliff (FitID 1188, BUILDING-class, yaw-only, no tilt).
+  2. Prop = MarbleCliffScatter (FitID 1189, BUILDING-class, yaw-only, no
+     tilt; a dedicated clone of hand-placeable MarbleCliff FitID 1188, same
+     AppearanceName="marblecliff" -- keeps scatter re-cooks from ever
+     touching hand placements, which share the 1188 type).
   3. Cap = 500 HARD (tool-enforced); --count for a lower request.
   4. Dedicated scatter objTypeNum(s) reserved below; re-cook = delete
      prior scatter records by objTypeNum, then re-emit.
@@ -60,14 +63,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pak_append  # noqa: E402
 
 # --- reserved objTypeNums (user ruling #4) -----------------------------------
-# MarbleCliff itself (FitID 1188, TERRAIN-CLIFF-MESH-DRESSING-P0) IS the v0
-# scatter prop, so it is also the reserved scatter objTypeNum: a re-cook can
-# unambiguously find+delete "its own" records by this type without a marker
-# field (the 40-byte record has none). If a second scatter prop type is later
-# installed, its FitID/objTypeNum must be appended to this tuple and documented
-# here (do not reuse a hand-placed building's type).
-RESERVED_SCATTER_OBJTYPENUMS = (1188,)
-MARBLECLIFF_OBJTYPENUM = 1188
+# v0 originally reused MarbleCliff itself (FitID 1188, hand-placeable) as the
+# scatter prop, which meant a re-cook's "delete by objTypeNum" step could nuke
+# hand placements sharing that same type. Fixed by installing a DEDICATED
+# scatter clone -- "MarbleCliffScatter" (FitID/objTypeNum 1189, same
+# AppearanceName="marblecliff" so it renders identically) -- via
+# tools/install_cliff_dressing.py --with-scatter-clone. Scatter cooks now
+# exclusively use 1189; 1188 (hand-placeable MarbleCliff) is never touched by
+# a re-cook. If a further scatter prop type is later installed, its
+# FitID/objTypeNum must be appended to this tuple and documented here (do not
+# reuse a hand-placed building's type).
+RESERVED_SCATTER_OBJTYPENUMS = (1189,)
+MARBLECLIFF_OBJTYPENUM = 1189
 
 HARD_CAP = 500
 DEFAULT_MIN_DIST_WU = 256.0  # blue-noise minimum spacing, world units
