@@ -31,7 +31,11 @@ layout(set = 0, binding = 0) uniform sampler2D depthTex;
 //   u_fogHeight      @ 88
 //   u_fogMax         @ 92
 //   u_waterElevation @ 96
-layout(set = 0, binding = 1, std140) uniform EdgeFogParams {
+// row_major: the CPU packs invViewProj as the SAME 16 floats the GL path uploads
+// (row-major direct upload, glUniformMatrix4fv GL_FALSE). std140 mat4 defaults to
+// column-major, which would transpose the matrix and break the unprojection
+// (VULKAN-EDGE-FOG-ISLAND-2b: GL-Z=-15.39 vs VK-Z=669.57 before this qualifier).
+layout(set = 0, binding = 1, std140, row_major) uniform EdgeFogParams {
     mat4  invViewProj;
     vec3  u_fogColor;
     float _pad0;

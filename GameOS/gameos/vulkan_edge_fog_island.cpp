@@ -638,12 +638,21 @@ void gosPostProcess::runEdgeFogVulkan()
         // Screen center, mid depth in reverse-Z [0,1].
         Vec4 ndc{0.0, 0.0, 0.5, 1.0};
         Vec4 glW  = mul_rowmajor(m, ndc);  // what the GL path (GL_FALSE row-major upload) yields
-        Vec4 vkW  = mul_colmajor(m, ndc);  // what the Vulkan frag (std140 column-major) computes
+        // The Vulkan frag's EdgeFogParams UBO is now layout(row_major) (2b matrix
+        // fix), so the shader reads the SAME 16 floats row-major -- identical math
+        // to the GL path. mul_rowmajor here mirrors that; GL-Z should ~= VK-Z. (The
+        // column-major reading -- what a default std140 mat4 would do, the pre-2b
+        // bug -- is logged too so a regression re-diverges visibly.)
+        Vec4 vkW  = mul_rowmajor(m, ndc);  // what the Vulkan frag (std140 row_major) now computes
+        Vec4 vkWcol = mul_colmajor(m, ndc); // pre-2b (col-major) reading, for contrast
         double glZ = glW.w != 0.0 ? glW.z / glW.w : 0.0;
         double vkZ = vkW.w != 0.0 ? vkW.z / vkW.w : 0.0;
+        double vkZcol = vkWcol.w != 0.0 ? vkWcol.z / vkWcol.w : 0.0;
         vlog("MICRO-CHECK depth-convention @ ndc(0,0,0.5): GL-world-Z=%.4f  VK-world-Z=%.4f  "
-             "(match=%s) -- if these diverge wildly the invViewProj/Z convention is inverted.",
-             glZ, vkZ, (glZ * vkZ > 0.0 && (glZ==0.0 || (vkZ/glZ > 0.5 && vkZ/glZ < 2.0))) ? "yes" : "NO");
+             "(match=%s)  [pre-2b col-major would be %.4f] -- GL-Z ~= VK-Z means the "
+             "invViewProj/Z convention is consistent (row_major UBO).",
+             glZ, vkZ, (glZ * vkZ > 0.0 && (glZ==0.0 || (vkZ/glZ > 0.5 && vkZ/glZ < 2.0))) ? "yes" : "NO",
+             vkZcol);
     }
 
     // Copy scratch into the mapped staging buffers.
