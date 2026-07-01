@@ -634,6 +634,20 @@ void GameCamera::render (void)
 			// scope (joined with the StartDraw scope above into mlr_total).
 			::mc2_cpu_proj_cost::Scope _f3_mlr_rendernow_scope(
 			    ::mc2_cpu_proj_cost::BUCKET_MLR_TOTAL);
+			// VFX-MESH-BRACKET-1: theClipper->RenderNow() draws gosFX MESH shapes
+			// (gosFX::Shape::Draw -> gos_vfx_mesh_flush) — scene geometry that ran
+			// OUTSIDE any PassIdentity: it fires AFTER the particle/VFX guard scope
+			// above closed (line ~622). Account it under the same ParticleEffect
+			// (VFX) pass with a second observe-only bracket around just RenderNow.
+			// VFX is a SOFT pass (no AmbientContract row, no FBO contract to enforce
+			// per the note above), so this ONLY makes the mesh draw accounted — no
+			// GL state change, no draw reorder. note+begin/end mirror the particle
+			// bracket at 599/607/608; the RAII guard fires end on all exit paths.
+			// executorOwn* (via mc2_vfx_pass_*) are no-ops when
+			// MC2_FRAMEGRAPH_EXECUTOR is unset -> byte-identical OFF.
+			mc2_note_particle_effect_pass();
+			mc2_vfx_pass_begin();
+			struct MeshVfxGuard_ { ~MeshVfxGuard_() { mc2_vfx_pass_end(); } } _meshVfxGuard;
 			theClipper->RenderNow();		//Draw the FX
 		}
 
