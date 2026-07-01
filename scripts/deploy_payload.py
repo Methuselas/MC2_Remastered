@@ -313,7 +313,29 @@ def check_locks(target_dir, exe_name):
 # Payload enumeration
 # ---------------------------------------------------------------------------
 
-def check_exe_fresh(exe_src, build_dir, allow_stale_exe):
+def find_build_root(build_dir, explicit_root=None):
+    """Locate the build64-family root (holds out/mc2_launcher and mc2.dir).
+
+    Historically this walked up for an ancestor named literally 'build64', which
+    fails for sibling build dirs like build64_island / build64_editor. Now:
+      1. explicit_root (--build64-root) wins if given;
+      2. else walk up accepting any ancestor whose basename STARTS WITH 'build64'
+         (build64, build64_island, ...);
+      3. else '' (non-standard layout; callers skip the launcher/freshness guard).
+    """
+    if explicit_root:
+        return os.path.abspath(explicit_root).rstrip(os.sep)
+    bd = os.path.abspath(build_dir).rstrip(os.sep)
+    b64 = bd
+    while b64 and not os.path.basename(b64).startswith("build64"):
+        parent = os.path.dirname(b64)
+        if parent == b64:
+            return ""
+        b64 = parent
+    return b64
+
+
+def check_exe_fresh(exe_src, build_dir, allow_stale_exe, build64_root=None):
     """Mistake E: stale exe deployed because the source exe was not relinked.
 
     The linked exe must be NEWER than every compiled .obj that feeds it. An incremental build
@@ -327,13 +349,7 @@ def check_exe_fresh(exe_src, build_dir, allow_stale_exe):
     exe_m = os.path.getmtime(exe_src)
     bd = os.path.abspath(build_dir).rstrip(os.sep)
     cfg = os.path.basename(bd)                      # e.g. RelWithDebInfo
-    b64 = bd
-    while b64 and os.path.basename(b64) != "build64":
-        parent = os.path.dirname(b64)
-        if parent == b64:
-            b64 = ""
-            break
-        b64 = parent
+    b64 = find_build_root(build_dir, build64_root)
     if not b64:
         return                                      # non-standard layout; skip the guard
     objdir = os.path.join(b64, "mc2.dir", cfg)
@@ -356,7 +372,7 @@ def check_exe_fresh(exe_src, build_dir, allow_stale_exe):
 
 
 def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
-                      require_build=True):
+                      require_build=True, build64_root=None):
     """Returns list of (src_abspath, target_relpath, kind).
 
     require_build=False (manifest-only): the build outputs may be gone; we
@@ -382,13 +398,7 @@ def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
     # build64 root (walk up from build_dir) using this deploy's config name.
     bd = os.path.abspath(build_dir).rstrip(os.sep)
     cfg = os.path.basename(bd)  # e.g. RelWithDebInfo
-    b64 = bd
-    while b64 and os.path.basename(b64) != "build64":
-        parent = os.path.dirname(b64)
-        if parent == b64:
-            b64 = ""
-            break
-        b64 = parent
+    b64 = find_build_root(build_dir, build64_root)
     launcher_src = (os.path.join(b64, LAUNCHER_FROM_BUILD64, cfg, LAUNCHER_NAME)
                     if b64 else "")
     if launcher_src and os.path.isfile(launcher_src):
@@ -551,7 +561,8 @@ def hash_present_payload(items, target_dir):
     return hashes
 
 
-def write_manifest_only(src_root, build_dir, exe_name, pdb_name, target_dir):
+def write_manifest_only(src_root, build_dir, exe_name, pdb_name, target_dir,
+                        build64_root=None):
     """Refresh <target>/.deployed_manifest.csv from files ALREADY in target.
 
     No copy, no lock check (we are not writing binaries — only the CSV).
@@ -562,7 +573,7 @@ def write_manifest_only(src_root, build_dir, exe_name, pdb_name, target_dir):
     if not os.path.isdir(target_dir):
         fail(f"target dir does not exist: {target_dir}")
     items = enumerate_payload(src_root, build_dir, exe_name, pdb_name,
-                              require_build=False)
+                              require_build=False, build64_root=build64_root)
     hashes = hash_present_payload(items, target_dir)
 
     # Merge: keep prior rows for payload files we did not just re-hash but
@@ -713,6 +724,11 @@ def main():
     ap.add_argument("--exe-name", default=None,
                     help="exe filename (default mc2.exe, or the preset's exe "
                     "with --target)")
+    ap.add_argument("--build64-root", default=None,
+                    help="explicit build64-family root that holds out/mc2_launcher "
+                    "and mc2.dir (e.g. an absolute path to build64_island). Default: "
+                    "walk up from --build-dir for an ancestor whose name starts with "
+                    "'build64' (so build64_island/build64_editor are auto-found).")
     ap.add_argument("--allow-stale-pdb", action="store_true",
                     help="downgrade PDB staleness to a warning")
     ap.add_argument("--allow-stale-exe", action="store_true",
@@ -754,7 +770,8 @@ def main():
     pdb_name = os.path.splitext(exe_name)[0] + ".pdb"
 
     if args.write_manifest_only:
-        write_manifest_only(src_root, build_dir, exe_name, pdb_name, target)
+        write_manifest_only(src_root, build_dir, exe_name, pdb_name, target,
+                            build64_root=args.build64_root)
         return
 
     # DEPLOY-TARGET-GUARD: force deploys to the canonical deploy folders; never create
@@ -780,8 +797,10 @@ def main():
     log(f"target:      {target}")
 
     check_locks(target, exe_name)
-    check_exe_fresh(os.path.join(build_dir, exe_name), build_dir, args.allow_stale_exe)
-    items = enumerate_payload(src_root, build_dir, exe_name, pdb_name)
+    check_exe_fresh(os.path.join(build_dir, exe_name), build_dir, args.allow_stale_exe,
+                    build64_root=args.build64_root)
+    items = enumerate_payload(src_root, build_dir, exe_name, pdb_name,
+                              build64_root=args.build64_root)
     log(f"payload: {len(items)} files "
         f"({sum(1 for *_x, k in items if k == 'shader')} shaders)")
     hashes = deploy(items, target, args.allow_stale_pdb)
