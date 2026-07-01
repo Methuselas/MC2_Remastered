@@ -1512,6 +1512,13 @@ def main():
                             # the GL OOB-fog path instead.
                             "MC2_VULKAN_OOB_FOG_ISLAND",
                             "MC2_VULKAN_OOB_FOG_ISLAND_FORCE_FALLBACK",
+                            # VULKAN-POSTPROCESS-SUBGRAPH-1: the fused Layer-4
+                            # subgraph (EdgeFog + OOB fog in ONE Vulkan render pass).
+                            # Same allowlist rationale -- without these Popen drops
+                            # them and the gate-ON / forced-fallback smoke silently
+                            # runs the GL edge+oob fog path instead.
+                            "MC2_VULKAN_POSTPROCESS_SUBGRAPH",
+                            "MC2_VULKAN_POSTPROCESS_SUBGRAPH_FORCE_FALLBACK",
                             # VULKAN-ISLAND-VALIDATION-WIRING-1: opt-in Vulkan
                             # validation preset (off/core/sync/gpu-assisted/
                             # best-practices/debug-printf). Without this in the

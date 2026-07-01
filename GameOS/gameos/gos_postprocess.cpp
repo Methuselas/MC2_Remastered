@@ -762,6 +762,8 @@ void gosPostProcess::destroy()
     destroyVulkanEdgeFogIsland();
     // VULKAN-OOB-FOG-ISLAND-1: same teardown for the OOB-fog island.
     destroyVulkanOobFogIsland();
+    // VULKAN-POSTPROCESS-SUBGRAPH-1: same teardown for the fused subgraph.
+    destroyVulkanPostprocessSubgraph();
 #endif
 
     // CLUSTER-DEPTH-PYRAMID-NATIVE-1: release the gated pass's GL resources.
@@ -2700,10 +2702,20 @@ void gosPostProcess::endScene()
     // FRAME-GRAPH-EXECUTOR-ISLAND-2: validate->call-unchanged->validate (default-OFF).
     executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::EdgeFog);
 #ifdef MC2_VULKAN_ISLAND
-    // VULKAN-EDGE-FOG-ISLAND-2a: route the edge-fog composite through the Vulkan
-    // island when MC2_VULKAN_EDGE_FOG_ISLAND=1 and lazy init succeeded. Otherwise
-    // (gate off, or init fail-soft) fall through to the unchanged GL path.
-    if (vulkanEdgeFogIslandEnabled()) { runEdgeFogVulkan(); } else
+    // VULKAN-POSTPROCESS-SUBGRAPH-1: gate precedence (correctness-critical). When
+    // MC2_VULKAN_POSTPROCESS_SUBGRAPH=1 and lazy init succeeded, run the FUSED
+    // subgraph ONCE here (it does BOTH edge fog AND oob fog in one Vulkan render
+    // pass), and set subgraphRanThisFrame so the OOB-fog site below SKIPS entirely
+    // (no GL, no island) -- otherwise oob would double-apply. The subgraph, the
+    // EdgeFog island, and the OOB island must NEVER all fire; precedence is:
+    //   subgraph  >  per-pass island  >  GL.
+    // VULKAN-EDGE-FOG-ISLAND-2a: else route the edge-fog composite through the
+    // per-pass Vulkan island when MC2_VULKAN_EDGE_FOG_ISLAND=1. Otherwise GL.
+    bool subgraphRanThisFrame = false;
+    if (vulkanPostprocessSubgraphEnabled()) {
+        runPostprocessSubgraph();       // does BOTH fog effects
+        subgraphRanThisFrame = true;    // -> OOB site is skipped below (no double-apply)
+    } else if (vulkanEdgeFogIslandEnabled()) { runEdgeFogVulkan(); } else
 #endif
     { runEdgeFog(); }
     executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::EdgeFog);
@@ -2713,6 +2725,12 @@ void gosPostProcess::endScene()
     // FRAME-GRAPH-EXECUTOR-ISLAND-2: validate->call-unchanged->validate (default-OFF).
     executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::FogOob);
 #ifdef MC2_VULKAN_ISLAND
+    // VULKAN-POSTPROCESS-SUBGRAPH-1: if the fused subgraph already ran this frame it
+    // ALSO did the oob fog, so this site is skipped ENTIRELY (no GL, no island) --
+    // the explicit, unmissable no-double-apply guard.
+    if (subgraphRanThisFrame) {
+        // subgraph did edge+oob; nothing to do here.
+    } else
     // VULKAN-OOB-FOG-ISLAND-1: route the OOB-fog composite through the Vulkan
     // island when MC2_VULKAN_OOB_FOG_ISLAND=1 and lazy init succeeded. Otherwise
     // (gate off, or init fail-soft) fall through to the unchanged GL path.

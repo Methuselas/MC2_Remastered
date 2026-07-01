@@ -356,6 +356,24 @@ public:
     void  destroyVulkanOobFogIsland();
     struct VulkanOobFogIsland;   // defined in vulkan_oob_fog_island.cpp
     VulkanOobFogIsland* vkOobFogIsland_ = nullptr;
+
+    // VULKAN-POSTPROCESS-SUBGRAPH-1: the Layer-4 milestone -- fuse the EdgeFog +
+    // OOB-fog islands into ONE native Vulkan subgraph. A Vulkan-owned intermediate
+    // color image is copied in from GL sceneColor ONCE, blended by BOTH fog passes
+    // (edge then oob) in ONE render pass / ONE subpass / TWO draws (NO CPU readback
+    // between the two passes, 2 fewer copies than running both islands), then copied
+    // back to GL ONCE. Opaque pointer only -- no Vulkan headers leak into this header.
+    //
+    // vulkanPostprocessSubgraphEnabled(): reads MC2_VULKAN_POSTPROCESS_SUBGRAPH once,
+    // lazily inits the device on first call; false on failure -> GL fallback (BOTH GL
+    // fog passes run). runPostprocessSubgraph(): per-frame fused GL->Vulkan->GL edge+
+    // oob composite (does BOTH fog effects). destroyVulkanPostprocessSubgraph(): torn
+    // down from destroy().
+    bool  vulkanPostprocessSubgraphEnabled();
+    void  runPostprocessSubgraph();
+    void  destroyVulkanPostprocessSubgraph();
+    struct VulkanPostprocessSubgraph;   // defined in vulkan_postprocess_subgraph.cpp
+    VulkanPostprocessSubgraph* vkPostprocessSubgraph_ = nullptr;
 #endif
 
     // OOB-FOG-1: fullscreen fog over out-of-bounds far-plane pixels.

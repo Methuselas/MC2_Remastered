@@ -105,6 +105,12 @@ if(MC2_VULKAN)
         # members are added under the same macro, already propagated to all
         # consumers by the ODR-harden block in the root CMakeLists.
         list(APPEND SOURCES vulkan_oob_fog_island.cpp)
+        # VULKAN-POSTPROCESS-SUBGRAPH-1: the Layer-4 fused subgraph (EdgeFog + OOB
+        # fog in ONE native Vulkan render pass, Vulkan-owned intermediate color
+        # image, no CPU readback between the two passes). Same #ifdef MC2_VULKAN_ISLAND
+        # discipline; layout-affecting header members added under the same macro,
+        # already propagated to all consumers by the root ODR-harden block.
+        list(APPEND SOURCES vulkan_postprocess_subgraph.cpp)
     endif()
 endif()
 
