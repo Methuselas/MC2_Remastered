@@ -1024,6 +1024,7 @@ void gosPostProcess::createFBOs(int w, int h)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
         glGenFramebuffers(1, &ssaoFBO_);
+        RenderCore::framegraph::fboLedger().registerFbo(ssaoFBO_, RenderCore::RenderResourceId::SsaoOcclusion);  // FBO-LEDGER-EXTEND-1
         glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO_);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoColorTex_, 0);
 
@@ -1142,6 +1143,7 @@ void gosPostProcess::createFBOs(int w, int h)
         }
 
         glGenFramebuffers(1, &hzbFBO_);
+        RenderCore::framegraph::fboLedger().registerFbo(hzbFBO_, RenderCore::RenderResourceId::HzbPyramid);  // FBO-LEDGER-EXTEND-1
         // The destination level texture is bound to COLOR_ATTACHMENT0 per pass
         // in runHzbReduce(). No dedicated registry slot yet -- surfaced via the
         // getHzb* accessors.
@@ -4083,6 +4085,7 @@ void gosPostProcess::initDynamicShadows()
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
         glGenFramebuffers(1, &dynamicFullMapFbo_);
+        RenderCore::framegraph::fboLedger().registerFbo(dynamicFullMapFbo_, RenderCore::RenderResourceId::DynamicFullMapFbo);  // FBO-LEDGER-EXTEND-1
         glBindFramebuffer(GL_FRAMEBUFFER, dynamicFullMapFbo_);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, dynamicFullMapTex_, 0);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dynamicFullMapDummyColorTex_, 0);
