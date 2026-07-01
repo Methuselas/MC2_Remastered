@@ -2727,6 +2727,17 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 				Commander::commanders[MPlayer->playerInfo[i].commanderID]->setTeam(Team::teams[MPlayer->playerInfo[i].team]);
 		}
 	else {
+		// CRASH-HARDEN (MISSION-NO-COMMANDERS): a mission .fit with no [Parts]
+		// (or no part carrying TeamId/CommanderId) leaves maxTeamID/
+		// maxCommanderID at -1, so the init loops above create NO teams and NO
+		// commanders — teams[0]/commanders[0] stay NULL and the setTeam calls
+		// below AV (0xC0000005 null read). The seekBlock("Parts") gosASSERTs
+		// upstream are no-ops in RelWithDebInfo, so this is reachable with any
+		// hand-made/imported map (e.g. terrain-gen imports that only wrote
+		// [ColorMap]/[Terrain]). Fail with a clear fatal instead of the AV.
+		if ((Team::teams[0] == NULL) || (Commander::commanders[0] == NULL))
+			STOP(("mission has no commanders -- invalid mission data (no [Parts] with TeamId/CommanderId): %s",
+			      missionName ? missionName : "(null)"));
 		Team::home = Team::teams[0];
 		Commander::home = Commander::commanders[0];
 		for (long i = 0; i <= maxCommanderID; i++) {
