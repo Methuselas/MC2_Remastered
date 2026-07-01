@@ -227,6 +227,15 @@ if(MC2_VULKAN)
     # VK-BOOTSTRAP-INTEGRATE-1: vendored vk-bootstrap (SwapchainBuilder).
     target_include_directories(gameos_editor PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vk_bootstrap")
 endif()
+# VULKAN-ISLAND-ODR-HARDEN-1: gameos_editor uses the same ${SOURCES} as gameos
+# (incl. gos_postprocess.cpp) and its consumers (editor/*.cpp) include
+# gos_postprocess.h, so its gosPostProcess layout must match the shared static
+# libs (mclib/renderworld/gameadapters) it links. Propagate the island define so
+# EditRel's link is uniform if ever built with MC2_VULKAN_ISLAND=ON. No effect on
+# any shipped build: the island option is OFF whenever the editor is built.
+if(MC2_VULKAN_ISLAND)
+    target_compile_definitions(gameos_editor PRIVATE MC2_VULKAN_ISLAND)
+endif()
 
 add_library(gameos_main ${MAIN_SRC})
 

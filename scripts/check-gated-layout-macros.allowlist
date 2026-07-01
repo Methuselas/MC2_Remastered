@@ -4,21 +4,9 @@
 # justification and after MANUAL layout analysis. See
 # docs/render-backend-seams/gated-layout-macro-guard.md.
 
-# VULKAN-EDGE-FOG-ISLAND-2a/2b (fix 9cce8e68). MC2_VULKAN_ISLAND adds the
-# trailing-ish member vkFogIsland_ + method decls to gosPostProcess. The define
-# is now PUBLIC on gameos and PRIVATE on gameos_main + mc2 (the TUs the fix
-# scoped). It is NOT propagated to the other linked consumers (mclib,
-# renderworld, gameadapters, gui_runtime) because they do not link gameos, and
-# is absent from the editor build entirely. ACCEPTED because:
-#   (1) the option ships default-OFF -> in every shipped build the member is
-#       absent in ALL TUs, so the layout is uniform (this is the byte-identical
-#       default-OFF contract). The residual is latent, ON-only.
-#   (2) when turned ON for the island bring-up build, the fix covers the TUs
-#       that actually construct/serialize gosPostProcess and access it directly.
-# RESIDUAL RISK (documented, not hidden): with the option ON, inline accessors
-# in gos_postprocess.h that read members declared AFTER vkFogIsland_ (getWidth/
-# getHeight etc.) compiled in a non-gameos consumer TU would see a shifted
-# offset. Correct long-term fix = move vkFogIsland_ behind a pImpl, OR make the
-# define reach every consuming target. Tracked as a follow-up, not a blocker
-# for the default-OFF ship.
-GameOS/gameos/gos_postprocess.h:MC2_VULKAN_ISLAND
+# VULKAN-EDGE-FOG-ISLAND-2a/2b residual RESOLVED by VULKAN-ISLAND-ODR-HARDEN-1:
+# MC2_VULKAN_ISLAND is now propagated to every target whose TUs include
+# gos_postprocess.h (gameos, gameos_main, mc2, mclib, renderworld, gameadapters,
+# gui_runtime) inside the if(MC2_VULKAN_ISLAND) block in CMakeLists.txt. Coverage
+# is complete -> no ACK needed. Default-OFF build64 stays byte-identical (the
+# define reaches no target when the option is OFF).

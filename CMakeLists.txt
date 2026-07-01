@@ -552,9 +552,22 @@ endif()
 # directly on the TUs that include the header, or getSceneFBO()/getWidth()/
 # getHeight() read the wrong offset (ODR) -> garbage FBO -> visual capture never
 # fires. Harmless when the header block declares only an opaque pointer + decls.
+#
+# VULKAN-ISLAND-ODR-HARDEN-1: gos_postprocess.h is ALSO included by TUs in mclib,
+# renderworld, gameadapters and gui_runtime (all of which link into mc2). Those
+# targets do NOT consume gameos's PUBLIC usage requirement (they don't
+# target_link_libraries(gameos)), so without the define here they would see the
+# smaller (member-absent) gosPostProcess layout -> shifted offsets for any member
+# declared after vkFogIsland_ -> ODR mismatch in the ON build. Propagate the
+# define to EVERY consuming target so the layout is uniform across the whole link.
+# Only added when the option is ON, so build64 (option OFF) stays byte-identical.
 if(MC2_VULKAN_ISLAND)
     target_compile_definitions(gameos_main PRIVATE MC2_VULKAN_ISLAND)
     target_compile_definitions(mc2 PRIVATE MC2_VULKAN_ISLAND)
+    target_compile_definitions(mclib PRIVATE MC2_VULKAN_ISLAND)
+    target_compile_definitions(renderworld PRIVATE MC2_VULKAN_ISLAND)
+    target_compile_definitions(gameadapters PRIVATE MC2_VULKAN_ISLAND)
+    target_compile_definitions(gui_runtime PRIVATE MC2_VULKAN_ISLAND)
 endif()
 target_link_libraries(mc2 mclib fx_trace particles gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL renderworld gameadapters editorbridge imgui gui_runtime)
 
