@@ -156,11 +156,20 @@ def capture_state(label: str, scene: str, exe: Path, work: Path,
     if bmarks is None:
         bmarks = _dig_bookmarks(vm)
     pixel_shas = {}
+    present_map = {}
     any_nondet = False
     for b in bmarks or []:
-        pixel_shas[b.get("name", "?")] = b.get("sha256")
+        name = b.get("name", "?")
+        pixel_shas[name] = b.get("sha256")
+        present_map[name] = bool(b.get("present"))
         if b.get("engine_deterministic") is False:
             any_nondet = True
+    # engine_capture_fired lives on the visual-capture report_summary extras;
+    # probe both the top-level and the nested report shape.
+    engine_fired = bool(
+        vm.get("engine_capture_fired")
+        or (vm.get("report", {}) or {}).get("engine_capture_fired")
+        or _dig_field(vm, "engine_capture_fired"))
     if not pixel_shas:
         raise RuntimeError("[%s] pixel-oracle produced NO bookmark shas (%s)"
                            % (label, viscap_manifest))
@@ -203,6 +212,9 @@ def capture_state(label: str, scene: str, exe: Path, work: Path,
         "pixel_shas": pixel_shas,
         "pixel_sha_all": pixel_sha_all,
         "pixel_any_nondeterministic": any_nondet,
+        # CAPTURE-LIVENESS fields (asserted by preflight BEFORE any compare):
+        "bookmark_present": present_map,
+        "engine_capture_fired": engine_fired,
         # provenance / volatile:
         "viscap_manifest": str(viscap_manifest),
         "golden_scene_manifest": str(gs_out),
@@ -234,6 +246,98 @@ def _dig_bookmarks(obj):
             if r:
                 return r
     return None
+
+
+def _dig_field(obj, key):
+    """Find the first value for `key` anywhere in a nested manifest dict/list."""
+    if isinstance(obj, dict):
+        if key in obj:
+            return obj[key]
+        for v in obj.values():
+            r = _dig_field(v, key)
+            if r is not None:
+                return r
+    elif isinstance(obj, list):
+        for v in obj:
+            r = _dig_field(v, key)
+            if r is not None:
+                return r
+    return None
+
+
+class CaptureLivenessError(RuntimeError):
+    """A capture did not actually fire / produced empty data. Distinct from a
+    parity FAIL: this means the ORACLE is broken, not that pixels differ."""
+
+
+def capture_liveness_preflight(combined: dict, gate_label: str,
+                               expected_bookmarks: list[str] | None) -> None:
+    """Assert a combined manifest represents a LIVE capture BEFORE any pixel
+    comparison. Raises CaptureLivenessError on the FIRST failure with a message
+    of the exact form:
+        CAPTURE-LIVENESS FAIL: <reason> (gate=OFF/ON, bookmark=X)
+
+    Checks, in order:
+      1. engine_capture_fired == True
+      2. capture produced > 0 images (at least one present bookmark w/ non-null sha)
+      3. every EXPECTED bookmark name is present (present=True)
+      4. the scene FBO resolved (present bookmark => non-null pixel hash; a
+         getSceneFBO()==0 / zero-dim capture yields present=False or null hash)
+      5. pixel hashes populated (no present bookmark has a null hash)
+    """
+    def fail(reason: str, bookmark: str = "-") -> None:
+        raise CaptureLivenessError(
+            "CAPTURE-LIVENESS FAIL: %s (gate=%s, bookmark=%s)"
+            % (reason, gate_label, bookmark))
+
+    present_map = combined.get("bookmark_present") or {}
+    pixel_shas = combined.get("pixel_shas") or {}
+
+    # 1) engine capture path fired at all
+    if not combined.get("engine_capture_fired"):
+        fail("engine_capture_fired=False (engine capture path never ran)")
+
+    # 2) at least one real image
+    produced = [n for n, sha in pixel_shas.items()
+                if present_map.get(n) and sha]
+    if not produced:
+        fail("capture produced 0 images (no present bookmark with a pixel hash)")
+
+    # 3) every expected bookmark present
+    if expected_bookmarks:
+        for name in expected_bookmarks:
+            if not present_map.get(name):
+                fail("expected bookmark missing / present=False", name)
+
+    # 4 + 5) FBO resolved & hashes populated for present bookmarks
+    #        (a present bookmark with a null hash == zero-dim / getSceneFBO()==0)
+    for name, sha in pixel_shas.items():
+        if present_map.get(name) and not sha:
+            fail("scene FBO did not resolve (present bookmark has null pixel "
+                 "hash -> zero-dim / getSceneFBO()==0)", name)
+    # Any expected bookmark whose hash is null even though we got here:
+    for name in (expected_bookmarks or pixel_shas.keys()):
+        if present_map.get(name) and not pixel_shas.get(name):
+            fail("pixel hash not populated for present bookmark", name)
+
+
+def load_expected_bookmarks(scene: str) -> list[str] | None:
+    """Read the expected bookmark NAMES for a scene from its bookmark JSON, so
+    the preflight can assert every one came back present. Returns None if the
+    file is absent (then presence is asserted against whatever was captured)."""
+    bm_path = ROOT / "tests" / "visual" / "bookmarks" / ("%s.json" % scene)
+    if not bm_path.exists():
+        return None
+    try:
+        data = json.loads(bm_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    marks = data.get("bookmarks", data) if isinstance(data, dict) else data
+    names = []
+    for m in marks or []:
+        if isinstance(m, dict) and m.get("name"):
+            names.append(m["name"])
+    return names or None
 
 
 def build_floor(scene: str, exe: Path, work: Path, n: int,
@@ -330,11 +434,34 @@ def main() -> int:
         man_b = capture_state("B", args.scene, exe, work,
                               gate_name=args.gate_name, gate_value=args.gate_value,
                               fixed_timestep=args.fixed_timestep)
+    except CaptureLivenessError as e:
+        # Should not normally reach here (capture_state raises plain RuntimeError
+        # on child failure); kept for symmetry.
+        print("[golden_parity] %s" % e, file=sys.stderr)
+        print("RESULT: CAPTURE-LIVENESS-FAIL scene=%s gate=%s reason=%s"
+              % (args.scene, args.gate_name, e))
+        return 4
     except RuntimeError as e:
         print("[golden_parity] ABORT: %s" % e, file=sys.stderr)
         print("RESULT: ABORT scene=%s gate=%s reason=capture-liveness"
               % (args.scene, args.gate_name))
         return 3
+
+    # --- CAPTURE-LIVENESS PREFLIGHT (BOTH gate-OFF and gate-ON) ----------------
+    # Formalized up-front gate: assert the captures actually fired and produced
+    # populated pixel data BEFORE we ever call golden_compare, so "capture broke"
+    # (exit 4) is never confused with "pixels differ" (parity FAIL, exit 1).
+    expected = load_expected_bookmarks(args.scene)
+    try:
+        capture_liveness_preflight(man_a, "OFF", expected)
+        capture_liveness_preflight(man_b, "ON", expected)
+    except CaptureLivenessError as e:
+        print("[golden_parity] %s" % e, file=sys.stderr)
+        print("RESULT: CAPTURE-LIVENESS-FAIL scene=%s gate=%s reason=%s"
+              % (args.scene, args.gate_name, e))
+        return 4
+    print("[golden_parity] capture-liveness preflight OK (OFF+ON fired, "
+          "all expected bookmarks present, hashes populated)")
 
     # --- compare A vs B against the floor -------------------------------------
     cmp_cmd = [sys.executable, str(GOLDEN_COMPARE), "compare",
@@ -383,5 +510,70 @@ def _culprit_fields(man_a: dict, man_b: dict, floor_path: Path) -> list[str]:
         return []
 
 
+def _selftest() -> int:
+    """Drive capture_liveness_preflight with SYNTHETIC combined manifests (no
+    GPU / no game run). Proves: (a) healthy PASSES, (b) zero-image ABORTS,
+    (c) partial ABORTS naming the missing bookmark. Returns 0 iff all 3 behave.
+    """
+    expected = ["overview", "close_mech", "water_edge"]
+
+    def healthy() -> dict:
+        return {
+            "engine_capture_fired": True,
+            "bookmark_present": {b: True for b in expected},
+            "pixel_shas": {b: "%064x" % (i + 1) for i, b in enumerate(expected)},
+        }
+
+    def zero_image() -> dict:
+        return {
+            "engine_capture_fired": False,
+            "bookmark_present": {b: False for b in expected},
+            "pixel_shas": {b: None for b in expected},
+        }
+
+    def partial() -> dict:
+        m = healthy()
+        m["bookmark_present"]["water_edge"] = False
+        m["pixel_shas"]["water_edge"] = None
+        return m
+
+    ok = True
+
+    # (a) healthy -> PASSES
+    try:
+        capture_liveness_preflight(healthy(), "OFF", expected)
+        print("[selftest] (a) healthy manifest        -> PASS (proceeds)")
+    except CaptureLivenessError as e:
+        ok = False
+        print("[selftest] (a) healthy manifest        -> UNEXPECTED ABORT: %s" % e)
+
+    # (b) zero-image -> ABORTS (engine_capture_fired reason first)
+    try:
+        capture_liveness_preflight(zero_image(), "ON", expected)
+        ok = False
+        print("[selftest] (b) zero-image manifest     -> UNEXPECTED PASS")
+    except CaptureLivenessError as e:
+        want = "engine_capture_fired=False" in str(e) and "gate=ON" in str(e)
+        ok = ok and want
+        print("[selftest] (b) zero-image manifest     -> ABORT (%s) [%s]"
+              % (e, "reason OK" if want else "WRONG REASON"))
+
+    # (c) partial -> ABORTS naming the missing bookmark
+    try:
+        capture_liveness_preflight(partial(), "OFF", expected)
+        ok = False
+        print("[selftest] (c) partial manifest        -> UNEXPECTED PASS")
+    except CaptureLivenessError as e:
+        want = "bookmark=water_edge" in str(e) and "missing" in str(e)
+        ok = ok and want
+        print("[selftest] (c) partial manifest        -> ABORT (%s) [%s]"
+              % (e, "names missing bookmark" if want else "WRONG BOOKMARK"))
+
+    print("[selftest] RESULT: %s" % ("ALL PASS" if ok else "FAILED"))
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    if "--self-test" in sys.argv[1:]:
+        sys.exit(_selftest())
     sys.exit(main())
