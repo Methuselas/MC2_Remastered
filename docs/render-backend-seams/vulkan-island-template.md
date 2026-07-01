@@ -243,6 +243,11 @@ Run these on every island slice (they are also CI check-scripts):
 - `scripts/run_vulkan_probe.py [--validation sync]` — probe tokens all 1, zero validation errors (also builds/asserts the synthetic fixture `edgefog_fixture=1`)
 - `scripts/run_golden_parity.py <scene> MC2_<ISLAND_GATE>` — the integration parity oracle (§4b)
 
+**Subgraph rule:** a Vulkan subgraph may only fuse passes CONTIGUOUS in canonical order;
+adding a non-contiguous pass is a reorder experiment (scheduler/oracle + parity proof), not
+a subgraph expansion — see `docs/render-backend-seams/subgraph-contiguity-rule.md`
+(enforced by the `RenderCore/postprocess_subpass_order.h` constexpr guard).
+
 Cross-links: `docs/render-backend-seams/vulkan-readiness-audit-1.md` (layer ladder) ·
 `docs/render-backend-seams/nvidia-readiness-runbook.md` · `docs/tier1_env_vars.md`
 (register `MC2_<ISLAND>` + `MC2_<ISLAND_GATE>`).
