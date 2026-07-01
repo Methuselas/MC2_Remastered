@@ -65,6 +65,67 @@ bool ensure_volk_initialized() {
     return true;
 }
 
+// ============================================================================
+// VULKAN-VALIDATION-PRESETS-1: resolve MC2_VULKAN_VALIDATION from a presence
+// check into a selectable PRESET NAME that maps to a VkValidationFeatureEnableEXT
+// set. Backward compatible: unset/"0"/"off" -> validation OFF; "1"/"core"/""
+// (present-but-empty) -> core validation only (the historical bare "=1"). Other
+// presets ADD a single VkValidationFeatureEnableEXT that gets chained into the
+// instance create-info via VkValidationFeaturesEXT.pNext. Unknown value -> core
+// + warn (fail-soft). The chosen preset name is logged so it is visible at
+// startup. Everything here is inside #ifdef MC2_VULKAN (whole TU is).
+// ============================================================================
+
+// True when validation should be enabled at all (layer + messenger).
+// Populates `feats` with the extra VkValidationFeatureEnableEXT for the resolved
+// preset (may be empty for plain "core") and returns the canonical preset name
+// in `resolvedName`. Never throws; unknown -> core.
+bool resolve_validation_preset(std::vector<VkValidationFeatureEnableEXT>& feats,
+                               const char*& resolvedName) {
+    feats.clear();
+    resolvedName = "off";
+    const char* env = std::getenv("MC2_VULKAN_VALIDATION");
+    if (env == nullptr) return false; // unset -> OFF (unchanged behavior)
+
+    // Case-insensitive-ish compare on the small known set.
+    auto eq = [&](const char* s) { return std::strcmp(env, s) == 0; };
+
+    if (eq("0") || eq("off")) {
+        resolvedName = "off";
+        return false;
+    }
+    // Backward compat: bare "1", "core", or present-but-empty -> core only.
+    if (eq("1") || eq("core") || eq("")) {
+        resolvedName = "core";
+        return true;
+    }
+    if (eq("sync")) {
+        resolvedName = "sync";
+        feats.push_back(VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT);
+        return true;
+    }
+    if (eq("gpu-assisted")) {
+        resolvedName = "gpu-assisted";
+        feats.push_back(VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT);
+        feats.push_back(VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT);
+        return true;
+    }
+    if (eq("best-practices")) {
+        resolvedName = "best-practices";
+        feats.push_back(VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT);
+        return true;
+    }
+    if (eq("debug-printf")) {
+        resolvedName = "debug-printf";
+        feats.push_back(VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT);
+        return true;
+    }
+    // Unknown value: fail-soft to core + warn.
+    log("validation preset '%s' unrecognized; falling back to 'core'", env);
+    resolvedName = "core";
+    return true;
+}
+
 } // namespace
 
 // ============================================================================
@@ -689,11 +750,17 @@ VKAPI_ATTR VkBool32 VKAPI_CALL desc_debug_cb(
     VkDebugUtilsMessageTypeFlagsEXT /*types*/,
     const VkDebugUtilsMessengerCallbackDataEXT* pData,
     void* /*user*/) {
-    if (severity & (VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
-                    VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)) {
+    // VULKAN-VALIDATION-PRESETS-1: only ERROR severity is a hard failure that
+    // flips saw_error + emits the "VALIDATION:" token the harness counts.
+    // WARNING severity (e.g. best-practices advisories) is logged with a
+    // distinct, non-"VALIDATION:" prefix so it is visible but does NOT inflate
+    // the harness validation_errors count -- best-practices may warn and pass.
+    const char* msg = pData && pData->pMessage ? pData->pMessage : "(no message)";
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
         g_desc_validation_saw_error = true;
-        log("desc-probe: VALIDATION: %s",
-            pData && pData->pMessage ? pData->pMessage : "(no message)");
+        log("desc-probe: VALIDATION: %s", msg);
+    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        log("desc-probe: validation-warning: %s", msg);
     }
     return VK_FALSE;
 }
@@ -710,7 +777,10 @@ bool mc2_vulkan_probe_descriptors() {
     // ---- Optional validation layer + debug-utils messenger ------------------
     std::vector<const char*> layers;
     std::vector<const char*> instExts;
-    bool wantValidation = std::getenv("MC2_VULKAN_VALIDATION") != nullptr;
+    // VULKAN-VALIDATION-PRESETS-1: resolve the preset NAME -> feature set.
+    std::vector<VkValidationFeatureEnableEXT> valFeatures;
+    const char* valPreset = "off";
+    bool wantValidation = resolve_validation_preset(valFeatures, valPreset);
     if (wantValidation) {
         uint32_t layerCount = 0;
         vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
@@ -724,7 +794,8 @@ bool mc2_vulkan_probe_descriptors() {
         if (found) {
             layers.push_back(want);
             instExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-            log("desc-probe: validation layer %s enabled", want);
+            log("desc-probe: validation layer %s enabled (preset=%s, +%zu feature(s))",
+                want, valPreset, valFeatures.size());
         } else {
             wantValidation = false;
             log("desc-probe: validation requested but %s not available; continuing without", want);
@@ -738,6 +809,13 @@ bool mc2_vulkan_probe_descriptors() {
     app.pEngineName      = "MC2-GameOS";
     app.apiVersion       = VK_API_VERSION_1_1;
 
+    // VULKAN-VALIDATION-PRESETS-1: chain the enabled validation features into
+    // the instance create-info via pNext (only when the preset adds features).
+    VkValidationFeaturesEXT valFeaturesInfo{};
+    valFeaturesInfo.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    valFeaturesInfo.enabledValidationFeatureCount = static_cast<uint32_t>(valFeatures.size());
+    valFeaturesInfo.pEnabledValidationFeatures    = valFeatures.empty() ? nullptr : valFeatures.data();
+
     VkInstanceCreateInfo ici{};
     ici.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ici.pApplicationInfo        = &app;
@@ -745,6 +823,9 @@ bool mc2_vulkan_probe_descriptors() {
     ici.ppEnabledLayerNames     = layers.empty() ? nullptr : layers.data();
     ici.enabledExtensionCount   = static_cast<uint32_t>(instExts.size());
     ici.ppEnabledExtensionNames = instExts.empty() ? nullptr : instExts.data();
+    if (wantValidation && !valFeatures.empty()) {
+        ici.pNext = &valFeaturesInfo; // chain; nothing else in pNext here
+    }
 
     VkInstance instance = VK_NULL_HANDLE;
     VkResult r = vkCreateInstance(&ici, nullptr, &instance);
@@ -983,11 +1064,14 @@ VKAPI_ATTR VkBool32 VKAPI_CALL img_debug_cb(
     VkDebugUtilsMessageTypeFlagsEXT /*types*/,
     const VkDebugUtilsMessengerCallbackDataEXT* pData,
     void* /*user*/) {
-    if (severity & (VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
-                    VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)) {
+    // VULKAN-VALIDATION-PRESETS-1: ERROR -> hard fail (+ "VALIDATION:" token);
+    // WARNING -> visible but non-failing (distinct prefix). See desc_debug_cb.
+    const char* msg = pData && pData->pMessage ? pData->pMessage : "(no message)";
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
         g_img_validation_saw_error = true;
-        log("img-probe: VALIDATION: %s",
-            pData && pData->pMessage ? pData->pMessage : "(no message)");
+        log("img-probe: VALIDATION: %s", msg);
+    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        log("img-probe: validation-warning: %s", msg);
     }
     return VK_FALSE;
 }
@@ -1005,7 +1089,10 @@ bool mc2_vulkan_probe_sampled_image() {
     // ---- Optional validation layer + debug-utils messenger ------------------
     std::vector<const char*> layers;
     std::vector<const char*> instExts;
-    bool wantValidation = std::getenv("MC2_VULKAN_VALIDATION") != nullptr;
+    // VULKAN-VALIDATION-PRESETS-1: resolve the preset NAME -> feature set.
+    std::vector<VkValidationFeatureEnableEXT> valFeatures;
+    const char* valPreset = "off";
+    bool wantValidation = resolve_validation_preset(valFeatures, valPreset);
     if (wantValidation) {
         uint32_t layerCount = 0;
         vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
@@ -1019,7 +1106,8 @@ bool mc2_vulkan_probe_sampled_image() {
         if (found) {
             layers.push_back(want);
             instExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-            log("img-probe: validation layer %s enabled", want);
+            log("img-probe: validation layer %s enabled (preset=%s, +%zu feature(s))",
+                want, valPreset, valFeatures.size());
         } else {
             wantValidation = false;
             log("img-probe: validation requested but %s not available; continuing without", want);
@@ -1033,6 +1121,12 @@ bool mc2_vulkan_probe_sampled_image() {
     app.pEngineName      = "MC2-GameOS";
     app.apiVersion       = VK_API_VERSION_1_1;
 
+    // VULKAN-VALIDATION-PRESETS-1: chain enabled validation features via pNext.
+    VkValidationFeaturesEXT valFeaturesInfo{};
+    valFeaturesInfo.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    valFeaturesInfo.enabledValidationFeatureCount = static_cast<uint32_t>(valFeatures.size());
+    valFeaturesInfo.pEnabledValidationFeatures    = valFeatures.empty() ? nullptr : valFeatures.data();
+
     VkInstanceCreateInfo ici{};
     ici.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ici.pApplicationInfo        = &app;
@@ -1040,6 +1134,9 @@ bool mc2_vulkan_probe_sampled_image() {
     ici.ppEnabledLayerNames     = layers.empty() ? nullptr : layers.data();
     ici.enabledExtensionCount   = static_cast<uint32_t>(instExts.size());
     ici.ppEnabledExtensionNames = instExts.empty() ? nullptr : instExts.data();
+    if (wantValidation && !valFeatures.empty()) {
+        ici.pNext = &valFeaturesInfo; // chain; nothing else in pNext here
+    }
 
     VkInstance instance = VK_NULL_HANDLE;
     VkResult r = vkCreateInstance(&ici, nullptr, &instance);
@@ -1383,8 +1480,13 @@ bool mc2_vulkan_probe() {
     if (!ensure_volk_initialized()) return false;
 
     // ---- Optional validation layer (MC2_VULKAN_VALIDATION env) --------------
+    // VULKAN-VALIDATION-PRESETS-1: resolve the preset NAME -> feature set.
     std::vector<const char*> layers;
-    if (std::getenv("MC2_VULKAN_VALIDATION")) {
+    std::vector<const char*> instExts;
+    std::vector<VkValidationFeatureEnableEXT> valFeatures;
+    const char* valPreset = "off";
+    bool wantValidation = resolve_validation_preset(valFeatures, valPreset);
+    if (wantValidation) {
         uint32_t layerCount = 0;
         vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
         std::vector<VkLayerProperties> avail(layerCount);
@@ -1396,8 +1498,11 @@ bool mc2_vulkan_probe() {
         }
         if (found) {
             layers.push_back(want);
-            log("validation layer %s enabled", want);
+            if (!valFeatures.empty()) instExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            log("validation layer %s enabled (preset=%s, +%zu feature(s))",
+                want, valPreset, valFeatures.size());
         } else {
+            wantValidation = false;
             log("validation requested but %s not available; continuing without", want);
         }
     }
@@ -1411,11 +1516,22 @@ bool mc2_vulkan_probe() {
     app.engineVersion      = VK_MAKE_VERSION(0, 5, 0);
     app.apiVersion         = VK_API_VERSION_1_1;
 
+    // VULKAN-VALIDATION-PRESETS-1: chain enabled validation features via pNext.
+    VkValidationFeaturesEXT valFeaturesInfo{};
+    valFeaturesInfo.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    valFeaturesInfo.enabledValidationFeatureCount = static_cast<uint32_t>(valFeatures.size());
+    valFeaturesInfo.pEnabledValidationFeatures    = valFeatures.empty() ? nullptr : valFeatures.data();
+
     VkInstanceCreateInfo ici{};
     ici.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ici.pApplicationInfo        = &app;
     ici.enabledLayerCount       = static_cast<uint32_t>(layers.size());
     ici.ppEnabledLayerNames     = layers.empty() ? nullptr : layers.data();
+    ici.enabledExtensionCount   = static_cast<uint32_t>(instExts.size());
+    ici.ppEnabledExtensionNames = instExts.empty() ? nullptr : instExts.data();
+    if (wantValidation && !valFeatures.empty()) {
+        ici.pNext = &valFeaturesInfo; // chain; nothing else in pNext here
+    }
 
     VkInstance instance = VK_NULL_HANDLE;
     VkResult r = vkCreateInstance(&ici, nullptr, &instance);
