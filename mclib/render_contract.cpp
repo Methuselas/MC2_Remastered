@@ -1061,6 +1061,96 @@ extern "C" unsigned long mc2_ambient_probe_samples()  { return g_ambientProbeSam
 extern "C" unsigned long mc2_fbo_mismatch_count()     { return g_fboMismatchCount;     }
 extern "C" unsigned long mc2_fbo_samples()            { return g_fboSamples;           }
 
+// --- UI-PASS-DRAWCOUNT-AMBIENT-MEASURE-1 ------------------------------------------
+// Observe-only telemetry for the EXISTING PassIdentity::UI RAII scope
+// (gosRenderer::flushHUDBatch). Measures (a) per-frame UI draw count by kind and
+// (b) a read-only sample of the UI pass's ambient ENTRY state, so a LATER slice can
+// promote UI from DO_NOT_MODEL -> modeled. Gate: MC2_UI_PASS_MEASURE (default-OFF).
+// The gate is enforced at the flushHUDBatch call sites (byte-identical when unset);
+// these entry points reuse the anon-namespace sampleColorMask()/... helpers above so
+// all glGet stays in this GL-aware TU. Read-only (glGet + count) — NO GL state change.
+//
+// UI entry ambient is DO_NOT_MODEL today; the "consistent" flag tests whether ONE
+// honest UI ambient contract is DECLARABLE: we latch the first-frame sample and count
+// any later frame whose entry sample differs (drift). driftCount==0 across a run =>
+// entry state is stable frame-to-frame => declarable.
+namespace {
+// Per-frame draw counters (reset at each UI pass entry sample).
+unsigned long g_uiDrawTotal = 0;   // last completed frame's total UI draws
+unsigned long g_uiDrawQuad  = 0;
+unsigned long g_uiDrawLine  = 0;
+unsigned long g_uiDrawTri   = 0;
+unsigned long g_uiDrawText  = 0;
+// Live accumulators for the frame currently being replayed.
+unsigned long g_uiDrawTotalCur = 0;
+unsigned long g_uiDrawQuadCur  = 0;
+unsigned long g_uiDrawLineCur  = 0;
+unsigned long g_uiDrawTriCur   = 0;
+unsigned long g_uiDrawTextCur  = 0;
+// Entry ambient sample (numeric enum codes; see ambient_contract.h enums).
+unsigned long g_uiEntrySamples   = 0;   // # of UI pass entries sampled (proves it ran)
+unsigned long g_uiEntryColorMask = 0;   // ColorMaskState (0=Inherit/mixed,1=AllOn,2=AllOff)
+unsigned long g_uiEntryDepthFunc = 0;   // DepthFuncState (0=Inherit,1=SceneGEqual,2=ShadowLess)
+unsigned long g_uiEntryBlend     = 0;   // BlendState (1=On,2=Off)
+unsigned long g_uiEntryDepthWrite= 0;   // DepthWriteState (1=On,2=Off)
+bool          g_uiEntryLatched   = false;
+unsigned long g_uiFirstColorMask = 0, g_uiFirstDepthFunc = 0,
+              g_uiFirstBlend = 0, g_uiFirstDepthWrite = 0;
+unsigned long g_uiEntryDriftCount = 0;  // # entries differing from the first latched sample
+} // namespace
+
+// Called ONCE at UI pass entry (flushHUDBatch, before the replay loop). Samples the
+// ambient axes the ambient contract tracks + rolls the prior frame's draw tallies into
+// the reported (last-completed) counters and resets the live accumulators.
+extern "C" void mc2_ui_pass_sample_entry_ambient() {
+    // Roll previous frame's live tallies into the reported snapshot.
+    g_uiDrawTotal = g_uiDrawTotalCur; g_uiDrawTotalCur = 0;
+    g_uiDrawQuad  = g_uiDrawQuadCur;  g_uiDrawQuadCur  = 0;
+    g_uiDrawLine  = g_uiDrawLineCur;  g_uiDrawLineCur  = 0;
+    g_uiDrawTri   = g_uiDrawTriCur;   g_uiDrawTriCur   = 0;
+    g_uiDrawText  = g_uiDrawTextCur;  g_uiDrawTextCur  = 0;
+
+    ++g_uiEntrySamples;
+    const unsigned long cm = (unsigned long)sampleColorMask();
+    const unsigned long df = (unsigned long)sampleDepthFunc();
+    const unsigned long bl = (unsigned long)sampleBlend();
+    const unsigned long dw = (unsigned long)sampleDepthWrite();
+    g_uiEntryColorMask = cm; g_uiEntryDepthFunc = df;
+    g_uiEntryBlend = bl;     g_uiEntryDepthWrite = dw;
+    if (!g_uiEntryLatched) {
+        g_uiFirstColorMask = cm; g_uiFirstDepthFunc = df;
+        g_uiFirstBlend = bl;     g_uiFirstDepthWrite = dw;
+        g_uiEntryLatched = true;
+    } else if (cm != g_uiFirstColorMask || df != g_uiFirstDepthFunc ||
+               bl != g_uiFirstBlend    || dw != g_uiFirstDepthWrite) {
+        ++g_uiEntryDriftCount;
+    }
+}
+
+// Called per replayed hudBatch_ draw (kind: 0=quad,1=line,2=tri,3=text).
+extern "C" void mc2_ui_pass_note_draw(unsigned kind) {
+    ++g_uiDrawTotalCur;
+    switch (kind) {
+        case 0: ++g_uiDrawQuadCur; break;
+        case 1: ++g_uiDrawLineCur; break;
+        case 2: ++g_uiDrawTriCur;  break;
+        case 3: ++g_uiDrawTextCur; break;
+        default: break;
+    }
+}
+
+extern "C" unsigned long mc2_ui_pass_draw_count()        { return g_uiDrawTotal; }
+extern "C" unsigned long mc2_ui_pass_draw_quads()        { return g_uiDrawQuad;  }
+extern "C" unsigned long mc2_ui_pass_draw_lines()        { return g_uiDrawLine;  }
+extern "C" unsigned long mc2_ui_pass_draw_tris()         { return g_uiDrawTri;   }
+extern "C" unsigned long mc2_ui_pass_draw_text()         { return g_uiDrawText;  }
+extern "C" unsigned long mc2_ui_pass_entry_samples()     { return g_uiEntrySamples;    }
+extern "C" unsigned long mc2_ui_pass_entry_colormask()   { return g_uiEntryColorMask;  }
+extern "C" unsigned long mc2_ui_pass_entry_depthfunc()   { return g_uiEntryDepthFunc;  }
+extern "C" unsigned long mc2_ui_pass_entry_blend()       { return g_uiEntryBlend;      }
+extern "C" unsigned long mc2_ui_pass_entry_depthwrite()  { return g_uiEntryDepthWrite; }
+extern "C" unsigned long mc2_ui_pass_entry_drift()       { return g_uiEntryDriftCount; }
+
 void beginPass(RenderCore::RenderPassId id) {
     ambientProbeAtPassBegin(id);   // self-gated (MC2_AMBIENT_PROBE); runs before order gate
     if (!s_frame.orderEnabled) return;

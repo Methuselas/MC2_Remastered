@@ -7511,6 +7511,11 @@ void gosRenderer::replayTextQuads(const HudDrawCall& call)
     setRenderState(gos_State_Texture, prev_texture);
 }
 
+// UI-PASS-DRAWCOUNT-AMBIENT-MEASURE-1: observe-only telemetry entry points, defined in
+// mclib/render_contract.cpp (GL-aware TU; reuses the ambient-probe sample helpers).
+extern "C" void mc2_ui_pass_sample_entry_ambient();
+extern "C" void mc2_ui_pass_note_draw(unsigned kind);
+
 void gosRenderer::flushHUDBatch()
 {
     if (hudBatch_.empty()) {
@@ -7584,6 +7589,18 @@ void gosRenderer::flushHUDBatch()
     // but leaves VAO 0 bound — rebind our VAO so glVertexAttribPointer works.
     glBindVertexArray(gVAO);
 
+    // UI-PASS-DRAWCOUNT-AMBIENT-MEASURE-1: observe-only telemetry inside the existing
+    // PassIdentity::UI RAII scope. Gate MC2_UI_PASS_MEASURE (default-OFF) — when unset
+    // neither the entry sample nor the per-draw note fires, so the HUD replay is
+    // byte-identical. Read-only glGet inside mc2_ui_pass_sample_entry_ambient() (samples
+    // the same ambient axes the ambient contract tracks: colorMask/depthFunc/blend/
+    // depthWrite); NO GL state change. Toward promoting UI DO_NOT_MODEL -> modeled.
+    static const bool s_uiPassMeasure = (::getenv("MC2_UI_PASS_MEASURE") != nullptr);
+    if (s_uiPassMeasure) {
+        // ONE ambient entry sample, taken after the VAO rebind, before the replay loop.
+        mc2_ui_pass_sample_entry_ambient();
+    }
+
     // Save pre-flush render state and projection
     uint32_t priorState[gos_MaxState];
     memcpy(priorState, renderStates_, sizeof(priorState));
@@ -7596,18 +7613,22 @@ void gosRenderer::flushHUDBatch()
 
         switch (call.kind) {
             case kHudQuadBatch:
+                if (s_uiPassMeasure) mc2_ui_pass_note_draw(0);
                 drawQuads(const_cast<gos_VERTEX*>(call.vertices.data()),
                           (int)call.vertices.size());
                 break;
             case kHudLineBatch:
+                if (s_uiPassMeasure) mc2_ui_pass_note_draw(1);
                 drawLines(const_cast<gos_VERTEX*>(call.vertices.data()),
                           (int)call.vertices.size());
                 break;
             case kHudTriBatch:
+                if (s_uiPassMeasure) mc2_ui_pass_note_draw(2);
                 drawTris(const_cast<gos_VERTEX*>(call.vertices.data()),
                          (int)call.vertices.size());
                 break;
             case kHudTextQuadBatch:
+                if (s_uiPassMeasure) mc2_ui_pass_note_draw(3);
                 replayTextQuads(call);
                 break;
         }

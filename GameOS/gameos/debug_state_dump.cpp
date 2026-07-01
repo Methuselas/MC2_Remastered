@@ -42,6 +42,20 @@ extern "C" unsigned long mc2_framegraph_dryrun_observed();  // DRYRUN-OBSERVE-CO
 extern "C" unsigned long mc2_framegraph_dryrun_terrain_mutex();
 extern "C" unsigned long mc2_framegraph_dryrun_latch_miss();
 extern "C" unsigned long mc2_framegraph_dryrun_known_early_suppressed();
+// UI-PASS-DRAWCOUNT-AMBIENT-MEASURE-1: per-frame UI draw count + read-only ambient
+// entry sample for the existing PassIdentity::UI scope (mclib/render_contract.cpp).
+// Populated only under gate MC2_UI_PASS_MEASURE; all zero/Inherit when the gate is unset.
+extern "C" unsigned long mc2_ui_pass_draw_count();
+extern "C" unsigned long mc2_ui_pass_draw_quads();
+extern "C" unsigned long mc2_ui_pass_draw_lines();
+extern "C" unsigned long mc2_ui_pass_draw_tris();
+extern "C" unsigned long mc2_ui_pass_draw_text();
+extern "C" unsigned long mc2_ui_pass_entry_samples();
+extern "C" unsigned long mc2_ui_pass_entry_colormask();
+extern "C" unsigned long mc2_ui_pass_entry_depthfunc();
+extern "C" unsigned long mc2_ui_pass_entry_blend();
+extern "C" unsigned long mc2_ui_pass_entry_depthwrite();
+extern "C" unsigned long mc2_ui_pass_entry_drift();
 
 #include <chrono>
 #include <cstdlib>
@@ -315,6 +329,30 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "    \"indirect\": "      << RenderCore::framegraph::terrainPathCount(TP::IndirectBridge)  << ",\n";
         s << "    \"patch_stream\": "  << RenderCore::framegraph::terrainPathCount(TP::PatchStreamThin) << ",\n";
         s << "    \"legacy_mlr\": "    << RenderCore::framegraph::terrainPathCount(TP::LegacyMLR)       << "\n";
+        s << "  },\n";
+    }
+    // UI-PASS-DRAWCOUNT-AMBIENT-MEASURE-1: observe-only accounting for the existing
+    // PassIdentity::UI RAII scope (gosRenderer::flushHUDBatch). draw_count = last-completed
+    // frame's replayed hudBatch_ draws (by kind); entry_* = one read-only ambient sample
+    // taken at UI pass entry. entry_samples==0 => gate MC2_UI_PASS_MEASURE unset (or UI
+    // pass never fired). entry_drift = # of UI entries whose ambient sample differed from
+    // the first latched one; 0 across a run => UI entry ambient is stable frame-to-frame
+    // => DECLARABLE (the finding that unblocks promoting UI DO_NOT_MODEL -> modeled).
+    // Enum codes: colormask 0=Inherit/mixed 1=AllOn 2=AllOff; depthfunc 0=Inherit
+    // 1=SceneGEqual 2=ShadowLess; blend 1=On 2=Off; depthwrite 1=On 2=Off.
+    {
+        s << "  \"ui_pass\": {\n";
+        s << "    \"draw_count\": " << mc2_ui_pass_draw_count() << ",\n";
+        s << "    \"draw_quads\": " << mc2_ui_pass_draw_quads() << ",\n";
+        s << "    \"draw_lines\": " << mc2_ui_pass_draw_lines() << ",\n";
+        s << "    \"draw_tris\": "  << mc2_ui_pass_draw_tris()  << ",\n";
+        s << "    \"draw_text\": "  << mc2_ui_pass_draw_text()  << ",\n";
+        s << "    \"entry_samples\": "    << mc2_ui_pass_entry_samples()    << ",\n";
+        s << "    \"entry_colormask\": "  << mc2_ui_pass_entry_colormask()  << ",\n";
+        s << "    \"entry_depthfunc\": "  << mc2_ui_pass_entry_depthfunc()  << ",\n";
+        s << "    \"entry_blend\": "      << mc2_ui_pass_entry_blend()      << ",\n";
+        s << "    \"entry_depthwrite\": " << mc2_ui_pass_entry_depthwrite() << ",\n";
+        s << "    \"entry_drift\": "      << mc2_ui_pass_entry_drift()      << "\n";
         s << "  },\n";
     }
     s << "  \"mission\": {\n";

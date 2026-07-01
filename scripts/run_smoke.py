@@ -1402,6 +1402,11 @@ def main():
                             # Without this in the allowlist Popen drops it and
                             # MC2_FRAMEGRAPH_EXECUTOR=1 smoke runs are inert.
                             "MC2_FRAMEGRAPH_EXECUTOR",
+                            # UI-PASS-DRAWCOUNT-AMBIENT-MEASURE-1: observe-only UI pass
+                            # draw-count + ambient entry sample. Without this in the
+                            # allowlist Popen drops it and the ui_pass dump block stays
+                            # zero/Inherit on gate-ON smoke runs.
+                            "MC2_UI_PASS_MEASURE",
                             # SMOKE-GATE-GUARD-1: frame-graph dryrun gate.
                             # Without this in the allowlist Popen drops it and
                             # MC2_FRAMEGRAPH_DRYRUN=1 smoke runs are inert.
