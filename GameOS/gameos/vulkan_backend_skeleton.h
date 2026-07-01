@@ -15,7 +15,14 @@
 
 #ifdef MC2_VULKAN
 
-#include <vulkan/vulkan.h>
+// VULKAN-VOLK-LOADER-1: route all Vulkan entry points through the volk
+// meta-loader instead of a hard link to vulkan-1.dll. volk.h defines
+// VK_NO_PROTOTYPES itself and includes the Vulkan headers, so we include it in
+// place of <vulkan/vulkan.h>. No Vulkan symbol resolves until volkInitialize()
+// (see the .cpp), which is the OpenGL-user-without-a-Vulkan-runtime fail-soft
+// path: if the loader/DLL is missing, volkInitialize() fails and every probe
+// returns false gracefully rather than failing to load the exe.
+#include <volk.h>
 
 // VULKAN-SHADER-TOOLCHAIN-1: fail-soft SPIR-V shader-module helpers.
 //

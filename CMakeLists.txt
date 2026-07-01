@@ -126,12 +126,21 @@ if(MC2_VULKAN)
         tools/vulkan_shader_probe_main.cpp
         GameOS/gameos/vulkan_backend_skeleton.cpp
         # VULKAN-VMA-INTEGRATION-1: single VMA_IMPLEMENTATION TU.
-        GameOS/gameos/vma_impl.cpp)
+        GameOS/gameos/vma_impl.cpp
+        # VULKAN-VOLK-LOADER-1: volk meta-loader (dynamic Vulkan load; no hard
+        # link to vulkan-1.dll). Compiled ONLY here under MC2_VULKAN.
+        3rdparty/volk/volk.c)
     target_include_directories(vulkan_shader_probe PRIVATE GameOS/gameos
         # VULKAN-VMA-INTEGRATION-1: vendored header-only VMA (3rdparty/vma).
-        "${CMAKE_SOURCE_DIR}/3rdparty/vma")
+        "${CMAKE_SOURCE_DIR}/3rdparty/vma"
+        # VULKAN-VOLK-LOADER-1: vendored volk (volk.h/volk.c).
+        "${CMAKE_SOURCE_DIR}/3rdparty/volk")
     target_compile_definitions(vulkan_shader_probe PRIVATE MC2_VULKAN)
-    target_link_libraries(vulkan_shader_probe PRIVATE Vulkan::Vulkan)
+    # VULKAN-VOLK-LOADER-1: link Vulkan HEADERS only -- volk owns runtime
+    # dispatch via LoadLibrary("vulkan-1.dll"), so we must NOT link the loader
+    # import lib (Vulkan::Vulkan). Vulkan::Headers gives include paths with no
+    # link dependency, which is exactly the point of the volk indirection.
+    target_link_libraries(vulkan_shader_probe PRIVATE Vulkan::Headers)
     if(TARGET mc2_vulkan_shaders)
         add_dependencies(vulkan_shader_probe mc2_vulkan_shaders)
     endif()

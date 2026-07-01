@@ -89,6 +89,9 @@ if(MC2_VULKAN)
     list(APPEND SOURCES vulkan_backend_skeleton.cpp)
     # VULKAN-VMA-INTEGRATION-1: single VMA_IMPLEMENTATION TU (header-only lib).
     list(APPEND SOURCES vma_impl.cpp)
+    # VULKAN-VOLK-LOADER-1: volk meta-loader (dynamic Vulkan load; no hard link
+    # to vulkan-1.dll). Only compiled when MC2_VULKAN=ON.
+    list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/3rdparty/volk/volk.c")
 endif()
 
 set_source_files_properties(
@@ -119,10 +122,14 @@ target_link_libraries(gameos PRIVATE rendercore)
 # VULKAN-BACKEND-SKELETON-1: link the Vulkan loader + define MC2_VULKAN only
 # when the option is ON. gameos_editor gets the same treatment below.
 if(MC2_VULKAN)
-    target_link_libraries(gameos PRIVATE Vulkan::Vulkan)
+    # VULKAN-VOLK-LOADER-1: headers only -- volk loads vulkan-1.dll at runtime,
+    # so we must NOT link the loader import lib (Vulkan::Vulkan).
+    target_link_libraries(gameos PRIVATE Vulkan::Headers)
     target_compile_definitions(gameos PRIVATE MC2_VULKAN)
     # VULKAN-VMA-INTEGRATION-1: vendored header-only VMA (3rdparty/vma).
     target_include_directories(gameos PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vma")
+    # VULKAN-VOLK-LOADER-1: vendored volk (volk.h/volk.c).
+    target_include_directories(gameos PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/volk")
 endif()
 
 # VULKAN-SHADER-TOOLCHAIN-1: compile the trivial fullscreen GLSL vert/frag to
@@ -181,10 +188,13 @@ list(REMOVE_ITEM GAMEOS_EDITOR_SOURCES gos_render.cpp)
 add_library(gameos_editor ${GAMEOS_EDITOR_SOURCES})
 target_link_libraries(gameos_editor PRIVATE rendercore)
 if(MC2_VULKAN)
-    target_link_libraries(gameos_editor PRIVATE Vulkan::Vulkan)
+    # VULKAN-VOLK-LOADER-1: headers only -- volk owns runtime dispatch.
+    target_link_libraries(gameos_editor PRIVATE Vulkan::Headers)
     target_compile_definitions(gameos_editor PRIVATE MC2_VULKAN)
     # VULKAN-VMA-INTEGRATION-1: vendored header-only VMA (3rdparty/vma).
     target_include_directories(gameos_editor PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/vma")
+    # VULKAN-VOLK-LOADER-1: vendored volk (volk.h/volk.c).
+    target_include_directories(gameos_editor PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/volk")
 endif()
 
 add_library(gameos_main ${MAIN_SRC})

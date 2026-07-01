@@ -7,7 +7,9 @@
 
 #ifdef MC2_VULKAN
 
-#include <vulkan/vulkan.h>
+// VULKAN-VOLK-LOADER-1: volk owns Vulkan dispatch (dynamic load; no hard link to
+// vulkan-1.dll). volk.h defines VK_NO_PROTOTYPES and includes the Vulkan headers.
+#include <volk.h>
 
 // VULKAN-VMA-INTEGRATION-1: AMD Vulkan Memory Allocator (header-only). The
 // single VMA_IMPLEMENTATION TU is vma_impl.cpp; here we only pull declarations.
@@ -39,6 +41,28 @@ void log(const char* fmt, ...) {
     std::vfprintf(stderr, fmt, ap);
     std::fprintf(stderr, "\n");
     va_end(ap);
+}
+
+// VULKAN-VOLK-LOADER-1: bring up the volk meta-loader exactly once. This is the
+// single place the Vulkan runtime is opened; volkInitialize() dynamically loads
+// vulkan-1.dll (via LoadLibrary) and resolves vkGetInstanceProcAddr -- there is
+// no static link to the loader. If it fails (no/broken Vulkan runtime -- the
+// OpenGL-user path) we log + return false and every probe fails soft, so the
+// exe still runs. After a VkInstance is created, callers must volkLoadInstance()
+// (and volkLoadDevice() after a VkDevice) to resolve the rest of the dispatch.
+bool ensure_volk_initialized() {
+    static int state = 0; // 0 = untried, 1 = ok, -1 = failed
+    if (state == 1) return true;
+    if (state == -1) return false;
+    VkResult r = volkInitialize();
+    if (r != VK_SUCCESS) {
+        log("volkInitialize() failed (VkResult=%d) -- no Vulkan runtime/loader. "
+            "This is the expected OpenGL-only path; Vulkan probes fail soft.", (int)r);
+        state = -1;
+        return false;
+    }
+    state = 1;
+    return true;
 }
 
 } // namespace
@@ -95,6 +119,9 @@ void mc2_vulkan_free_shader(VkDevice device, VkShaderModule module) {
 }
 
 bool mc2_vulkan_probe_shaders(const char* spvDir) {
+    // VULKAN-VOLK-LOADER-1: open the Vulkan runtime via volk before any vk call.
+    if (!ensure_volk_initialized()) return false;
+
     // ---- VkInstance (headless; no surface/swapchain) ------------------------
     VkApplicationInfo app{};
     app.sType            = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -112,6 +139,8 @@ bool mc2_vulkan_probe_shaders(const char* spvDir) {
         log("shader-probe: vkCreateInstance failed (VkResult=%d). fail-soft.", (int)r);
         return false;
     }
+    // VULKAN-VOLK-LOADER-1: resolve instance-level dispatch through volk.
+    volkLoadInstance(instance);
 
     // ---- Pick first physical device -----------------------------------------
     uint32_t devCount = 0;
@@ -153,6 +182,8 @@ bool mc2_vulkan_probe_shaders(const char* spvDir) {
         vkDestroyInstance(instance, nullptr);
         return false;
     }
+    // VULKAN-VOLK-LOADER-1: resolve device-level dispatch through volk.
+    volkLoadDevice(device);
 
     // ---- Load the compiled fullscreen .spv modules --------------------------
     std::string dir = spvDir ? spvDir : ".";
@@ -206,6 +237,9 @@ uint32_t find_mem_type(VkPhysicalDevice phys, uint32_t typeBits,
 } // namespace
 
 bool mc2_vulkan_probe_triangle(const char* spvDir) {
+    // VULKAN-VOLK-LOADER-1: open the Vulkan runtime via volk before any vk call.
+    if (!ensure_volk_initialized()) return false;
+
     const uint32_t W = 64, H = 64;
     const VkFormat FMT = VK_FORMAT_R8G8B8A8_UNORM;
 
@@ -226,6 +260,8 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
         log("triangle-probe: vkCreateInstance failed (VkResult=%d). fail-soft.", (int)r);
         return false;
     }
+    // VULKAN-VOLK-LOADER-1: resolve instance-level dispatch through volk.
+    volkLoadInstance(instance);
 
     // ---- Physical device ----------------------------------------------------
     uint32_t devCount = 0;
@@ -274,6 +310,10 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
         vkDestroyInstance(instance, nullptr);
         return false;
     }
+    // VULKAN-VOLK-LOADER-1: resolve device-level dispatch through volk. Must
+    // precede vmaImportVulkanFunctionsFromVolk() below (it reads volk's device
+    // table for this VkDevice).
+    volkLoadDevice(device);
     VkQueue queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, gfxFamily, 0, &queue);
 
@@ -297,15 +337,29 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
     VkFence        fence   = VK_NULL_HANDLE;
 
     // ---- VMA allocator ------------------------------------------------------
-    // VULKAN-VMA-INTEGRATION-1: one allocator per device. Owns the offscreen
-    // image + readback buffer below. Statically linked Vulkan entry points
-    // (VMA_STATIC_VULKAN_FUNCTIONS=1 in vma_impl.cpp), so no fn-table plumbing.
+    // VULKAN-VMA-INTEGRATION-1 + VULKAN-VOLK-LOADER-1: one allocator per device.
+    // Owns the offscreen image + readback buffer below. Vulkan is now loaded
+    // dynamically by volk (VMA_STATIC_VULKAN_FUNCTIONS=0 in vma_impl.cpp), so
+    // VMA has no statically-linked prototypes to call -- it MUST be handed the
+    // volk-resolved function pointers. vmaImportVulkanFunctionsFromVolk() fills
+    // a VmaVulkanFunctions from volk's instance globals + this device's table
+    // (volkLoadDevice() above). Without this the allocator would deref null fn
+    // pointers and crash.
     {
         VmaAllocatorCreateInfo aci{};
         aci.physicalDevice   = phys;
         aci.device           = device;
         aci.instance         = instance;
         aci.vulkanApiVersion = VK_API_VERSION_1_1; // matches app.apiVersion above
+
+        VmaVulkanFunctions vkFuncs{};
+        r = vmaImportVulkanFunctionsFromVolk(&aci, &vkFuncs);
+        if (r != VK_SUCCESS) {
+            log("triangle-probe: vmaImportVulkanFunctionsFromVolk failed (%d). fail-soft.", (int)r);
+            goto done;
+        }
+        aci.pVulkanFunctions = &vkFuncs;
+
         r = vmaCreateAllocator(&aci, &allocator);
         if (r != VK_SUCCESS) {
             log("triangle-probe: vmaCreateAllocator failed (%d). fail-soft.", (int)r);
@@ -647,6 +701,10 @@ VKAPI_ATTR VkBool32 VKAPI_CALL desc_debug_cb(
 } // namespace
 
 bool mc2_vulkan_probe_descriptors() {
+    // VULKAN-VOLK-LOADER-1: open the Vulkan runtime via volk before any vk call
+    // (the validation-layer enumeration below is already an instance-level call).
+    if (!ensure_volk_initialized()) return false;
+
     g_desc_validation_saw_error = false;
 
     // ---- Optional validation layer + debug-utils messenger ------------------
@@ -694,6 +752,8 @@ bool mc2_vulkan_probe_descriptors() {
         log("desc-probe: vkCreateInstance failed (VkResult=%d). fail-soft.", (int)r);
         return false;
     }
+    // VULKAN-VOLK-LOADER-1: resolve instance-level dispatch through volk.
+    volkLoadInstance(instance);
 
     // ---- Debug messenger (only if validation enabled) -----------------------
     VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
@@ -758,6 +818,7 @@ bool mc2_vulkan_probe_descriptors() {
     VkDevice device = VK_NULL_HANDLE;
     r = vkCreateDevice(phys, &dci, nullptr, &device);
     if (r != VK_SUCCESS) {
+        // VULKAN-VOLK-LOADER-1: (device dispatch loaded below on success)
         log("desc-probe: vkCreateDevice failed (VkResult=%d). fail-soft.", (int)r);
         if (messenger) {
             auto d = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
@@ -766,6 +827,8 @@ bool mc2_vulkan_probe_descriptors() {
         vkDestroyInstance(instance, nullptr);
         return false;
     }
+    // VULKAN-VOLK-LOADER-1: resolve device-level dispatch through volk.
+    volkLoadDevice(device);
 
     // Everything past here is cleaned up via the single `done` epilogue.
     bool ok = false;
@@ -932,6 +995,9 @@ VKAPI_ATTR VkBool32 VKAPI_CALL img_debug_cb(
 } // namespace
 
 bool mc2_vulkan_probe_sampled_image() {
+    // VULKAN-VOLK-LOADER-1: open the Vulkan runtime via volk before any vk call.
+    if (!ensure_volk_initialized()) return false;
+
     g_img_validation_saw_error = false;
     const uint32_t W = 8, H = 8;
     const VkFormat FMT = VK_FORMAT_R8G8B8A8_UNORM;
@@ -981,6 +1047,8 @@ bool mc2_vulkan_probe_sampled_image() {
         log("img-probe: vkCreateInstance failed (VkResult=%d). fail-soft.", (int)r);
         return false;
     }
+    // VULKAN-VOLK-LOADER-1: resolve instance-level dispatch through volk.
+    volkLoadInstance(instance);
 
     // ---- Debug messenger (only if validation enabled) -----------------------
     VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
@@ -1058,6 +1126,8 @@ bool mc2_vulkan_probe_sampled_image() {
         vkDestroyInstance(instance, nullptr);
         return false;
     }
+    // VULKAN-VOLK-LOADER-1: resolve device-level dispatch through volk.
+    volkLoadDevice(device);
     VkQueue queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, gfxFamily, 0, &queue);
 
@@ -1306,6 +1376,12 @@ done:
 }
 
 bool mc2_vulkan_probe() {
+    // VULKAN-VOLK-LOADER-1: open the Vulkan runtime via volk before any vk call.
+    // This is the primary fail-soft gate: on an OpenGL-only machine with no
+    // Vulkan runtime, volkInitialize() fails here and the probe returns false
+    // cleanly (no crash, no missing-DLL load failure of the exe).
+    if (!ensure_volk_initialized()) return false;
+
     // ---- Optional validation layer (MC2_VULKAN_VALIDATION env) --------------
     std::vector<const char*> layers;
     if (std::getenv("MC2_VULKAN_VALIDATION")) {
@@ -1347,6 +1423,8 @@ bool mc2_vulkan_probe() {
         log("vkCreateInstance failed (VkResult=%d) -- no loader/ICD or unsupported. fail-soft.", (int)r);
         return false;
     }
+    // VULKAN-VOLK-LOADER-1: resolve instance-level dispatch through volk.
+    volkLoadInstance(instance);
 
     // ---- Enumerate physical devices -----------------------------------------
     uint32_t devCount = 0;

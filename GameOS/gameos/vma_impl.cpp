@@ -10,10 +10,21 @@
 
 #ifdef MC2_VULKAN
 
-// We link Vulkan::Vulkan statically (the SDK loader import lib), so let VMA call
-// the core Vulkan entry points directly rather than fetching them at runtime.
-#define VMA_STATIC_VULKAN_FUNCTIONS  1
-#define VMA_DYNAMIC_VULKAN_FUNCTIONS 0
+// VULKAN-VOLK-LOADER-1: Vulkan is dynamically loaded by the volk meta-loader
+// (no hard link to vulkan-1.dll). volk.h MUST be included in this VMA
+// implementation TU, and BEFORE vk_mem_alloc.h, for two reasons:
+//   1) volk.h defines VK_NO_PROTOTYPES, so there are NO statically-linked
+//      Vulkan prototypes for VMA to bind to -- static resolution is impossible.
+//   2) VMA compiles vmaImportVulkanFunctionsFromVolk() only when VOLK_HEADER_VERSION
+//      is visible here (it is guarded by `#ifdef VOLK_HEADER_VERSION`). The
+//      triangle probe uses that helper to hand VMA volk's loaded pointers.
+#include <volk.h>
+
+// With volk owning dispatch we can NOT use VMA's static entry points. Use the
+// dynamic path: VMA takes its function pointers from the VmaVulkanFunctions we
+// populate from volk (via vmaImportVulkanFunctionsFromVolk) at allocator create.
+#define VMA_STATIC_VULKAN_FUNCTIONS  0
+#define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 
 // VMA is generated code and trips a handful of MSVC /W4 warnings (unreferenced
 // params, nameless struct/union, conditional-expression-is-constant, unused
