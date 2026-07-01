@@ -16,9 +16,12 @@
 #include "vk_mem_alloc.h"
 
 #include <cstdarg>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -295,6 +298,32 @@ uint32_t find_mem_type(VkPhysicalDevice phys, uint32_t typeBits,
     return UINT32_MAX;
 }
 
+// VULKAN-PIPELINE-CACHE-1: resolve the on-disk pipeline-cache file path.
+// Directory from MC2_VULKAN_CACHE_DIR (default "debug_state/vulkan_cache"),
+// file "triangle_pipeline.cache". Uses std::filesystem so Windows/POSIX paths
+// both work. Never throws (filesystem ops are wrapped in the callers).
+std::filesystem::path pipeline_cache_path() {
+    const char* dirEnv = std::getenv("MC2_VULKAN_CACHE_DIR");
+    std::filesystem::path dir = (dirEnv && *dirEnv) ? dirEnv : "debug_state/vulkan_cache";
+    return dir / "triangle_pipeline.cache";
+}
+
+// Read the whole cache file (binary) if present. Returns empty on any error/
+// absence -- an empty vector means "cold cache" and is not a failure.
+std::vector<char> read_pipeline_cache_file(const std::filesystem::path& p) {
+    std::vector<char> bytes;
+    std::error_code ec;
+    if (!std::filesystem::exists(p, ec) || ec) return bytes;
+    std::ifstream f(p, std::ios::binary | std::ios::ate);
+    if (!f) return bytes;
+    std::streamoff size = f.tellg();
+    if (size <= 0) return bytes;
+    bytes.resize(static_cast<size_t>(size));
+    f.seekg(0);
+    if (!f.read(bytes.data(), size)) bytes.clear();
+    return bytes;
+}
+
 } // namespace
 
 bool mc2_vulkan_probe_triangle(const char* spvDir) {
@@ -396,6 +425,32 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
     VkCommandPool  cpool   = VK_NULL_HANDLE;
     VkCommandBuffer cbuf   = VK_NULL_HANDLE;
     VkFence        fence   = VK_NULL_HANDLE;
+    // VULKAN-PIPELINE-CACHE-1: persistent pipeline cache (seeded from disk if a
+    // prior blob exists, written back on teardown). Fail-soft: on any create
+    // failure this stays VK_NULL_HANDLE and the probe continues with a cold
+    // (uncached) pipeline build.
+    VkPipelineCache pipeCache = VK_NULL_HANDLE;
+
+    // ---- Pipeline cache (seed from disk if present) -------------------------
+    // VULKAN-PIPELINE-CACHE-1: read the on-disk blob (empty == cold), build the
+    // create-info with initialData, and create the cache. Any non-VK_SUCCESS
+    // logs + leaves pipeCache VK_NULL_HANDLE (do NOT abort the probe).
+    {
+        std::vector<char> seed = read_pipeline_cache_file(pipeline_cache_path());
+        VkPipelineCacheCreateInfo pcci{};
+        pcci.sType           = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+        pcci.initialDataSize = seed.size();
+        pcci.pInitialData    = seed.empty() ? nullptr : seed.data();
+        VkResult cr = vkCreatePipelineCache(device, &pcci, nullptr, &pipeCache);
+        if (cr != VK_SUCCESS) {
+            log("triangle-probe: vkCreatePipelineCache failed (%d); continuing with no cache. fail-soft.", (int)cr);
+            pipeCache = VK_NULL_HANDLE;
+        } else if (seed.empty()) {
+            log("triangle-probe: pipeline cache -- no prior cache (cold build).");
+        } else {
+            log("triangle-probe: pipeline cache -- loaded %zu bytes (warm).", seed.size());
+        }
+    }
 
     // ---- VMA allocator ------------------------------------------------------
     // VULKAN-VMA-INTEGRATION-1 + VULKAN-VOLK-LOADER-1: one allocator per device.
@@ -582,7 +637,9 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
         gp.layout              = playout;
         gp.renderPass          = rpass;
         gp.subpass             = 0;
-        r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &gp, nullptr, &pipe);
+        // VULKAN-PIPELINE-CACHE-1: pass the persistent cache (may be
+        // VK_NULL_HANDLE if seeding failed -- equivalent to no cache).
+        r = vkCreateGraphicsPipelines(device, pipeCache, 1, &gp, nullptr, &pipe);
         if (r != VK_SUCCESS) { log("triangle-probe: vkCreateGraphicsPipelines failed (%d). fail-soft.", (int)r); goto done; }
     }
 
@@ -705,6 +762,44 @@ bool mc2_vulkan_probe_triangle(const char* spvDir) {
     else    log("triangle-probe: FAIL -- pixel verify did not match expected.");
 
 done:
+    // VULKAN-PIPELINE-CACHE-1: write the cache back to disk before destroying it
+    // (and before the device). Two-call vkGetPipelineCacheData (size then data),
+    // create the dir if needed, write bytes. Fully fail-soft: any VkResult/IO
+    // error is logged and skipped -- never crashes the probe.
+    if (pipeCache != VK_NULL_HANDLE) {
+        size_t cacheSize = 0;
+        VkResult gr = vkGetPipelineCacheData(device, pipeCache, &cacheSize, nullptr);
+        if (gr != VK_SUCCESS && gr != VK_INCOMPLETE) {
+            log("triangle-probe: vkGetPipelineCacheData(size) failed (%d); not saving. fail-soft.", (int)gr);
+        } else if (cacheSize == 0) {
+            log("triangle-probe: pipeline cache empty (0 bytes); nothing to save.");
+        } else {
+            std::vector<char> blob(cacheSize);
+            gr = vkGetPipelineCacheData(device, pipeCache, &cacheSize, blob.data());
+            if (gr != VK_SUCCESS && gr != VK_INCOMPLETE) {
+                log("triangle-probe: vkGetPipelineCacheData(data) failed (%d); not saving. fail-soft.", (int)gr);
+            } else {
+                blob.resize(cacheSize); // honor the (possibly shrunk) returned size
+                std::filesystem::path cpath = pipeline_cache_path();
+                std::error_code ec;
+                std::filesystem::create_directories(cpath.parent_path(), ec);
+                if (ec) {
+                    log("triangle-probe: could not create cache dir '%s' (%s); not saving. fail-soft.",
+                        cpath.parent_path().string().c_str(), ec.message().c_str());
+                } else {
+                    std::ofstream f(cpath, std::ios::binary | std::ios::trunc);
+                    if (f && f.write(blob.data(), static_cast<std::streamsize>(blob.size()))) {
+                        log("triangle-probe: pipeline cache -- saved %zu bytes to '%s'.",
+                            blob.size(), cpath.string().c_str());
+                    } else {
+                        log("triangle-probe: failed writing pipeline cache to '%s'; fail-soft.",
+                            cpath.string().c_str());
+                    }
+                }
+            }
+        }
+        vkDestroyPipelineCache(device, pipeCache, nullptr);
+    }
     if (fence)   vkDestroyFence(device, fence, nullptr);
     if (cpool)   vkDestroyCommandPool(device, cpool, nullptr); // frees cbuf
     // VULKAN-VMA-INTEGRATION-1: VMA-owned buffer/image are destroyed with their
