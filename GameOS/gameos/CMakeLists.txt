@@ -121,6 +121,54 @@ if(MC2_VULKAN)
     target_compile_definitions(gameos PRIVATE MC2_VULKAN)
 endif()
 
+# VULKAN-SHADER-TOOLCHAIN-1: compile the trivial fullscreen GLSL vert/frag to
+# SPIR-V at build time -- ONLY when MC2_VULKAN=ON. OFF -> this target/step does
+# not exist (no SDK tool needed, default build byte-identical). Compiler
+# (glslangValidator or glslc) located via find_program from the Vulkan SDK;
+# if neither is found we warn + skip (don't hard-fail the ON build).
+if(MC2_VULKAN)
+    find_program(MC2_GLSLANG_VALIDATOR
+        NAMES glslangValidator
+        HINTS "${Vulkan_GLSLANG_VALIDATOR_EXECUTABLE}" ENV VULKAN_SDK
+        PATH_SUFFIXES Bin bin)
+    find_program(MC2_GLSLC
+        NAMES glslc
+        HINTS ENV VULKAN_SDK
+        PATH_SUFFIXES Bin bin)
+
+    set(MC2_VK_SHADER_SRC_DIR "${CMAKE_SOURCE_DIR}/shaders/vulkan")
+    set(MC2_VK_SPV_OUT_DIR "${CMAKE_BINARY_DIR}/shaders/vulkan")
+    file(MAKE_DIRECTORY "${MC2_VK_SPV_OUT_DIR}")
+
+    set(MC2_VK_SPV_OUTPUTS "")
+    if(MC2_GLSLANG_VALIDATOR OR MC2_GLSLC)
+        foreach(_stage vert frag)
+            set(_src "${MC2_VK_SHADER_SRC_DIR}/fullscreen.${_stage}")
+            set(_spv "${MC2_VK_SPV_OUT_DIR}/fullscreen.${_stage}.spv")
+            if(MC2_GLSLANG_VALIDATOR)
+                add_custom_command(
+                    OUTPUT "${_spv}"
+                    COMMAND "${MC2_GLSLANG_VALIDATOR}" -V "${_src}" -o "${_spv}"
+                    DEPENDS "${_src}"
+                    COMMENT "SPIR-V (glslang): fullscreen.${_stage} -> ${_spv}"
+                    VERBATIM)
+            else()
+                add_custom_command(
+                    OUTPUT "${_spv}"
+                    COMMAND "${MC2_GLSLC}" "${_src}" -o "${_spv}"
+                    DEPENDS "${_src}"
+                    COMMENT "SPIR-V (glslc): fullscreen.${_stage} -> ${_spv}"
+                    VERBATIM)
+            endif()
+            list(APPEND MC2_VK_SPV_OUTPUTS "${_spv}")
+        endforeach()
+        add_custom_target(mc2_vulkan_shaders ALL DEPENDS ${MC2_VK_SPV_OUTPUTS})
+        message(STATUS "VULKAN-SHADER-TOOLCHAIN-1: SPIR-V compile ON -> ${MC2_VK_SPV_OUT_DIR}")
+    else()
+        message(WARNING "VULKAN-SHADER-TOOLCHAIN-1: neither glslangValidator nor glslc found (Vulkan SDK tools); skipping SPIR-V compile. Shader probe will fail-soft.")
+    endif()
+endif()
+
 # gameos_editor: same sources as gameos minus gos_render.cpp (the GL
 # renderer main). The MC2 Mission Editor (EditRel) links this instead of
 # gameos to avoid pulling in a second renderer init. From engine-standalone PR #36.

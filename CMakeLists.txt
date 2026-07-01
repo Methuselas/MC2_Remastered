@@ -117,6 +117,22 @@ if(MC2_VULKAN)
     message(STATUS "MC2_VULKAN=ON -- Vulkan found: ${Vulkan_LIBRARY} (include ${Vulkan_INCLUDE_DIR})")
 endif()
 
+# VULKAN-SHADER-TOOLCHAIN-1: standalone headless probe harness (ON only).
+# Links ONLY the Vulkan loader + the skeleton TU -- no GL/SDL/window/game.
+# Verifies the SPIR-V shader-module load path against the compiled .spv.
+# OFF -> target does not exist.
+if(MC2_VULKAN)
+    add_executable(vulkan_shader_probe
+        tools/vulkan_shader_probe_main.cpp
+        GameOS/gameos/vulkan_backend_skeleton.cpp)
+    target_include_directories(vulkan_shader_probe PRIVATE GameOS/gameos)
+    target_compile_definitions(vulkan_shader_probe PRIVATE MC2_VULKAN)
+    target_link_libraries(vulkan_shader_probe PRIVATE Vulkan::Vulkan)
+    if(TARGET mc2_vulkan_shaders)
+        add_dependencies(vulkan_shader_probe mc2_vulkan_shaders)
+    endif()
+endif()
+
 if(MC2_ASAN)
     if(NOT MSVC)
         message(FATAL_ERROR "MC2_ASAN is only wired for MSVC. Use -fsanitize=address manually on other toolchains.")

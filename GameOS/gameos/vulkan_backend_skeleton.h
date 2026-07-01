@@ -15,6 +15,25 @@
 
 #ifdef MC2_VULKAN
 
+#include <vulkan/vulkan.h>
+
+// VULKAN-SHADER-TOOLCHAIN-1: fail-soft SPIR-V shader-module helpers.
+//
+// mc2_vulkan_load_spv(): reads a .spv file, vkCreateShaderModule. Returns
+// VK_NULL_HANDLE on ANY error (missing file, bad size, create fail) -- logged.
+// mc2_vulkan_free_shader(): vkDestroyShaderModule (no-op on VK_NULL_HANDLE).
+// No pipeline, no render -- module create/destroy only.
+VkShaderModule mc2_vulkan_load_spv(VkDevice device, const char* path);
+void mc2_vulkan_free_shader(VkDevice device, VkShaderModule module);
+
+// VULKAN-SHADER-TOOLCHAIN-1: probe extension. Creates a minimal headless
+// VkDevice (no surface/swapchain), loads the compiled fullscreen.vert.spv +
+// fullscreen.frag.spv into VkShaderModules, reports, destroys everything.
+// Fail-soft: logs + returns false on any error. spvDir = directory holding the
+// compiled .spv files (build output). Runs only from mc2_vulkan_probe_if_env
+// when MC2_VULKAN_PROBE is set.
+bool mc2_vulkan_probe_shaders(const char* spvDir);
+
 // Returns true if a VkInstance was created, at least one physical device was
 // enumerated, and the capability dump completed. Fail-soft: logs + returns
 // false on any error.
