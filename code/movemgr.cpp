@@ -38,6 +38,11 @@ static long s_pathQueuedThisFrame = 0;
 // Telemetry only; only read/written under the cached PATH gate.
 static long s_pathFrameCounter = 0;
 
+// PATHFINDING-JUMP-FAIL-1: expose the monotonic path-manager frame counter so the
+// per-pilot jump-fail backoff (warrior.cpp) can stamp/compare failure frames on the
+// same clock the queue uses. Advances unconditionally once per update() (line below).
+long MovePathManager_getFrameCounter (void) { return s_pathFrameCounter; }
+
 //***************************************************************************
 // PATH MANAGER class
 //***************************************************************************

@@ -1345,6 +1345,11 @@ def main():
                             # MC2_DIAGNOSTIC_TRACE_FILE is handled above (absolute
                             # path override) so only the tag filter needs passthrough.
                             "MC2_DIAG_TAGS",
+                            # PATHFINDING-JUMP-FAIL-1: per-pilot doomed jump-path
+                            # backoff gate (default-OFF killswitch). Without this in
+                            # the allowlist Popen drops it and the gate-ON smoke runs
+                            # an engine that never backs off (numbers match OFF).
+                            "MC2_PATH_JUMP_FAIL_BACKOFF",
                             # VEG-SMOKE-FLOOR-1: vegetation card output contract gate.
                             # MC2_VEGETATION_CARDS=1 enables GPU instanced vegetation
                             # and triggers VEG-SMOKE-FLOOR-1 assertions in this runner.

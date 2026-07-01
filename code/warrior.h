@@ -925,6 +925,16 @@ class MechWarrior {
 
 		PathQueueRecPtr			movePathRequest;
 
+		// PATHFINDING-JUMP-FAIL-1: per-pilot doomed jump-path backoff (transient,
+		// runtime-only -- NOT serialized; copyToData/copyFromData ignore these).
+		// Records the goal cell of the last jump solve that returned no path and
+		// the path-manager frame it failed on, so requestMovePath can short-circuit
+		// re-enqueuing the same doomed jump goal within kJumpFailBackoffFrames.
+		// Inert unless MC2_PATH_JUMP_FAIL_BACKOFF is set (default-OFF killswitch).
+		int32_t					lastFailedJumpGoalCellR;
+		int32_t					lastFailedJumpGoalCellC;
+		long					lastJumpFailFrame;
+
 		uint32_t                debugFlags;
 
 		RadioPtr				radio;
@@ -1703,6 +1713,11 @@ class MechWarrior {
 		}
 
 		void requestMovePath (long selectionIndex, unsigned long moveParams, long source);
+
+		// PATHFINDING-JUMP-FAIL-1: stamp a doomed jump-solve failure (goal cell of
+		// the solve that returned no path). Called from Mover::calcMovePath on the
+		// jump branch. No-op unless the backoff gate is on.
+		void noteJumpPathFailed (void);
 
 		long calcMovePath (long selectionIndex, unsigned long moveParams = MOVEPARAM_NONE);
 

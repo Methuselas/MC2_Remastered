@@ -5110,8 +5110,14 @@ int Mover::calcMovePath (MovePathPtr path,
 			DebugMovePathType = pathType;
 
 			int goalCell[2];
-			if (numOffsets > 8)
+			if (numOffsets > 8) {
 				result = PathFindMap[SIMPLE_PATHMAP]->calcPathJUMP(path, NULL, goalCell);
+				// PATHFINDING-JUMP-FAIL-1: doomed jump solve -> stamp the REQUESTED
+				// goal cell (goalCell out-param is only written on success). No-op
+				// unless gate on. See requestMovePath.
+				if ((result <= 0) && pilot)
+					pilot->noteJumpPathFailed();
+			}
 			else
 				result = PathFindMap[SIMPLE_PATHMAP]->calcPath(path, NULL, goalCell);
 			PathFindMap[SIMPLE_PATHMAP]->setMover(0);
@@ -5186,8 +5192,14 @@ int Mover::calcMovePath (MovePathPtr path,
 			// Set up debug info...
 			DebugMovePathType = pathType;
 
-			if (numOffsets > 8)
+			if (numOffsets > 8) {
 				result = PathFindMap[SECTOR_PATHMAP]->calcPathJUMP(path, NULL, goalCell);
+				// PATHFINDING-JUMP-FAIL-1: doomed jump solve -> stamp the REQUESTED
+				// goal cell (goalCell out-param is only written on success). No-op
+				// unless gate on. See requestMovePath.
+				if ((result <= 0) && pilot)
+					pilot->noteJumpPathFailed();
+			}
 			else
 				result = PathFindMap[SECTOR_PATHMAP]->calcPath(path, NULL, goalCell);
 			PathFindMap[SECTOR_PATHMAP]->setMover(0);
@@ -5558,8 +5570,14 @@ int Mover::calcMovePath (MovePathPtr path,
 			return(-999);
 		}
 
-		if (numOffsets > 8)
+		if (numOffsets > 8) {
 			result = PathFindMap[SECTOR_PATHMAP]->calcPathJUMP(path, goal, goalCell);
+			// PATHFINDING-JUMP-FAIL-1: doomed jump solve -> stamp the REQUESTED goal
+			// cell (goalCell out-param is only written on success). No-op unless gate
+			// on. See requestMovePath.
+			if ((result <= 0) && pilot)
+				pilot->noteJumpPathFailed();
+		}
 		else
 			result = PathFindMap[SECTOR_PATHMAP]->calcPath(path, goal, goalCell);
 		//if ((goalCell[0] == -1) || (goalCell[1] == -1))

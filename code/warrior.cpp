@@ -1110,6 +1110,10 @@ void MechWarrior::init (bool create) {
 	lastTargetFriendly = false;
 	orderState = ORDERSTATE_GENERAL;
 	movePathRequest = NULL;
+	// PATHFINDING-JUMP-FAIL-1: no doomed jump yet (-1 = never failed).
+	lastFailedJumpGoalCellR = -1;
+	lastFailedJumpGoalCellC = -1;
+	lastJumpFailFrame = -1;
 
 	if (create)
 	{
@@ -1626,6 +1630,10 @@ void MechWarrior::clear (void) {
 	lastTargetFriendly = false;
 	orderState = ORDERSTATE_GENERAL;
 	movePathRequest = NULL;
+	// PATHFINDING-JUMP-FAIL-1: no doomed jump yet (-1 = never failed).
+	lastFailedJumpGoalCellR = -1;
+	lastFailedJumpGoalCellC = -1;
+	lastJumpFailFrame = -1;
 	clearMoveOrders();
 	//for (i = 0; i < 2; i++) {
 	//	moveOrders.path[i] = new MovePath;
@@ -3167,7 +3175,58 @@ void MechWarrior::setMoveGlobalPath (GlobalPathStepPtr path, long numSteps) {
 
 //---------------------------------------------------------------------------
 
+// PATHFINDING-JUMP-FAIL-1: backoff gate + constants. Default-OFF killswitch: when
+// MC2_PATH_JUMP_FAIL_BACKOFF is unset, s_jumpFailBackoffOn is false and every new
+// branch below is inert -> byte-identical legacy behavior (no stamp, no short-circuit).
+// Cached once at first use (repo getenv idiom, mover.cpp:3207 style).
+static const bool s_jumpFailBackoffOn =
+	(std::getenv("MC2_PATH_JUMP_FAIL_BACKOFF") != nullptr);
+// Frames to suppress re-requesting a goal cell that just failed a jump solve.
+// ~45 path-manager update() frames ~= 0.5-1s of doomed re-solves eliminated.
+static const long kJumpFailBackoffFrames = 45;
+
+// Defined in movemgr.cpp (PATHFINDING-FACTS-2 counter, advanced once per update()).
+extern long MovePathManager_getFrameCounter (void);
+
+void MechWarrior::noteJumpPathFailed (void) {
+
+	if (!s_jumpFailBackoffOn)
+		return;
+	// Key on the pilot's CURRENT move goal cell -- the exact same basis
+	// requestMovePath compares against (getMoveGoal -> worldToCell). Using one
+	// source of truth guarantees the stamp and the short-circuit test agree,
+	// regardless of any goal revision the solver applied internally.
+	Stuff::Vector3D goalLoc;
+	if (getMoveGoal(&goalLoc) == MOVEGOAL_NONE)
+		return;
+	int goalCellR, goalCellC;
+	land->worldToCell(goalLoc, goalCellR, goalCellC);
+	lastFailedJumpGoalCellR = goalCellR;
+	lastFailedJumpGoalCellC = goalCellC;
+	lastJumpFailFrame = MovePathManager_getFrameCounter();
+}
+
 void MechWarrior::requestMovePath (long selectionIndex, unsigned long moveParams, long source) {
+
+	// PATHFINDING-JUMP-FAIL-1: short-circuit doomed jump re-requests. If the pilot's
+	// current move goal is the SAME cell as the last jump solve that found no path,
+	// and we are still inside the backoff window, skip the enqueue entirely -- this
+	// is what collapses the queue width (the doomed solve was re-requested every AI
+	// tick with no failure memory). Only AI/non-home jumpers ever fail jump solves
+	// (jump path is enemy-only, mover.cpp:5515), so player orders are never affected.
+	if (s_jumpFailBackoffOn && (lastJumpFailFrame >= 0)) {
+		Stuff::Vector3D goalLoc;
+		if (getMoveGoal(&goalLoc) != MOVEGOAL_NONE) {
+			int goalCellR, goalCellC;
+			land->worldToCell(goalLoc, goalCellR, goalCellC);
+			if ((goalCellR == lastFailedJumpGoalCellR) &&
+			    (goalCellC == lastFailedJumpGoalCellC)) {
+				long now = MovePathManager_getFrameCounter();
+				if ((now - lastJumpFailFrame) < kJumpFailBackoffFrames)
+					return;  // doomed: don't re-enqueue yet
+			}
+		}
+	}
 
 	PathManager->request(this, selectionIndex, moveParams, source);
 }
