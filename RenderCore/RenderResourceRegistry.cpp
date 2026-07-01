@@ -73,6 +73,9 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::StaticPropMaterialGpuBuffer: return "StaticPropMaterialGpuBuffer";
         case RenderResourceId::MechProfileMaterialGpuBuffer: return "MechProfileMaterialGpuBuffer";
         case RenderResourceId::TerrainVisualHeightSsbo: return "TerrainVisualHeightSsbo";
+        case RenderResourceId::TerrainLightVertexInputSsbo:   return "TerrainLightVertexInputSsbo";
+        case RenderResourceId::TerrainLightInputSsbo:         return "TerrainLightInputSsbo";
+        case RenderResourceId::TerrainLightComputeOutputSsbo: return "TerrainLightComputeOutputSsbo";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";

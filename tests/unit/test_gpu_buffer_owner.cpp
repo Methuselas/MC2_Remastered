@@ -187,6 +187,38 @@ TEST_CASE("TERRAIN-VISUAL-HEIGHT-SSBO-OWNER-1 visual-height owner round-trips id
     CHECK((RenderResourceId::TerrainVisualHeightSsbo != RenderResourceId::TerrainCementSsbo));
 }
 
+TEST_CASE("TERRAIN-LIGHTING-SSBO-OWNER-1 the 3 compute SSBO owners round-trip id/lifetime/name and valid->invalid") {
+    struct Case { RenderResourceId id; const char* name; uint32_t handle; };
+    const Case cases[] = {
+        { RenderResourceId::TerrainLightVertexInputSsbo,   "TerrainLightVertexInputSsbo",   31u },
+        { RenderResourceId::TerrainLightInputSsbo,         "TerrainLightInputSsbo",         32u },
+        { RenderResourceId::TerrainLightComputeOutputSsbo, "TerrainLightComputeOutputSsbo", 33u },
+    };
+    for (const auto& c : cases) {
+        GpuBufferOwner o{ c.id, RenderResourceLifetime::Mission, c.name, 0u };
+        // Newly-constructed (glName 0) -> not yet allocated -> invalid.
+        CHECK_FALSE(o.valid());
+        // After glGen stores a handle -> valid, fields preserved.
+        o.glName = c.handle;
+        CHECK((o.id == c.id));
+        CHECK((o.lifetime == RenderResourceLifetime::Mission));
+        CHECK(std::strcmp(o.debugName, c.name) == 0);
+        CHECK(o.valid());
+        // Invalidate-on-destroy (glName cleared) -> invalid again.
+        o.glName = 0u;
+        CHECK_FALSE(o.valid());
+        // Registered id + matching toString label, strictly below Count.
+        CHECK(std::strcmp(toString(c.id), c.name) == 0);
+        CHECK(int(c.id) < int(RenderResourceId::Count));
+    }
+    // The 3 lighting ids are distinct from each other and from the LOD-chunk terrain SSBOs.
+    CHECK((RenderResourceId::TerrainLightVertexInputSsbo   != RenderResourceId::TerrainLightInputSsbo));
+    CHECK((RenderResourceId::TerrainLightVertexInputSsbo   != RenderResourceId::TerrainLightComputeOutputSsbo));
+    CHECK((RenderResourceId::TerrainLightInputSsbo         != RenderResourceId::TerrainLightComputeOutputSsbo));
+    CHECK((RenderResourceId::TerrainLightComputeOutputSsbo != RenderResourceId::TerrainHeightSsbo));
+    CHECK((RenderResourceId::TerrainLightComputeOutputSsbo != RenderResourceId::TerrainCementSsbo));
+}
+
 TEST_CASE("GpuBufferOwner is a trivially-copyable POD") {
     CHECK(std::is_trivially_copyable<GpuBufferOwner>::value);
 }

@@ -38,6 +38,9 @@
 #include "../../mclib/quad.h"       // TerrainQuad, TerrainQuad::rainLightLevel, ::lighteningLevel
 #include "gameos.hpp"  // gosEnvironment Environment (Environment.Renderer)
 
+#include "../../RenderCore/RenderResourceRegistry.h"  // TERRAIN-LIGHTING-SSBO-OWNER-1: registry + ids
+#include "../../RenderCore/GpuBufferOwner.h"           // TERRAIN-LIGHTING-SSBO-OWNER-1: owner records
+
 // External globals needed for packing
 extern DWORD BaseVertexColor;  // defined in code/mechcmd2.cpp / code/logmain.cpp
 extern bool  useFog;           // defined in mclib/terrain.cpp
@@ -161,9 +164,28 @@ static uint32_t s_numVertices  = 0;
 static uint32_t s_maxLights    = 0;
 
 // GPU-side SSBOs (compute reads/writes; no persistent map needed)
-static GLuint s_vertexInputSsbo  = 0;   // GpuTerrainVertexInput per vertex
-static GLuint s_lightInputSsbo   = 0;   // GpuTerrainLight per light slot
-static GLuint s_computeOutputSsbo = 0;  // GpuTerrainLightingOutput per vertex
+// TERRAIN-LIGHTING-SSBO-OWNER-1: the 3 non-ring compute SSBOs are narrowed behind
+// GpuBufferOwner identity records (logical id + lifetime + debug name + GLuint
+// value). GL gen/bind/bufferStorage/delete happen at the same sites with the same
+// args/order/flags/binding-slots; the raw handle is reached only via owner.glName.
+// Lifetime Mission: created in mission_init, destroyed in mission_shutdown, rebuilt
+// per mission load. The s_stagingRing[RING_FRAMES] below is Tier-2 (persistent-mapped
+// BAR ring) and stays a raw GLuint array — intentionally NOT owned.
+static RenderCore::GpuBufferOwner s_vertexInputSsbo{   // GpuTerrainVertexInput per vertex (binding 0)
+    RenderCore::RenderResourceId::TerrainLightVertexInputSsbo,
+    RenderCore::RenderResourceLifetime::Mission,
+    "TerrainLightVertexInputSsbo",
+    0u};
+static RenderCore::GpuBufferOwner s_lightInputSsbo{    // GpuTerrainLight per light slot (binding 1)
+    RenderCore::RenderResourceId::TerrainLightInputSsbo,
+    RenderCore::RenderResourceLifetime::Mission,
+    "TerrainLightInputSsbo",
+    0u};
+static RenderCore::GpuBufferOwner s_computeOutputSsbo{ // GpuTerrainLightingOutput per vertex (binding 2)
+    RenderCore::RenderResourceId::TerrainLightComputeOutputSsbo,
+    RenderCore::RenderResourceLifetime::Mission,
+    "TerrainLightComputeOutputSsbo",
+    0u};
 
 // 3-slot staging ring (CPU-readable persistent map) matching gpu_cull_readback pattern
 static GLuint   s_stagingRing[RING_FRAMES]   = {};
@@ -341,7 +363,7 @@ static GLuint tl_build_terrain_lighting_program(const char* compFname,
 namespace gos_terrain_lighting {
 
 GLuint GetOutputSsbo() {
-    return s_computeOutputSsbo;
+    return static_cast<GLuint>(s_computeOutputSsbo.glName);
 }
 
 // ---------------------------------------------------------------------------
@@ -446,23 +468,56 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
     // first-frame startup (vertex pool already initialized to 0xFFFFFFFF at vertex.h:122).
     s_dramShadow.assign(numVertices, GpuTerrainLightingOutput{0xFFFFFFFFu, 0xFFFFFFFFu});
 
+    // TERRAIN-LIGHTING-SSBO-OWNER-1: register a live owner in the resource registry
+    // (observe-only metadata; never read by the compute/draw path). Called at create
+    // (byte size known here) and invalidated in mission_shutdown.
+    auto registerLightingSsbo = [](RenderCore::RenderResourceId id, const char* name,
+                                   GLuint glName, GLsizeiptr bytes) {
+        RenderCore::RenderResourceDesc d;
+        d.id        = id;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Mission;
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = name;
+        d.glName    = glName;
+        d.sizeBytes = static_cast<uint64_t>(bytes);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    };
+
     // --- Vertex input SSBO (GPU-write from CPU pack; no persistent map) ---
-    glGenBuffers(1, &s_vertexInputSsbo);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_vertexInputSsbo);
+    {
+        GLuint local = 0;
+        glGenBuffers(1, &local);
+        s_vertexInputSsbo.glName = static_cast<uint32_t>(local);
+    }
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_vertexInputSsbo.glName));
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, vertInputBytes, nullptr,
                     GL_DYNAMIC_STORAGE_BIT | GL_MAP_WRITE_BIT);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    registerLightingSsbo(s_vertexInputSsbo.id, s_vertexInputSsbo.debugName,
+                         static_cast<GLuint>(s_vertexInputSsbo.glName), vertInputBytes);
 
     // --- Light input SSBO ---
-    glGenBuffers(1, &s_lightInputSsbo);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightInputSsbo);
+    {
+        GLuint local = 0;
+        glGenBuffers(1, &local);
+        s_lightInputSsbo.glName = static_cast<uint32_t>(local);
+    }
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_lightInputSsbo.glName));
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, lightInputBytes, nullptr,
                     GL_DYNAMIC_STORAGE_BIT | GL_MAP_WRITE_BIT);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    registerLightingSsbo(s_lightInputSsbo.id, s_lightInputSsbo.debugName,
+                         static_cast<GLuint>(s_lightInputSsbo.glName), lightInputBytes);
 
     // --- Compute output SSBO (GPU writes here; no persistent map — pure VRAM) ---
-    glGenBuffers(1, &s_computeOutputSsbo);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_computeOutputSsbo);
+    {
+        GLuint local = 0;
+        glGenBuffers(1, &local);
+        s_computeOutputSsbo.glName = static_cast<uint32_t>(local);
+    }
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_computeOutputSsbo.glName));
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, outputBytes, nullptr, GL_DYNAMIC_STORAGE_BIT);
     // glBufferStorage leaves VRAM UNINITIALISED. The lighting compute only writes
     // the visible vertex window [packMinVN, packMaxVN]; full-recipe-authoritative
@@ -479,6 +534,8 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
         glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, &kWhite);
     }
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    registerLightingSsbo(s_computeOutputSsbo.id, s_computeOutputSsbo.debugName,
+                         static_cast<GLuint>(s_computeOutputSsbo.glName), outputBytes);
 
     // --- 3-slot staging ring (CPU-readable persistent map, BAR memory) ---
     // Pattern from gpu_cull_readback.cpp:230-235.
@@ -543,9 +600,31 @@ void mission_shutdown() {
     glDeleteBuffers(RING_FRAMES, s_stagingRing);
     memset(s_stagingRing, 0, sizeof(s_stagingRing));
 
-    if (s_computeOutputSsbo) { glDeleteBuffers(1, &s_computeOutputSsbo); s_computeOutputSsbo = 0; }
-    if (s_lightInputSsbo)    { glDeleteBuffers(1, &s_lightInputSsbo);    s_lightInputSsbo    = 0; }
-    if (s_vertexInputSsbo)   { glDeleteBuffers(1, &s_vertexInputSsbo);   s_vertexInputSsbo   = 0; }
+    // TERRAIN-LIGHTING-SSBO-OWNER-1: delete via owner.glName + mark the registry slot
+    // unavailable (valid=false) on teardown. Same delete order as before.
+    auto invalidateLightingSsbo = [](RenderCore::RenderResourceId id) {
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id = id;
+        RenderCore::registerOrUpdateRenderResource(invalid);
+    };
+    if (s_computeOutputSsbo.glName) {
+        GLuint buf = static_cast<GLuint>(s_computeOutputSsbo.glName);
+        glDeleteBuffers(1, &buf);
+        s_computeOutputSsbo.glName = 0;
+        invalidateLightingSsbo(s_computeOutputSsbo.id);
+    }
+    if (s_lightInputSsbo.glName) {
+        GLuint buf = static_cast<GLuint>(s_lightInputSsbo.glName);
+        glDeleteBuffers(1, &buf);
+        s_lightInputSsbo.glName = 0;
+        invalidateLightingSsbo(s_lightInputSsbo.id);
+    }
+    if (s_vertexInputSsbo.glName) {
+        GLuint buf = static_cast<GLuint>(s_vertexInputSsbo.glName);
+        glDeleteBuffers(1, &buf);
+        s_vertexInputSsbo.glName = 0;
+        invalidateLightingSsbo(s_vertexInputSsbo.id);
+    }
 
     s_numVertices     = 0;
     s_maxLights       = 0;
@@ -693,7 +772,7 @@ void PackAndDispatch() {
         if (packMinVN <= packMaxVN) {
             const GLintptr  uploadOffset = static_cast<GLintptr >(packMinVN * sizeof(GpuTerrainVertexInput));
             const GLsizeiptr uploadBytes = static_cast<GLsizeiptr>((packMaxVN - packMinVN + 1) * sizeof(GpuTerrainVertexInput));
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_vertexInputSsbo);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_vertexInputSsbo.glName));
             glBufferSubData(GL_SHADER_STORAGE_BUFFER, uploadOffset, uploadBytes,
                             s_packBuf.data() + packMinVN);
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -735,7 +814,7 @@ void PackAndDispatch() {
 
         if (numLights > 0) {
             const GLsizeiptr uploadBytes = static_cast<GLsizeiptr>(numLights * sizeof(GpuTerrainLight));
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightInputSsbo);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_lightInputSsbo.glName));
             glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, uploadBytes, s_lightBuf.data());
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         }
@@ -745,9 +824,9 @@ void PackAndDispatch() {
     glUseProgram(s_program);
 
     // Bind SSBOs
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TL_VERTEX_INPUT_BINDING, s_vertexInputSsbo);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TL_LIGHT_INPUT_BINDING,  s_lightInputSsbo);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TL_OUTPUT_BINDING,        s_computeOutputSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TL_VERTEX_INPUT_BINDING, static_cast<GLuint>(s_vertexInputSsbo.glName));
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TL_LIGHT_INPUT_BINDING,  static_cast<GLuint>(s_lightInputSsbo.glName));
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TL_OUTPUT_BINDING,        static_cast<GLuint>(s_computeOutputSsbo.glName));
 
     // Set per-frame uniforms via runtime-resolved locations.
     glUniform1i(s_uniformLocs[TL_UNI_NUM_VERTICES], static_cast<GLint>(s_numVertices));
@@ -847,7 +926,7 @@ void PackAndDispatch() {
     // --- Copy compute output → staging ring slot (VRAM→BAR) ---
     const GLintptr  slotOff = 0;
     const GLsizeiptr slotSz = static_cast<GLsizeiptr>(s_outputSlotBytes);
-    glBindBuffer(GL_COPY_READ_BUFFER,  s_computeOutputSsbo);
+    glBindBuffer(GL_COPY_READ_BUFFER,  static_cast<GLuint>(s_computeOutputSsbo.glName));
     glBindBuffer(GL_COPY_WRITE_BUFFER, s_stagingRing[s_currentSlot]);
     glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, slotOff, slotOff, slotSz);
     glBindBuffer(GL_COPY_READ_BUFFER,  0);
@@ -1068,5 +1147,5 @@ const GpuTerrainLightingOutput* GetMappedOutputForParity()
 // via the anonymous namespace); the implicit using-directive makes the name
 // visible by unqualified lookup at file scope.
 extern "C" GLuint gos_terrain_lighting_getOutputSSBO() {
-    return s_computeOutputSsbo;
+    return static_cast<GLuint>(s_computeOutputSsbo.glName);
 }
