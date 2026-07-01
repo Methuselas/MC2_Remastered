@@ -1063,6 +1063,11 @@ def main():
                             # in the allowlist the gate-ON smoke does nothing.
                             "MC2_SHADOW_FOCUS_CENTER",
                             "MC2_SHADOW_FOCUS_DIST",
+                            # TERRAIN-CONTROLMAP-SAMPLE-1 — authored control-map
+                            # override (default OFF). Must be allowlisted or Popen
+                            # drops it and the gate-ON smoke does nothing.
+                            "MC2_TERRAIN_CONTROLMAP",
+                            "MC2_TERRAIN_CONTROLMAP_FILE",
                             # Mask-dispatch (pre-bake-terrain merge)
                             "MC2_TERRAIN_MASK_DISPATCH",
                             "MC2_TERRAIN_MASK_DISPATCH_PARITY",
