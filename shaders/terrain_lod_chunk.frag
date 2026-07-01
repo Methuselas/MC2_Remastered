@@ -50,6 +50,25 @@ uniform float u_atlasOneOverWorldUnits;   // = Terrain::oneOverWorldUnitsMapSide
 // pre-slice classifier path (chunkColorWeights(base)).
 uniform sampler2D u_controlMap;
 uniform int       u_useControlMap;
+
+// TERRAIN-OVERLAY-V2-PARITY-1: authored cement/pad/runway overlay sidecar
+// (unit TERRAIN_OVERLAY_SIDECAR_TEXUNIT). RGB = pre-tinted cement/overlay
+// diffuse, A = coverage/edge alpha. Sampled by WORLD XY via u_overlayBounds
+// -- NOT the 128wu cementWordsF tile grid -- so it is off-grid-correct.
+// u_overlayBounds = (topLeftX, topLeftY, sizeX, sizeY): topLeftX = MIN world X
+// (west edge), topLeftY = MAX world Y (north/top edge) -- SAME convention as
+// the colormap atlas uniforms (u_atlasTopLeftX/Y just above: uv.y = (topLeftY
+// - worldY) * oneOverSize), so PNG row 0 (top of image) == north edge, no
+// vertical flip, matching control_map_tool.py's documented row-0 convention.
+// v1 = ADDITIVE: legacy cement-word composite + separate overlay pass stay
+// verbatim; when a sidecar is loaded AND the gate is on (MC2_TERRAIN_OVERLAY_V2),
+// this composites OVER the legacy cement result using its alpha. Gate OFF or
+// no sidecar -> u_useOverlaySidecar=0 -> this branch never taken ->
+// byte-identical to the legacy composite.
+uniform sampler2D u_overlaySidecar;
+uniform int       u_useOverlaySidecar;
+uniform vec4      u_overlayBounds;  // topLeftX, topLeftY(=maxY), sizeX, sizeY (world units)
+
 uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uniform as legacy)
 uniform int   u_shadowTier;               // Slice B: per-chunk shadow tier (0=high,1=low,2=static,3=none)
 uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_CHUNK_DIAG):
@@ -568,6 +587,24 @@ void main() {
                 base = texture(u_cementAtlas, dAtlasUV).rgb;
                 cementHit = true;
             }
+        }
+    }
+
+    // TERRAIN-OVERLAY-V2-PARITY-1: authored cement/pad/runway overlay sidecar
+    // composite. ADDITIVE v1 -- runs AFTER the legacy cement-word + diag-connect
+    // composite above (which stays verbatim), so gate-OFF or no-sidecar is
+    // byte-identical by construction (uniform else-branch: this whole block is
+    // skipped). World-XY sample (not the 128wu tile grid) is the off-grid fix;
+    // rides the terrain frag's displaced surface Z automatically (no z-fight
+    // vs the old flat-triangle overlay pass on sloped/displaced terrain).
+    if (u_useOverlaySidecar != 0) {
+        vec2 ovUV;
+        ovUV.x = (v_worldPos.x - u_overlayBounds.x) / max(u_overlayBounds.z, 1e-5);
+        ovUV.y = (u_overlayBounds.y - v_worldPos.y) / max(u_overlayBounds.w, 1e-5);
+        if (ovUV.x >= 0.0 && ovUV.x <= 1.0 && ovUV.y >= 0.0 && ovUV.y <= 1.0) {
+            vec4 ov = texture(u_overlaySidecar, ovUV);
+            base = mix(base, ov.rgb, ov.a);
+            if (ov.a > 0.5) cementHit = true;
         }
     }
 

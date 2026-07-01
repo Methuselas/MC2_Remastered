@@ -23,6 +23,13 @@ constexpr uint32_t TERRAIN_VISUAL_HEIGHT_SSBO_BINDING = 26u; // TERRAIN-VISUAL-H
 // default OFF; upload is only called when a sidecar was found at mission load.
 constexpr int TERRAIN_CONTROLMAP_TEXUNIT = 12;
 
+// TERRAIN-OVERLAY-V2-PARITY-1: authored cement/pad/runway overlay sidecar
+// texture unit (free per recon's list: 1,2,4,6,7,8). Bounds-aware RGBA8,
+// sampled by WORLD XY (not the 128wu cement tile grid) -- see
+// gos_TerrainLodChunk_UploadOverlaySidecar. Gate MC2_TERRAIN_OVERLAY_V2,
+// default OFF; upload only called when a sidecar was found at mission load.
+constexpr int TERRAIN_OVERLAY_SIDECAR_TEXUNIT = 1;
+
 // Submit block draw commands for the current frame.
 // count==0 is a strict no-op. mclib calls this via Terrain::flushDrawCommands() only.
 // skirtDepths: parallel float array [count], one depth value per command.
@@ -70,6 +77,24 @@ void gos_TerrainLodChunk_UploadCementWordsFull(const unsigned int* words, int co
 // texture handle is valid. Passthrough (gate off or no sidecar) never calls
 // this and u_useControlMap uploads 0 (byte-identical legacy classifier path).
 void gos_TerrainLodChunk_UploadControlMap(const unsigned char* rgba, int side);
+
+// TERRAIN-OVERLAY-V2-PARITY-1: upload the authored cement/pad/runway overlay
+// sidecar as a GL_RGBA8 2D texture (arbitrary WxH, NOT tied to vertex grid)
+// bound at TERRAIN_OVERLAY_SIDECAR_TEXUNIT. RGB = pre-tinted cement/overlay
+// diffuse, A = coverage/edge alpha (0 = no overlay, >=0.5 legacy-parity hit).
+// worldBounds = {topLeftX, topLeftY, sizeX, sizeY} in world units: topLeftX =
+// MIN world X (west edge), topLeftY = MAX world Y (north/top edge) -- SAME
+// convention as the colormap atlas uniforms (u_atlasTopLeftX/Y), so PNG row 0
+// (top) == north edge, no vertical flip. The frag maps v_worldPos.xy -> UV via
+// uv.x=(worldX-topLeftX)/sizeX, uv.y=(topLeftY-worldY)/sizeY. rgba may be
+// null / w<=0 / h<=0 to mean "no sidecar" -- the caller (mclib/terrain.cpp)
+// only calls this when a sidecar was actually loaded; the driver uploads
+// u_useOverlaySidecar=1 only when the texture handle is valid. Passthrough
+// (gate off or no sidecar) never calls this and u_useOverlaySidecar uploads 0
+// (byte-identical legacy cement-word + overlay-pass path).
+void gos_TerrainLodChunk_UploadOverlaySidecar(const unsigned char* rgba, int w, int h,
+                                               float boundsTopLeftX, float boundsTopLeftY,
+                                               float boundsSizeX, float boundsSizeY);
 
 // Patch a dirty block's heightfield rows after terrain edit.
 // rowData: float[(quadCountY+1)*(quadCountX+1)] row-major.

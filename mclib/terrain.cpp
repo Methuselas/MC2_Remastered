@@ -915,6 +915,129 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 				}
 			}
 
+			// TERRAIN-OVERLAY-V2-PARITY-1: v1 = ADDITIVE sidecar composite (legacy
+			// cement-word + overlay pass stays verbatim). Gate MC2_TERRAIN_OVERLAY_V2
+			// default OFF (mirrors MC2_TERRAIN_CONTROLMAP's read pattern above). When
+			// ON, load an authored bounds-aware overlay sidecar PNG (RGBA8, arbitrary
+			// WxH -- NOT vertex-resolution) if present; when absent or gate OFF, no
+			// texture is created and u_useOverlaySidecar uploads 0 at draw ->
+			// byte-identical to the legacy cement-word + separate overlay-pass
+			// composite. Sidecar carries world bounds via a companion
+			// "<name>.bounds.txt" (4 whitespace-separated floats: topLeftX topLeftY
+			// sizeX sizeY, world units; topLeftX=MIN world X, topLeftY=MAX world Y
+			// -- same convention as the colormap atlas uniforms, PNG row 0 = north
+			// edge, no flip) -- absent bounds file falls back to the full-map extent.
+			// MC2_TERRAIN_OVERLAY_V2_FILE overrides the sidecar path (precedent:
+			// MC2_TERRAIN_CONTROLMAP_FILE above).
+			{
+				static const bool s_overlayV2Gate = []() {
+					const char* v = getenv("MC2_TERRAIN_OVERLAY_V2");
+					return (v && v[0] && v[0] != '0');
+				}();
+				if (s_overlayV2Gate)
+				{
+					char ovPath[600];
+					if (const char* ov = getenv("MC2_TERRAIN_OVERLAY_V2_FILE"))
+					{
+						strncpy(ovPath, ov, sizeof(ovPath) - 1);
+						ovPath[sizeof(ovPath) - 1] = '\0';
+					}
+					else
+					{
+						const char* nm = terrainName ? terrainName : "";
+						const char* bs = strrchr(nm, '\\');
+						const char* fs = strrchr(nm, '/');
+						const char* slash = (fs > bs) ? fs : bs;
+						char stem[160];
+						strncpy(stem, slash ? slash + 1 : nm, sizeof(stem) - 1);
+						stem[sizeof(stem) - 1] = '\0';
+						if (char* dot = strrchr(stem, '.')) *dot = '\0';
+						snprintf(ovPath, sizeof(ovPath),
+						         "data/missions/%s.beauty/overlay_v2.png", stem);
+					}
+					FILE* of = fopen(ovPath, "rb");
+					if (!of)
+					{
+						printf("[TERRAIN_OVERLAY_V2 v1] sidecar NOT FOUND path=%s (gate on)"
+						       " -- passthrough (legacy cement-word + overlay pass)\n", ovPath);
+						fflush(stdout);
+					}
+					else
+					{
+						fseek(of, 0, SEEK_END);
+						long oFileSize = ftell(of);
+						fseek(of, 0, SEEK_SET);
+						if (oFileSize <= 0)
+						{
+							fclose(of);
+							printf("[TERRAIN_OVERLAY_V2 v1] EMPTY FILE path=%s\n", ovPath);
+							fflush(stdout);
+						}
+						else
+						{
+							std::vector<unsigned char> pngBytes((size_t)oFileSize);
+							size_t rd = fread(pngBytes.data(), 1, (size_t)oFileSize, of);
+							fclose(of);
+							if (rd != (size_t)oFileSize)
+							{
+								printf("[TERRAIN_OVERLAY_V2 v1] READ FAIL path=%s read=%zu want=%ld\n",
+								       ovPath, rd, oFileSize);
+								fflush(stdout);
+							}
+							else
+							{
+								int ow = 0, oh = 0;
+								unsigned char* orgba = ControlMapPng_DecodeRGBA(
+									pngBytes.data(), (int)oFileSize, &ow, &oh);
+								if (!orgba)
+								{
+									printf("[TERRAIN_OVERLAY_V2 v1] PNG DECODE FAILED path=%s\n", ovPath);
+									fflush(stdout);
+								}
+								else
+								{
+									// World bounds: default = full map extent, using the
+									// SAME (topLeftX, topLeftY=maxY) convention as the
+									// colormap atlas uniforms (u_atlasTopLeftX/Y) so PNG
+									// row 0 (top) == north edge == vertex row 0, no flip
+									// (matches control_map_tool.py's documented convention).
+									// Companion bounds file overrides for a tighter
+									// authored region: "topLeftX topLeftY sizeX sizeY".
+									float halfMapOv = Terrain::worldUnitsMapSide * 0.5f;
+									float bTLX = -halfMapOv, bTLY = halfMapOv;
+									float bSizeX = 2.0f * halfMapOv, bSizeY = 2.0f * halfMapOv;
+									char boundsPath[620];
+									snprintf(boundsPath, sizeof(boundsPath), "%s", ovPath);
+									size_t plen = strlen(boundsPath);
+									if (plen > 4 && strcmp(boundsPath + plen - 4, ".png") == 0)
+										boundsPath[plen - 4] = '\0';
+									strncat(boundsPath, ".bounds.txt", sizeof(boundsPath) - strlen(boundsPath) - 1);
+									FILE* bf = fopen(boundsPath, "r");
+									if (bf)
+									{
+										float bx, by, bw, bh;
+										if (fscanf(bf, "%f %f %f %f", &bx, &by, &bw, &bh) == 4)
+										{
+											bTLX = bx; bTLY = by; bSizeX = bw; bSizeY = bh;
+											printf("[TERRAIN_OVERLAY_V2 v1] bounds override path=%s (%.1f,%.1f,%.1f,%.1f)\n",
+											       boundsPath, bTLX, bTLY, bSizeX, bSizeY);
+											fflush(stdout);
+										}
+										fclose(bf);
+									}
+									gos_TerrainLodChunk_UploadOverlaySidecar(orgba, ow, oh,
+									                                          bTLX, bTLY, bSizeX, bSizeY);
+									printf("[TERRAIN_OVERLAY_V2 v1] LOADED path=%s size=%dx%d bounds=(%.1f,%.1f,%.1f,%.1f)\n",
+									       ovPath, ow, oh, bTLX, bTLY, bSizeX, bSizeY);
+									fflush(stdout);
+									ControlMapPng_FreePixels(orgba);
+								}
+							}
+						}
+					}
+				}
+			}
+
 			// TERRAIN-VISUAL-HEIGHT-SAMPLE-1 Stage 1 (loader, log-only). Gate
 			// MC2_TERRAIN_VISUAL_HEIGHT default-OFF -> no load, no SSBO
 			// (byte-identical). Loads the 4x VISUAL heightfield bake into SSBO

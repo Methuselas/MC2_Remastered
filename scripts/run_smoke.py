@@ -1099,6 +1099,12 @@ def main():
                             # drops it and the gate-ON smoke does nothing.
                             "MC2_TERRAIN_CONTROLMAP",
                             "MC2_TERRAIN_CONTROLMAP_FILE",
+                            # TERRAIN-OVERLAY-V2-PARITY-1 -- authored cement/pad/
+                            # runway overlay sidecar override (default OFF). Must
+                            # be allowlisted or Popen drops it and the gate-ON
+                            # smoke does nothing.
+                            "MC2_TERRAIN_OVERLAY_V2",
+                            "MC2_TERRAIN_OVERLAY_V2_FILE",
                             # TERRAIN-MATERIAL-LIB-1 — data-defined terrain material
                             # tuning (default OFF). Must be allowlisted or Popen
                             # drops it and the gate-ON smoke does nothing.

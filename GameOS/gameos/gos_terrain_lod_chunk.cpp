@@ -98,6 +98,13 @@ static float  s_halfMap    = 0.0f;// (mapSide * 128.0 * 0.5)
 static GLuint s_controlMapTex  = 0;
 static int    s_controlMapSide = 0;
 
+// TERRAIN-OVERLAY-V2-PARITY-1: authored cement/pad/runway overlay sidecar
+// texture (unit TERRAIN_OVERLAY_SIDECAR_TEXUNIT). Plain GLuint, same
+// self-contained single-owner pattern as s_controlMapTex. glName 0 = not
+// loaded (gate off or no sidecar) -> u_useOverlaySidecar uploads 0 at draw.
+static GLuint s_overlaySidecarTex = 0;
+static float  s_overlayBounds[4]  = {0.0f, 0.0f, 0.0f, 0.0f};  // topLeftX,topLeftY(=maxY),sizeX,sizeY
+
 // ---------------------------------------------------------------------------
 // Shader program + uniform locations (Phase 4).
 // ---------------------------------------------------------------------------
@@ -191,6 +198,10 @@ static GLint s_locPomParams      = -1;
 static GLint s_locMatProfile     = -1;
 static GLint s_locControlMap     = -1;  // TERRAIN-CONTROLMAP-SAMPLE-1: u_controlMap sampler
 static GLint s_locUseControlMap  = -1;  // u_useControlMap gate uniform
+// TERRAIN-OVERLAY-V2-PARITY-1: authored cement/pad/runway overlay sidecar.
+static GLint s_locOverlaySidecar    = -1;  // u_overlaySidecar sampler
+static GLint s_locUseOverlaySidecar = -1;  // u_useOverlaySidecar gate uniform
+static GLint s_locOverlayBounds     = -1;  // u_overlayBounds (vec4 minX,minY,sizeX,sizeY)
 // Step 5c: cement catalog atlas (tex3) accessors from gos_terrain_indirect.cpp.
 extern unsigned int gos_terrain_indirect_getCementAtlasGLTex();
 extern int          gos_terrain_indirect_getCementAtlasGridSide();
@@ -593,6 +604,9 @@ void gos_TerrainLodChunk_Init()
             s_locUseTransitionMask   = glGetUniformLocation(s_terrainProgram, "u_useTransitionMask");
             s_locControlMap    = glGetUniformLocation(s_terrainProgram, "u_controlMap");    // TERRAIN-CONTROLMAP-SAMPLE-1
             s_locUseControlMap = glGetUniformLocation(s_terrainProgram, "u_useControlMap");
+            s_locOverlaySidecar    = glGetUniformLocation(s_terrainProgram, "u_overlaySidecar");    // TERRAIN-OVERLAY-V2-PARITY-1
+            s_locUseOverlaySidecar = glGetUniformLocation(s_terrainProgram, "u_useOverlaySidecar");
+            s_locOverlayBounds     = glGetUniformLocation(s_terrainProgram, "u_overlayBounds");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -1041,6 +1055,28 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         }
     }
 
+    // TERRAIN-OVERLAY-V2-PARITY-1: authored cement/pad/runway overlay sidecar
+    // at unit TERRAIN_OVERLAY_SIDECAR_TEXUNIT. Only bound when a sidecar was
+    // actually loaded (s_overlaySidecarTex != 0); u_useOverlaySidecar uploads
+    // 0 otherwise (gate off / no sidecar) -> frag takes the verbatim legacy
+    // cement-word composite else-branch -> byte-identical.
+    {
+        const bool overlaySidecarReady = (s_overlaySidecarTex != 0);
+        if (s_locUseOverlaySidecar >= 0)
+            glUniform1i(s_locUseOverlaySidecar, overlaySidecarReady ? 1 : 0);
+        if (overlaySidecarReady) {
+            if (s_locOverlaySidecar >= 0) {
+                glUniform1i(s_locOverlaySidecar, TERRAIN_OVERLAY_SIDECAR_TEXUNIT);
+                glActiveTexture(GL_TEXTURE0 + TERRAIN_OVERLAY_SIDECAR_TEXUNIT);
+                glBindTexture(GL_TEXTURE_2D, s_overlaySidecarTex);
+                glActiveTexture(GL_TEXTURE0);
+            }
+            if (s_locOverlayBounds >= 0)
+                glUniform4f(s_locOverlayBounds, s_overlayBounds[0], s_overlayBounds[1],
+                            s_overlayBounds[2], s_overlayBounds[3]);
+        }
+    }
+
     // Step 5a: upload the live material tunables (driven by the ImGui terrain
     // panel via the same gosRenderer members the legacy terrain reads).
     {
@@ -1476,6 +1512,56 @@ void gos_TerrainLodChunk_UploadControlMap(const unsigned char* rgba, int side)
 
     fprintf(stderr, "[TERRAIN_CONTROLMAP v1] uploaded handle=%u side=%d bytes=%zu\n",
             (unsigned)s_controlMapTex, side, (size_t)side * (size_t)side * 4u);
+    fflush(stderr);
+}
+
+// TERRAIN-OVERLAY-V2-PARITY-1: upload the authored cement/pad/runway overlay
+// sidecar as a plain GL_RGBA8 2D texture (GL_LINEAR / CLAMP_TO_EDGE, arbitrary
+// WxH -- NOT tied to the vertex grid or the 128wu cement tile grid; sampled by
+// world XY via u_overlayBounds in the frag). Called ONLY when mclib/terrain.cpp
+// actually loaded a sidecar (gate ON + file present). rgba: uint8[w*h*4]
+// row-major, RGB = pre-tinted cement/overlay diffuse, A = coverage/edge alpha.
+void gos_TerrainLodChunk_UploadOverlaySidecar(const unsigned char* rgba, int w, int h,
+                                               float boundsTopLeftX, float boundsTopLeftY,
+                                               float boundsSizeX, float boundsSizeY)
+{
+    if (!rgba || w <= 0 || h <= 0)
+        return;
+
+    if (s_overlaySidecarTex == 0)
+        glGenTextures(1, &s_overlaySidecarTex);
+    if (s_overlaySidecarTex == 0)
+    {
+        fprintf(stderr, "[TERRAIN_OVERLAY_V2 v1] glGenTextures failed\n");
+        fflush(stderr);
+        return;
+    }
+
+    GLint prevActive = GL_TEXTURE0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActive);
+    GLint prev2D = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev2D);
+
+    glBindTexture(GL_TEXTURE_2D, s_overlaySidecarTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prev2D);
+    glActiveTexture((GLenum)prevActive);
+
+    s_overlayBounds[0] = boundsTopLeftX;
+    s_overlayBounds[1] = boundsTopLeftY;
+    s_overlayBounds[2] = boundsSizeX;
+    s_overlayBounds[3] = boundsSizeY;
+
+    fprintf(stderr, "[TERRAIN_OVERLAY_V2 v1] uploaded handle=%u w=%d h=%d bytes=%zu "
+            "bounds=(%.1f,%.1f,%.1f,%.1f)\n",
+            (unsigned)s_overlaySidecarTex, w, h, (size_t)w * (size_t)h * 4u,
+            boundsTopLeftX, boundsTopLeftY, boundsSizeX, boundsSizeY);
     fflush(stderr);
 }
 
