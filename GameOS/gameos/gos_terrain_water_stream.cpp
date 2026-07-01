@@ -475,6 +475,7 @@ unsigned int EnsureRecipeBufferUploaded() {
     const GLsizeiptr bytes = (GLsizeiptr)(g_recipes.size() * sizeof(WaterRecipe));
 
     if (g_recipeBuffer == 0)
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &g_recipeBuffer);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_recipeBuffer);
@@ -1375,6 +1376,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
         // Indirect cmd buffer: 2 × DrawArraysIndirectCommand = 2 × 16 B = 32 B.
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &g_waterIndirectCmdBuffer);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_waterIndirectCmdBuffer);
         MC2_GL_BufferData(GL_DRAW_INDIRECT_BUFFER, 32, nullptr, GL_DYNAMIC_DRAW);
@@ -1811,12 +1813,14 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         const GLsizeiptr needThin = (GLsizeiptr)maxThinRecords * (GLsizeiptr)sizeof(WaterThinRecord);
         if (!s_spikeThin || needThin > s_spikeThinBytes) {
             if (s_spikeThin) glDeleteBuffers(1, &s_spikeThin);
+            // TIER2-EXCLUDED: dead-path
             glGenBuffers(1, &s_spikeThin);
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeThin);
             MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, needThin, nullptr, GL_DYNAMIC_COPY);
             s_spikeThinBytes = needThin;
         }
         if (!s_spikeHeader) {
+            // TIER2-EXCLUDED: dead-path
             glGenBuffers(1, &s_spikeHeader);
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeHeader);
             MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_COPY);

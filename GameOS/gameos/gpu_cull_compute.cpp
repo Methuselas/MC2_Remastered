@@ -748,6 +748,7 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
     // 2026-05-11: cmds.size() is now per-packet under coalesce-armed (per-type
     // under coalesce-disarmed/natural). Use cmds.size() instead of typeCount.
     const GLsizeiptr indirectBytes = static_cast<GLsizeiptr>(cmds.size() * sizeof(DrawCmd));
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_indirectCmdBuf);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_indirectCmdBuf);
     glBufferData(GL_DRAW_INDIRECT_BUFFER, indirectBytes, cmds.data(), GL_DYNAMIC_DRAW);
@@ -763,6 +764,7 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
     // any reads to slots the shader actually wrote.
     const GLsizeiptr visIdsBytes = static_cast<GLsizeiptr>(
         (totalVisibleSlots > 0 ? totalVisibleSlots : 1) * sizeof(uint32_t));
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_visibleIdsBuf);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_visibleIdsBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, visIdsBytes, nullptr, GL_DYNAMIC_DRAW);
@@ -771,6 +773,7 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
     // --- BucketCounts SSBO (binding 10) ---
     // Layout: [perBucketCount[0..N-1], overflowCount]  (N+1 uints)
     const GLsizeiptr countsBytes = static_cast<GLsizeiptr>((typeCount + 1) * sizeof(uint32_t));
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_bucketCountsBuf);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_bucketCountsBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, countsBytes, nullptr, GL_DYNAMIC_DRAW);
@@ -786,6 +789,7 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
         capsAndBases[typeCount + t]= bucketBases[t];
     }
     const GLsizeiptr capsBytes = static_cast<GLsizeiptr>(typeCount * 2 * sizeof(uint32_t));
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_bucketCapsBuf);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_bucketCapsBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, capsBytes, capsAndBases.data(), GL_STATIC_DRAW);
@@ -794,6 +798,7 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
     // --- ActorVis SSBO (binding 12) ---
     // Per-actor visibility bit written by cull shader.
     const GLsizeiptr actorVisBytes = static_cast<GLsizeiptr>(s_maxActors * sizeof(uint32_t));
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_actorVisBuf);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_actorVisBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, actorVisBytes, nullptr, GL_DYNAMIC_DRAW);
@@ -805,6 +810,7 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
     // Allocate for the worst-case 128×128 blocks (same headroom as s_maxActors).
     s_blockCount = 128u * 128u;
     const GLsizeiptr blockVisBytes = static_cast<GLsizeiptr>(s_blockCount * sizeof(uint32_t));
+    // TIER2-EXCLUDED: substrate-gated
     glGenBuffers(1, &s_blockVisBuf);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_blockVisBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, blockVisBytes, nullptr, GL_DYNAMIC_DRAW);

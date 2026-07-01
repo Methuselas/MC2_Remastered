@@ -161,11 +161,13 @@ void ensureBuffers(int tileW, int tileH) {
                      nullptr, GL_DYNAMIC_COPY);
     }
     if (s_sphereCount == 0) {
+        // TIER2-EXCLUDED: substrate-gated
         glGenBuffers(1, &s_sphereCount);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sphereCount);
         glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLuint), nullptr, GL_DYNAMIC_COPY);
     }
     if (s_cursorBuf == 0) {
+        // TIER2-EXCLUDED: substrate-gated
         glGenBuffers(1, &s_cursorBuf);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_cursorBuf);
         glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLuint), nullptr, GL_DYNAMIC_COPY);
@@ -174,6 +176,7 @@ void ensureBuffers(int tileW, int tileH) {
     // Index pool: up to kMaxLights indices per tile (a tile can bin every light).
     const GLsizeiptr poolBytes = (GLsizeiptr)sizeof(GLuint) * nTiles * kMaxLights;
     if (s_indexPool == 0 || tileW != s_headerW || tileH != s_headerH) {
+        // TIER2-EXCLUDED: substrate-gated
         if (s_indexPool == 0) glGenBuffers(1, &s_indexPool);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_indexPool);
         glBufferData(GL_SHADER_STORAGE_BUFFER, poolBytes, nullptr, GL_DYNAMIC_COPY);

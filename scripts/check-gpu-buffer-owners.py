@@ -61,6 +61,29 @@ SSBO_UBO_NAME = re.compile(r"[Ss][Ss][Bb][Oo]|[Uu][Bb][Oo]")
 # `glGenBuffers(<n>, &<var>)` -- capture the target var name.
 GEN_BUFFERS = re.compile(r"glGenBuffers\s*\(\s*[^,]+,\s*&\s*([A-Za-z_]\w*)\s*\)")
 
+# GPU-BUFFER-GATE-TIGHTEN-1: the DEFINITIVE SSBO/UBO signal is the binding
+# TARGET, not the handle's name. Any buffer bound with
+#   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, <slot>, <handle>)
+#   glBindBufferBase(GL_UNIFORM_BUFFER,        <slot>, <handle>)
+# IS an SSBO/UBO regardless of whether its name contains "ssbo"/"ubo". This
+# catches *Buffer / *Buf / *Count / *Pool-named handles (water-stream
+# g_recipeBuffer/g_thinBuffer, lightgrid s_cursorBuf/s_indexPool/s_sphereCount,
+# gpu-cull s_bucketCountsBuf/s_actorVisBuf/..., terrain-surface s_surfaceVB/TB)
+# that escape the pure-name heuristic. The set of bound handles SUPERSETS the
+# name heuristic; the partition scan unions the two.
+BIND_BASE = re.compile(
+    r"glBindBufferBase\s*\(\s*GL_(?:SHADER_STORAGE|UNIFORM)_BUFFER\s*,"
+    r"\s*[^,]+,\s*(.+?)\)\s*;")
+
+# Peel the wrappers off a bound-handle expression to reach the backing var name:
+#   static_cast<GLuint>(x) / (GLuint)x  -> x
+#   owner.glName                        -> (owned, resolved separately)
+#   0 / 0u / nullptr                    -> unbind, not a handle
+# Returns the bare identifier, or None if the expr is a literal/getter-call/field
+# access that doesn't name a glGenBuffers target var directly.
+CAST_PREFIX = re.compile(r"^\s*(?:static_cast\s*<[^>]+>\s*\(\s*|\(\s*GLuint\s*\)\s*)")
+BARE_IDENT  = re.compile(r"^([A-Za-z_]\w*)\s*\)*\s*$")
+
 # `// TIER2-EXCLUDED: <reason>`
 TIER2_TAG = re.compile(r"//\s*TIER2-EXCLUDED:\s*([A-Za-z0-9_-]+)")
 
@@ -168,14 +191,24 @@ def owner_aliased_names():
     return aliased
 
 
-def check_partition(aliased):
-    """Every SSBO/UBO-named glGenBuffers target is owned OR // TIER2-EXCLUDED.
+def bound_ssbo_ubo_vars():
+    """glGenBuffers target vars bound as SSBO/UBO via their binding TARGET.
 
-    Returns (failures, n_owned, n_excluded).
+    Scans SCAN_DIRS for glBindBufferBase(GL_SHADER_STORAGE_BUFFER/GL_UNIFORM_
+    BUFFER, slot, <handle>), peels casts/parens, and keeps the bare identifier.
+    `owner.glName` field-access and literal `0`/`0u`/`nullptr` unbinds and
+    getter calls are dropped -- their backing buffer is named + classified at
+    its own glGenBuffers site (or is an owner). The returned set is intersected
+    with actual glGenBuffers target vars by the caller, so getter-return locals
+    that never appear at a glGenBuffers(&x) site simply don't widen anything.
+
+    Keyed PER FILE (relpath -> set of names): a handle counts as SSBO/UBO only
+    where it is bound as one in its OWN TU. This avoids cross-file name-collision
+    false positives -- e.g. gameos_graphics's draw-indirect `s_indirectCmdBuf`
+    must NOT inherit SSBO-scope from gpu_cull_compute's unrelated same-named
+    SSBO global.
     """
-    failures = []
-    n_owned = 0
-    n_excluded = 0
+    by_file = {}
     for d in SCAN_DIRS:
         if not os.path.isdir(d):
             continue
@@ -184,14 +217,53 @@ def check_partition(aliased):
                 continue
             path = os.path.join(d, fn)
             rel = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
+            text = strip_comments(read(path))
+            names = set()
+            for m in BIND_BASE.finditer(text):
+                expr = m.group(1).strip()
+                expr = CAST_PREFIX.sub("", expr)  # drop one cast/paren wrapper
+                bm = BARE_IDENT.match(expr)
+                if bm:
+                    names.add(bm.group(1))
+            by_file[rel] = names
+    return by_file
+
+
+def check_partition(aliased, bound):
+    """Every SSBO/UBO glGenBuffers target is owned OR // TIER2-EXCLUDED.
+
+    In-scope = name-heuristic (SSBO_UBO_NAME) UNION binding-target (var appears
+    as a glBindBufferBase(GL_SHADER_STORAGE/UNIFORM_BUFFER,...) handle). The
+    union closes the *Buffer/*Buf/*Count/*Pool name-escape hole.
+
+    Returns (failures, n_owned, n_excluded, n_bind_caught).
+    n_bind_caught = in-scope-ONLY-because-of-binding-target (not name-matched).
+    """
+    failures = []
+    n_owned = 0
+    n_excluded = 0
+    n_bind_caught = 0
+    for d in SCAN_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".cpp"):
+                continue
+            path = os.path.join(d, fn)
+            rel = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
+            bound_here = bound.get(rel, set())
             lines = read(path).splitlines()
             for i, line in enumerate(lines):
                 gm = GEN_BUFFERS.search(line)
                 if not gm:
                     continue
                 var = gm.group(1)
-                if not SSBO_UBO_NAME.search(var):
-                    continue  # VBO/IBO/generic -- out of scope.
+                name_hit = bool(SSBO_UBO_NAME.search(var))
+                bind_hit = var in bound_here
+                if not name_hit and not bind_hit:
+                    continue  # VBO/IBO/generic, never SSBO/UBO-bound -- oo scope.
+                if bind_hit and not name_hit:
+                    n_bind_caught += 1  # closed the name-escape hole.
                 where = "%s:%d %s" % (rel, i + 1, var)
 
                 # OWNED via macro alias (#define var (owner.glName)).
@@ -225,7 +297,7 @@ def check_partition(aliased):
                         % (where, tag, sorted(TIER2_REASONS)))
                 else:
                     n_excluded += 1
-    return failures, n_owned, n_excluded
+    return failures, n_owned, n_excluded, n_bind_caught
 
 
 def main():
@@ -314,7 +386,8 @@ def main():
 
     # GPU-BUFFER-EXCLUSION-LEDGER-1: owned-OR-excluded partition over every
     # SSBO/UBO-named glGenBuffers target.
-    part_failures, n_owned_gen, n_excluded = check_partition(owner_aliased_names())
+    part_failures, n_owned_gen, n_excluded, n_bind_caught = check_partition(
+        owner_aliased_names(), bound_ssbo_ubo_vars())
     failures.extend(part_failures)
 
     if failures:
@@ -329,11 +402,13 @@ def main():
         for where, idname, life in ok:
             print("  OK  %-30s %-12s %s" % (idname, life, where))
         print("[check-gpu-buffer-owners] SSBO/UBO partition: %d owned "
-              "(GpuBufferOwner), %d excluded-by-tag, 0 unclassified."
-              % (n_owned_gen, n_excluded))
+              "(GpuBufferOwner), %d excluded-by-tag, %d caught-by-binding-target "
+              "(not name-matched), 0 unclassified."
+              % (n_owned_gen, n_excluded, n_bind_caught))
         print("[check-gpu-buffer-owners] PASS -- all owners use a registered id "
               "+ concrete non-Unset lifetime + matching name; every SSBO/UBO "
-              "glGenBuffers is owned OR // TIER2-EXCLUDED; runtime doctest present.")
+              "(by name OR glBindBufferBase target) glGenBuffers is owned OR "
+              "// TIER2-EXCLUDED; runtime doctest present.")
     return 0
 
 

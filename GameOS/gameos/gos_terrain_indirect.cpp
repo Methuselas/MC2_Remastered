@@ -1988,6 +1988,7 @@ static bool ResourcesReady() {
 
     // Indirect command buffer.
     if (g_indirectCmdBuffer == 0) {
+        // TIER2-EXCLUDED: dead-path
         glGenBuffers(1, &g_indirectCmdBuffer);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
         // Step 2b (VPL retirement, C2): pre-initialize {count=0,
