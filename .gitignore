@@ -1,4 +1,5 @@
 .ccls-cache/
+_harness_out/
 .claude/settings.local.json
 tags
 CMakeCache.txt
