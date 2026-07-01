@@ -37,8 +37,58 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 #include <string>
 #include <vector>
+
+// VULKAN-ISLAND-HEALTH-DUMP-1: process-lifetime health/diagnostic snapshot for the
+// EdgeFog Vulkan island. A single file-static instance is written by the island and
+// read (via the extern "C" getter below) by the debug-state dump writer, so the
+// health report survives island teardown (shutdown dump still sees the last values).
+// All fields default to the "compiled but never ran" state.
+namespace {
+struct IslandHealth {
+    int  vulkanAvailable        = 0;   // volkInitialize() succeeded
+    int  islandBuildEnabled     = 1;   // this TU compiled (always 1 here)
+    int  islandRuntimeGate      = 0;   // MC2_VULKAN_EDGE_FOG_ISLAND=1
+    char deviceName[256]        = {0}; // VkPhysicalDeviceProperties.deviceName
+    unsigned long validationErrors = 0;   // 0 (no validation layer wired yet)
+    unsigned long edgeFogAttempted = 0;    // frames the island path was entered
+    unsigned long edgeFogUsedVulkan= 0;    // frames actually composited via Vulkan
+    char fallbackReason[64]     = {0}; // "" when healthy; else why GL fallback happened
+    double readbackUs           = 0.0; // last-frame image->buffer readback + map (us)
+    double copyDepthUs          = 0.0; // last-frame GL getTexImage -> staging copy (us)
+    double renderUs             = 0.0; // last-frame submit+fence-wait render (us)
+};
+IslandHealth g_health;
+
+void setFallback(const char* reason) {
+    std::strncpy(g_health.fallbackReason, reason ? reason : "",
+                 sizeof(g_health.fallbackReason) - 1);
+    g_health.fallbackReason[sizeof(g_health.fallbackReason) - 1] = '\0';
+}
+} // namespace
+
+// Read-only accessor consumed by GameOS/gameos/debug_state_dump.cpp (under the same
+// #ifdef MC2_VULKAN_ISLAND). Copies the POD out; no Vulkan headers leak.
+extern "C" void mc2_vulkan_island_health(
+    int* vulkanAvailable, int* islandBuildEnabled, int* islandRuntimeGate,
+    const char** deviceName, unsigned long* validationErrors,
+    unsigned long* edgeFogAttempted, unsigned long* edgeFogUsedVulkan,
+    const char** fallbackReason,
+    double* readbackUs, double* copyDepthUs, double* renderUs) {
+    if (vulkanAvailable)    *vulkanAvailable    = g_health.vulkanAvailable;
+    if (islandBuildEnabled) *islandBuildEnabled  = g_health.islandBuildEnabled;
+    if (islandRuntimeGate)  *islandRuntimeGate   = g_health.islandRuntimeGate;
+    if (deviceName)         *deviceName          = g_health.deviceName;
+    if (validationErrors)   *validationErrors    = g_health.validationErrors;
+    if (edgeFogAttempted)   *edgeFogAttempted    = g_health.edgeFogAttempted;
+    if (edgeFogUsedVulkan)  *edgeFogUsedVulkan    = g_health.edgeFogUsedVulkan;
+    if (fallbackReason)     *fallbackReason      = g_health.fallbackReason;
+    if (readbackUs)         *readbackUs          = g_health.readbackUs;
+    if (copyDepthUs)        *copyDepthUs         = g_health.copyDepthUs;
+    if (renderUs)           *renderUs            = g_health.renderUs;
+}
 
 namespace {
 
@@ -62,9 +112,12 @@ bool ensure_volk_initialized() {
         vlog("volkInitialize() failed (VkResult=%d) -- no Vulkan runtime. "
              "Falling back to GL edge fog.", (int)r);
         state = -1;
+        g_health.vulkanAvailable = 0;
+        setFallback("no_vulkan_runtime");
         return false;
     }
     state = 1;
+    g_health.vulkanAvailable = 1;
     return true;
 }
 
@@ -266,6 +319,14 @@ bool build_island(gosPostProcess::VulkanEdgeFogIsland* s, int W, int H) {
     std::vector<VkPhysicalDevice> devs(devCount);
     vkEnumeratePhysicalDevices(s->instance, &devCount, devs.data());
     s->phys = devs[0];
+
+    // Health: record the selected device name for the diagnostic dump.
+    {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(s->phys, &props);
+        std::strncpy(g_health.deviceName, props.deviceName, sizeof(g_health.deviceName) - 1);
+        g_health.deviceName[sizeof(g_health.deviceName) - 1] = '\0';
+    }
 
     uint32_t qfCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(s->phys, &qfCount, nullptr);
@@ -474,7 +535,7 @@ bool build_island(gosPostProcess::VulkanEdgeFogIsland* s, int W, int H) {
     {
         s->vert = load_spv(s->device, spv_dir() + "edge_fog.vert.spv");
         s->frag = load_spv(s->device, spv_dir() + "edge_fog.frag.spv");
-        if (s->vert == VK_NULL_HANDLE || s->frag == VK_NULL_HANDLE) return false;
+        if (s->vert == VK_NULL_HANDLE || s->frag == VK_NULL_HANDLE) { setFallback("spv_load_failed"); return false; }
 
         VkPipelineShaderStageCreateInfo stages[2]{};
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -562,6 +623,7 @@ bool build_island(gosPostProcess::VulkanEdgeFogIsland* s, int W, int H) {
     s->depthScratch.resize((size_t)W * H);
     s->colorScratch.resize((size_t)W * H * 4);
     s->inited = true;
+    setFallback("");  // init succeeded -> healthy, no fallback
     vlog("island initialized: %dx%d device ready (depth D32_SFLOAT, color RGBA16F).", W, H);
     return true;
 }
@@ -579,6 +641,7 @@ bool gosPostProcess::vulkanEdgeFogIslandEnabled()
     if (envState == -2) {
         const char* e = std::getenv("MC2_VULKAN_EDGE_FOG_ISLAND");
         envState = (e && (e[0] == '1')) ? 1 : 0;
+        g_health.islandRuntimeGate = envState;
         if (envState == 1) vlog("MC2_VULKAN_EDGE_FOG_ISLAND=1 -- island gate ON (lazy init on first edge-fog).");
     }
     if (envState != 1) return false;
@@ -594,6 +657,9 @@ bool gosPostProcess::vulkanEdgeFogIslandEnabled()
         if (s->inited) destroy_island(s);   // resize -> rebuild
         if (!build_island(s, width_, height_)) {
             vlog("island init FAILED -- disabling, falling back to GL edge fog for the rest of the run.");
+            // spv load is the only build step that logs a distinct message; keep the
+            // reason generic unless volk itself failed (already set no_vulkan_runtime).
+            if (g_health.fallbackReason[0] == '\0') setFallback("device_init_failed");
             destroy_island(s);
             s->disabled = true;
             return false;
@@ -617,6 +683,14 @@ void gosPostProcess::runEdgeFogVulkan()
     if (!sceneHasTerrain_) return;
 
     const int W = s->width, H = s->height;
+
+    // Health: this frame entered the Vulkan island path.
+    ++g_health.edgeFogAttempted;
+    using clk = std::chrono::steady_clock;
+    auto usSince = [](clk::time_point t0) {
+        return std::chrono::duration<double, std::micro>(clk::now() - t0).count();
+    };
+    const clk::time_point tCopy0 = clk::now();
 
     // ---- 1) Read GL scene depth + color into staging (via CPU scratch) ----
     // Depth: normalized [0,1] float, same value the GL depth sampler .r returns.
@@ -668,6 +742,10 @@ void gosPostProcess::runEdgeFogVulkan()
         }
     }
 
+    // Health: GL readback -> staging copy done. (Includes the two glGetTexImage
+    // pulls, which dominate this step -- the "depth+color copy" hot cost.)
+    g_health.copyDepthUs = usSince(tCopy0);
+
     // ---- 2) Upload the param UBO ----
     {
         EdgeFogParams params{};
@@ -689,6 +767,7 @@ void gosPostProcess::runEdgeFogVulkan()
     }
 
     // ---- 3) Record + submit: upload images, render pass, readback ----
+    const clk::time_point tRender0 = clk::now();
     vkResetCommandBuffer(s->cbuf, 0);
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -756,11 +835,15 @@ void gosPostProcess::runEdgeFogVulkan()
     if (vkQueueSubmit(s->queue, 1, &si, s->fence) != VK_SUCCESS) return;
     if (vkWaitForFences(s->device, 1, &s->fence, VK_TRUE, 5ull * 1000 * 1000 * 1000) != VK_SUCCESS) {
         vlog("fence wait failed/timeout -- disabling island, GL fallback next frame.");
+        setFallback("fence_timeout");
         s->disabled = true;
         return;
     }
+    // Health: GPU work (record+submit+fence-wait) done.
+    g_health.renderUs = usSince(tRender0);
 
     // ---- 4) Read back the blended color and write it into sceneColorTex_ ----
+    const clk::time_point tReadback0 = clk::now();
     {
         void* p = nullptr;
         if (vmaMapMemory(s->allocator, s->colorReadbackAlloc, &p) == VK_SUCCESS) {
@@ -772,6 +855,10 @@ void gosPostProcess::runEdgeFogVulkan()
         }
     }
     glActiveTexture(GL_TEXTURE0);
+
+    // Health: readback+writeback done, and this frame fully composited via Vulkan.
+    g_health.readbackUs = usSince(tReadback0);
+    ++g_health.edgeFogUsedVulkan;
 }
 
 // ---------------------------------------------------------------------------
@@ -779,6 +866,17 @@ void gosPostProcess::runEdgeFogVulkan()
 // ---------------------------------------------------------------------------
 void gosPostProcess::destroyVulkanEdgeFogIsland()
 {
+    // VULKAN-ISLAND-HEALTH-DUMP-1: teardown health line (also surfaced in the
+    // debug-state dump JSON "vulkan_island" section).
+    vlog("[VK_ISLAND_HEALTH] vulkan_available=%d island_build_enabled=%d "
+         "island_runtime_gate_enabled=%d device_name=\"%s\" validation_errors=%lu "
+         "edgefog_attempted=%lu edgefog_used_vulkan=%lu edgefog_fallback_reason=\"%s\" "
+         "readback_us=%.1f copy_depth_us=%.1f render_us=%.1f",
+         g_health.vulkanAvailable, g_health.islandBuildEnabled, g_health.islandRuntimeGate,
+         g_health.deviceName, g_health.validationErrors, g_health.edgeFogAttempted,
+         g_health.edgeFogUsedVulkan, g_health.fallbackReason,
+         g_health.readbackUs, g_health.copyDepthUs, g_health.renderUs);
+
     if (!vkFogIsland_) return;
     destroy_island(vkFogIsland_);
     delete vkFogIsland_;
