@@ -82,6 +82,12 @@ set(SOURCES ${SOURCES}
     mc2_hitch_trace.cpp
     )
 
+# VULKAN-BACKEND-SKELETON-1: only compile the skeleton TU when MC2_VULKAN=ON.
+# When OFF the TU is not added -> no Vulkan headers/loader pulled in.
+if(MC2_VULKAN)
+    list(APPEND SOURCES vulkan_backend_skeleton.cpp)
+endif()
+
 set_source_files_properties(
     ${CMAKE_SOURCE_DIR}/3rdparty/tinyexr/miniz.c
     PROPERTIES LANGUAGE C
@@ -107,6 +113,13 @@ add_library(gameos ${SOURCES})
 # orders the link correctly and gameos_editor gets the same resolution.
 target_link_libraries(gameos PRIVATE rendercore)
 
+# VULKAN-BACKEND-SKELETON-1: link the Vulkan loader + define MC2_VULKAN only
+# when the option is ON. gameos_editor gets the same treatment below.
+if(MC2_VULKAN)
+    target_link_libraries(gameos PRIVATE Vulkan::Vulkan)
+    target_compile_definitions(gameos PRIVATE MC2_VULKAN)
+endif()
+
 # gameos_editor: same sources as gameos minus gos_render.cpp (the GL
 # renderer main). The MC2 Mission Editor (EditRel) links this instead of
 # gameos to avoid pulling in a second renderer init. From engine-standalone PR #36.
@@ -114,6 +127,10 @@ set(GAMEOS_EDITOR_SOURCES ${SOURCES})
 list(REMOVE_ITEM GAMEOS_EDITOR_SOURCES gos_render.cpp)
 add_library(gameos_editor ${GAMEOS_EDITOR_SOURCES})
 target_link_libraries(gameos_editor PRIVATE rendercore)
+if(MC2_VULKAN)
+    target_link_libraries(gameos_editor PRIVATE Vulkan::Vulkan)
+    target_compile_definitions(gameos_editor PRIVATE MC2_VULKAN)
+endif()
 
 add_library(gameos_main ${MAIN_SRC})
 

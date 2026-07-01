@@ -106,6 +106,16 @@ option(MC2_IMGUI "Enable in-game ImGui UI" OFF)
 # so stock builds pay nothing; runtime still requires MC2_DETERMINISTIC_RNG=1 +
 # MC2_DIAG_TAGS=RNG. Turn ON only for determinism-proof builds.
 option(MC2_RNG_TRACE "Compile the gos_rand RNG diagnostic trace (DETERMINISTIC-RNG-1)" OFF)
+# VULKAN-BACKEND-SKELETON-1: compile-gate the Vulkan bootstrap skeleton TU.
+# Default OFF -> zero Vulkan code compiled, zero Vulkan headers/loader required,
+# normal build completely unaffected + no Vulkan dependency. When ON, we
+# find_package(Vulkan) (the SDK loader/headers), link it into gameos, and
+# compile GameOS/gameos/vulkan_backend_skeleton.cpp under -DMC2_VULKAN.
+option(MC2_VULKAN "Compile the Vulkan bootstrap skeleton (VULKAN-BACKEND-SKELETON-1)" OFF)
+if(MC2_VULKAN)
+    find_package(Vulkan REQUIRED)
+    message(STATUS "MC2_VULKAN=ON -- Vulkan found: ${Vulkan_LIBRARY} (include ${Vulkan_INCLUDE_DIR})")
+endif()
 
 if(MC2_ASAN)
     if(NOT MSVC)
