@@ -171,6 +171,430 @@ bool mc2_vulkan_probe_shaders(const char* spvDir) {
     return ok;
 }
 
+// ============================================================================
+// VULKAN-FULLSCREEN-TRIANGLE-1: headless offscreen render + readback + verify.
+// Proves shaders+pipeline+renderpass+draw+readback end to end. No surface/
+// swapchain/window. Renders the fullscreen.vert/frag pipeline to an offscreen
+// RGBA8 VkImage, copies to a host-visible buffer, reads back, verifies the
+// rendered UV gradient (the oversized fullscreen triangle covers the whole
+// viewport, so every pixel carries the frag's interpolated vUV; if nothing
+// drew all pixels stay the clear color and the checks fail).
+// Fail-soft: any VkResult error -> log + return false, no crash.
+// ============================================================================
+
+namespace {
+
+// Pick a memory type index satisfying typeBits + required property flags.
+// Returns UINT32_MAX if none.
+uint32_t find_mem_type(VkPhysicalDevice phys, uint32_t typeBits,
+                       VkMemoryPropertyFlags want) {
+    VkPhysicalDeviceMemoryProperties mp{};
+    vkGetPhysicalDeviceMemoryProperties(phys, &mp);
+    for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
+        if ((typeBits & (1u << i)) &&
+            (mp.memoryTypes[i].propertyFlags & want) == want) {
+            return i;
+        }
+    }
+    return UINT32_MAX;
+}
+
+} // namespace
+
+bool mc2_vulkan_probe_triangle(const char* spvDir) {
+    const uint32_t W = 64, H = 64;
+    const VkFormat FMT = VK_FORMAT_R8G8B8A8_UNORM;
+
+    // ---- VkInstance (headless) ---------------------------------------------
+    VkApplicationInfo app{};
+    app.sType            = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app.pApplicationName = "MC2 (Vulkan triangle probe)";
+    app.pEngineName      = "MC2-GameOS";
+    app.apiVersion       = VK_API_VERSION_1_1;
+
+    VkInstanceCreateInfo ici{};
+    ici.sType            = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    ici.pApplicationInfo = &app;
+
+    VkInstance instance = VK_NULL_HANDLE;
+    VkResult r = vkCreateInstance(&ici, nullptr, &instance);
+    if (r != VK_SUCCESS) {
+        log("triangle-probe: vkCreateInstance failed (VkResult=%d). fail-soft.", (int)r);
+        return false;
+    }
+
+    // ---- Physical device ----------------------------------------------------
+    uint32_t devCount = 0;
+    r = vkEnumeratePhysicalDevices(instance, &devCount, nullptr);
+    if (r != VK_SUCCESS || devCount == 0) {
+        log("triangle-probe: no physical devices (VkResult=%d, count=%u). fail-soft.", (int)r, devCount);
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+    std::vector<VkPhysicalDevice> devs(devCount);
+    vkEnumeratePhysicalDevices(instance, &devCount, devs.data());
+    VkPhysicalDevice phys = devs[0];
+
+    // ---- Graphics queue family ---------------------------------------------
+    uint32_t qfCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, nullptr);
+    std::vector<VkQueueFamilyProperties> qfs(qfCount);
+    if (qfCount) vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, qfs.data());
+    uint32_t gfxFamily = UINT32_MAX;
+    for (uint32_t q = 0; q < qfCount; ++q) {
+        if (qfs[q].queueFlags & VK_QUEUE_GRAPHICS_BIT) { gfxFamily = q; break; }
+    }
+    if (gfxFamily == UINT32_MAX) {
+        log("triangle-probe: no graphics queue family. fail-soft.");
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+
+    // ---- Logical device + queue (headless, no extensions) -------------------
+    float prio = 1.0f;
+    VkDeviceQueueCreateInfo qci{};
+    qci.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    qci.queueFamilyIndex = gfxFamily;
+    qci.queueCount       = 1;
+    qci.pQueuePriorities = &prio;
+
+    VkDeviceCreateInfo dci{};
+    dci.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    dci.queueCreateInfoCount = 1;
+    dci.pQueueCreateInfos    = &qci;
+
+    VkDevice device = VK_NULL_HANDLE;
+    r = vkCreateDevice(phys, &dci, nullptr, &device);
+    if (r != VK_SUCCESS) {
+        log("triangle-probe: vkCreateDevice failed (VkResult=%d). fail-soft.", (int)r);
+        vkDestroyInstance(instance, nullptr);
+        return false;
+    }
+    VkQueue queue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(device, gfxFamily, 0, &queue);
+
+    // Everything past here is cleaned up via the single `done` epilogue.
+    bool ok = false;
+    VkShaderModule vert = VK_NULL_HANDLE, frag = VK_NULL_HANDLE;
+    VkImage        image   = VK_NULL_HANDLE;
+    VkDeviceMemory imageMem = VK_NULL_HANDLE;
+    VkImageView    view    = VK_NULL_HANDLE;
+    VkRenderPass   rpass   = VK_NULL_HANDLE;
+    VkFramebuffer  fb      = VK_NULL_HANDLE;
+    VkPipelineLayout playout = VK_NULL_HANDLE;
+    VkPipeline     pipe    = VK_NULL_HANDLE;
+    VkBuffer       dst     = VK_NULL_HANDLE;
+    VkDeviceMemory dstMem  = VK_NULL_HANDLE;
+    VkCommandPool  cpool   = VK_NULL_HANDLE;
+    VkCommandBuffer cbuf   = VK_NULL_HANDLE;
+    VkFence        fence   = VK_NULL_HANDLE;
+
+    // ---- Shader modules -----------------------------------------------------
+    {
+        std::string dir = spvDir ? spvDir : ".";
+        if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') dir += '/';
+        vert = mc2_vulkan_load_spv(device, (dir + "fullscreen.vert.spv").c_str());
+        frag = mc2_vulkan_load_spv(device, (dir + "fullscreen.frag.spv").c_str());
+        if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE) {
+            log("triangle-probe: shader module load failed. fail-soft.");
+            goto done;
+        }
+    }
+
+    // ---- Offscreen color image + memory + view ------------------------------
+    {
+        VkImageCreateInfo ii{};
+        ii.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        ii.imageType     = VK_IMAGE_TYPE_2D;
+        ii.format        = FMT;
+        ii.extent        = {W, H, 1};
+        ii.mipLevels     = 1;
+        ii.arrayLayers   = 1;
+        ii.samples       = VK_SAMPLE_COUNT_1_BIT;
+        ii.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        ii.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                           VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        r = vkCreateImage(device, &ii, nullptr, &image);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkCreateImage failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkMemoryRequirements mr{};
+        vkGetImageMemoryRequirements(device, image, &mr);
+        uint32_t mt = find_mem_type(phys, mr.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (mt == UINT32_MAX) { log("triangle-probe: no device-local memtype for image. fail-soft."); goto done; }
+        VkMemoryAllocateInfo mai{};
+        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        mai.allocationSize  = mr.size;
+        mai.memoryTypeIndex = mt;
+        r = vkAllocateMemory(device, &mai, nullptr, &imageMem);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkAllocateMemory(image) failed (%d). fail-soft.", (int)r); goto done; }
+        vkBindImageMemory(device, image, imageMem, 0);
+
+        VkImageViewCreateInfo vi{};
+        vi.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vi.image    = image;
+        vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.format   = FMT;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        r = vkCreateImageView(device, &vi, nullptr, &view);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkCreateImageView failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Render pass (1 color attachment, clear->store) ---------------------
+    {
+        VkAttachmentDescription att{};
+        att.format         = FMT;
+        att.samples        = VK_SAMPLE_COUNT_1_BIT;
+        att.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        att.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+        att.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        att.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+        att.finalLayout    = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+
+        VkAttachmentReference ref{};
+        ref.attachment = 0;
+        ref.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = 1;
+        sub.pColorAttachments    = &ref;
+
+        VkRenderPassCreateInfo rpci{};
+        rpci.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rpci.attachmentCount = 1;
+        rpci.pAttachments    = &att;
+        rpci.subpassCount    = 1;
+        rpci.pSubpasses      = &sub;
+        r = vkCreateRenderPass(device, &rpci, nullptr, &rpass);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkCreateRenderPass failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkFramebufferCreateInfo fci{};
+        fci.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fci.renderPass      = rpass;
+        fci.attachmentCount = 1;
+        fci.pAttachments    = &view;
+        fci.width           = W;
+        fci.height          = H;
+        fci.layers          = 1;
+        r = vkCreateFramebuffer(device, &fci, nullptr, &fb);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkCreateFramebuffer failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Graphics pipeline (fullscreen.vert/frag; no vertex input) ----------
+    {
+        VkPipelineShaderStageCreateInfo stages[2]{};
+        stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = vert;
+        stages[0].pName  = "main";
+        stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = frag;
+        stages[1].pName  = "main";
+
+        VkPipelineVertexInputStateCreateInfo vin{};
+        vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+        VkPipelineInputAssemblyStateCreateInfo ia{};
+        ia.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+        VkViewport vp{0.0f, 0.0f, (float)W, (float)H, 0.0f, 1.0f};
+        VkRect2D   sc{{0, 0}, {W, H}};
+        VkPipelineViewportStateCreateInfo vps{};
+        vps.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        vps.viewportCount = 1;
+        vps.pViewports    = &vp;
+        vps.scissorCount  = 1;
+        vps.pScissors     = &sc;
+
+        VkPipelineRasterizationStateCreateInfo rs{};
+        rs.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rs.polygonMode = VK_POLYGON_MODE_FILL;
+        rs.cullMode    = VK_CULL_MODE_NONE;
+        rs.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rs.lineWidth   = 1.0f;
+
+        VkPipelineMultisampleStateCreateInfo ms{};
+        ms.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkPipelineColorBlendAttachmentState cba{};
+        cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                             VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        cba.blendEnable    = VK_FALSE;
+        VkPipelineColorBlendStateCreateInfo cb{};
+        cb.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        cb.attachmentCount = 1;
+        cb.pAttachments    = &cba;
+
+        VkPipelineLayoutCreateInfo plci{};
+        plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        r = vkCreatePipelineLayout(device, &plci, nullptr, &playout);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkCreatePipelineLayout failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkGraphicsPipelineCreateInfo gp{};
+        gp.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        gp.stageCount          = 2;
+        gp.pStages             = stages;
+        gp.pVertexInputState   = &vin;
+        gp.pInputAssemblyState = &ia;
+        gp.pViewportState      = &vps;
+        gp.pRasterizationState = &rs;
+        gp.pMultisampleState   = &ms;
+        gp.pColorBlendState    = &cb;
+        gp.layout              = playout;
+        gp.renderPass          = rpass;
+        gp.subpass             = 0;
+        r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &gp, nullptr, &pipe);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkCreateGraphicsPipelines failed (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Host-visible readback buffer (W*H*4 bytes) -------------------------
+    {
+        VkBufferCreateInfo bci{};
+        bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bci.size  = (VkDeviceSize)W * H * 4;
+        bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        r = vkCreateBuffer(device, &bci, nullptr, &dst);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkCreateBuffer failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkMemoryRequirements mr{};
+        vkGetBufferMemoryRequirements(device, dst, &mr);
+        uint32_t mt = find_mem_type(phys, mr.memoryTypeBits,
+                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (mt == UINT32_MAX) { log("triangle-probe: no host-visible memtype. fail-soft."); goto done; }
+        VkMemoryAllocateInfo mai{};
+        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        mai.allocationSize  = mr.size;
+        mai.memoryTypeIndex = mt;
+        r = vkAllocateMemory(device, &mai, nullptr, &dstMem);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkAllocateMemory(buffer) failed (%d). fail-soft.", (int)r); goto done; }
+        vkBindBufferMemory(device, dst, dstMem, 0);
+    }
+
+    // ---- Command buffer: renderpass + draw(3) + copy image->buffer ----------
+    {
+        VkCommandPoolCreateInfo pci{};
+        pci.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pci.queueFamilyIndex = gfxFamily;
+        r = vkCreateCommandPool(device, &pci, nullptr, &cpool);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkCreateCommandPool failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkCommandBufferAllocateInfo cai{};
+        cai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cai.commandPool        = cpool;
+        cai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cai.commandBufferCount = 1;
+        r = vkAllocateCommandBuffers(device, &cai, &cbuf);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkAllocateCommandBuffers failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkCommandBufferBeginInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        r = vkBeginCommandBuffer(cbuf, &bi);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkBeginCommandBuffer failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkClearValue clear{};
+        clear.color = {{0.0f, 0.0f, 0.0f, 1.0f}}; // clear = opaque black
+        VkRenderPassBeginInfo rbi{};
+        rbi.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rbi.renderPass        = rpass;
+        rbi.framebuffer       = fb;
+        rbi.renderArea        = {{0, 0}, {W, H}};
+        rbi.clearValueCount   = 1;
+        rbi.pClearValues      = &clear;
+        vkCmdBeginRenderPass(cbuf, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+        vkCmdDraw(cbuf, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cbuf);
+        // renderpass finalLayout already TRANSFER_SRC_OPTIMAL -> copy directly.
+
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent      = {W, H, 1};
+        vkCmdCopyImageToBuffer(cbuf, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               dst, 1, &region);
+        r = vkEndCommandBuffer(cbuf);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkEndCommandBuffer failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkFenceCreateInfo fnci{};
+        fnci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        r = vkCreateFence(device, &fnci, nullptr, &fence);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkCreateFence failed (%d). fail-soft.", (int)r); goto done; }
+
+        VkSubmitInfo si{};
+        si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.commandBufferCount = 1;
+        si.pCommandBuffers    = &cbuf;
+        r = vkQueueSubmit(queue, 1, &si, fence);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkQueueSubmit failed (%d). fail-soft.", (int)r); goto done; }
+        r = vkWaitForFences(device, 1, &fence, VK_TRUE, 5ull * 1000 * 1000 * 1000);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkWaitForFences failed/timeout (%d). fail-soft.", (int)r); goto done; }
+    }
+
+    // ---- Read back + verify -------------------------------------------------
+    {
+        void* mapped = nullptr;
+        r = vkMapMemory(device, dstMem, 0, (VkDeviceSize)W * H * 4, 0, &mapped);
+        if (r != VK_SUCCESS) { log("triangle-probe: vkMapMemory failed (%d). fail-soft.", (int)r); goto done; }
+        const unsigned char* px = static_cast<const unsigned char*>(mapped);
+        auto at = [&](uint32_t x, uint32_t y) { return px + ((size_t)y * W + x) * 4; };
+
+        // The fullscreen triangle is oversized (uv in [0,2]x[0,2] -> covers the
+        // whole viewport), so every sample is INSIDE the triangle and carries
+        // the frag's interpolated UV output vec4(vUV,0,1) -- there is no clear
+        // region left visible. We verify the pipeline drew + interpolated by
+        // checking the UV gradient at three probes (B~0, A~255 throughout):
+        //   center (W/2,H/2)  uv~=(0.5,0.5) -> ~(128,128,0,255)
+        //   top-left (0,0)    uv~=(0,0)     -> ~(0,0,0,255)
+        //   top-right (W-1,0) uv~=(1,0)     -> ~(255,0,0,255)
+        // If NOTHING drew, all pixels would be the clear color (0,0,0,255) and
+        // center/top-right R,G would fail -> proves the draw actually ran.
+        const unsigned char* c  = at(W / 2, H / 2);
+        const unsigned char* tl = at(0, 0);
+        const unsigned char* tr = at(W - 1, 0);
+
+        bool centerOK = (c[0] > 90 && c[0] < 170) &&
+                        (c[1] > 90 && c[1] < 170) &&
+                        (c[2] < 40) && (c[3] > 200);
+        bool tlOK     = (tl[0] < 40 && tl[1] < 40 && tl[2] < 40 && tl[3] > 200);
+        bool trOK     = (tr[0] > 200 && tr[1] < 40 && tr[2] < 40 && tr[3] > 200);
+
+        log("triangle-probe: center=(%u,%u,%u,%u) tl=(%u,%u,%u,%u) tr=(%u,%u,%u,%u) "
+            "centerOK=%d tlOK=%d trOK=%d",
+            c[0], c[1], c[2], c[3], tl[0], tl[1], tl[2], tl[3], tr[0], tr[1], tr[2], tr[3],
+            centerOK ? 1 : 0, tlOK ? 1 : 0, trOK ? 1 : 0);
+        vkUnmapMemory(device, dstMem);
+        ok = centerOK && tlOK && trOK;
+    }
+
+    if (ok) log("triangle-probe: PASS -- offscreen triangle rendered + readback verified.");
+    else    log("triangle-probe: FAIL -- pixel verify did not match expected.");
+
+done:
+    if (fence)   vkDestroyFence(device, fence, nullptr);
+    if (cpool)   vkDestroyCommandPool(device, cpool, nullptr); // frees cbuf
+    if (dstMem)  vkFreeMemory(device, dstMem, nullptr);
+    if (dst)     vkDestroyBuffer(device, dst, nullptr);
+    if (pipe)    vkDestroyPipeline(device, pipe, nullptr);
+    if (playout) vkDestroyPipelineLayout(device, playout, nullptr);
+    if (fb)      vkDestroyFramebuffer(device, fb, nullptr);
+    if (rpass)   vkDestroyRenderPass(device, rpass, nullptr);
+    if (view)    vkDestroyImageView(device, view, nullptr);
+    if (imageMem) vkFreeMemory(device, imageMem, nullptr);
+    if (image)   vkDestroyImage(device, image, nullptr);
+    mc2_vulkan_free_shader(device, vert);
+    mc2_vulkan_free_shader(device, frag);
+    vkDestroyDevice(device, nullptr);
+    vkDestroyInstance(instance, nullptr);
+    log("triangle-probe: cleaned up (device+instance destroyed).");
+    return ok;
+}
+
 bool mc2_vulkan_probe() {
     // ---- Optional validation layer (MC2_VULKAN_VALIDATION env) --------------
     std::vector<const char*> layers;
@@ -277,8 +701,10 @@ bool mc2_vulkan_probe_if_env() {
     // MC2_VULKAN_SPV_DIR overrides (build output holds the compiled .spv).
     const char* spvDir = std::getenv("MC2_VULKAN_SPV_DIR");
     bool shOk = mc2_vulkan_probe_shaders(spvDir ? spvDir : "shaders/vulkan");
-    log("MC2_VULKAN_PROBE: caps=%d shaders=%d", ok ? 1 : 0, shOk ? 1 : 0);
-    return ok && shOk;
+    // VULKAN-FULLSCREEN-TRIANGLE-1: capstone -- full headless offscreen render.
+    bool triOk = mc2_vulkan_probe_triangle(spvDir ? spvDir : "shaders/vulkan");
+    log("MC2_VULKAN_PROBE: caps=%d shaders=%d triangle=%d", ok ? 1 : 0, shOk ? 1 : 0, triOk ? 1 : 0);
+    return ok && shOk && triOk;
 }
 
 #endif // MC2_VULKAN

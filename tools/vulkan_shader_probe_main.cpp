@@ -12,8 +12,13 @@
 int main(int argc, char** argv) {
     const char* spvDir = (argc > 1) ? argv[1] : "shaders/vulkan";
     std::printf("[vulkan_shader_probe] spvDir=%s\n", spvDir);
-    bool caps    = mc2_vulkan_probe();
-    bool shaders = mc2_vulkan_probe_shaders(spvDir);
-    std::printf("[vulkan_shader_probe] caps=%d shaders=%d\n", caps ? 1 : 0, shaders ? 1 : 0);
-    return (caps && shaders) ? 0 : 1;
+    bool caps     = mc2_vulkan_probe();
+    bool shaders  = mc2_vulkan_probe_shaders(spvDir);
+    // VULKAN-FULLSCREEN-TRIANGLE-1: full headless offscreen render + readback.
+    bool triangle = mc2_vulkan_probe_triangle(spvDir);
+    // Fail-soft re-check: a bogus spv dir must log + return false, no crash.
+    bool failSoft = !mc2_vulkan_probe_triangle("this/dir/does/not/exist");
+    std::printf("[vulkan_shader_probe] caps=%d shaders=%d triangle=%d failSoftOK=%d\n",
+                caps ? 1 : 0, shaders ? 1 : 0, triangle ? 1 : 0, failSoft ? 1 : 0);
+    return (caps && shaders && triangle && failSoft) ? 0 : 1;
 }

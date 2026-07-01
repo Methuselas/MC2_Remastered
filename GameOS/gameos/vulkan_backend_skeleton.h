@@ -34,6 +34,18 @@ void mc2_vulkan_free_shader(VkDevice device, VkShaderModule module);
 // when MC2_VULKAN_PROBE is set.
 bool mc2_vulkan_probe_shaders(const char* spvDir);
 
+// VULKAN-FULLSCREEN-TRIANGLE-1: headless offscreen render + readback + verify.
+// Creates a headless VkDevice (no surface/swapchain), builds a render pass +
+// graphics pipeline from the compiled fullscreen.vert/frag .spv, renders a
+// fullscreen triangle to an offscreen 64x64 RGBA8 VkImage, copies it to a
+// host-visible buffer, reads it back, and verifies the rendered UV gradient
+// (the oversized triangle covers the whole viewport, so every pixel carries the
+// frag's interpolated vUV output; if nothing drew, all pixels would be the
+// clear color and the checks fail). Proves shaders +
+// pipeline + renderpass + draw + readback end to end. Fail-soft: logs + returns
+// false on any error. spvDir = directory holding the compiled .spv files.
+bool mc2_vulkan_probe_triangle(const char* spvDir);
+
 // Returns true if a VkInstance was created, at least one physical device was
 // enumerated, and the capability dump completed. Fail-soft: logs + returns
 // false on any error.
