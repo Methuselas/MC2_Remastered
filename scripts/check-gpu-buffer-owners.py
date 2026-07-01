@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""check-gpu-buffer-owners.py -- GPU-BUFFER-OWNER-CI-GATE-1 static invariant gate.
+
+Promotes the offline GpuBufferOwnerLifetimeCheck doctest (tests/unit/
+test_gpu_buffer_owner.cpp) to a durable CI gate so a future code change can't
+silently regress the completed GPU-buffer-owner arc. The doctest proves the
+RUNTIME invariant (owners register with a non-Unset lifetime); this gate proves
+the STATIC source invariant on every CI pass, no build required.
+
+Every `RenderCore::GpuBufferOwner s_foo{ id, lifetime, name, glName }`
+construction site (in GameOS/gameos/*.cpp + RenderCore/*.cpp) is parsed and the
+4 positional initializer args are checked:
+
+  1. ID REGISTERED  -- the RenderResourceId arg is a real enumerator (appears in
+     `enum class RenderResourceId` in RenderResourceRegistry.h) AND has a
+     toString() case in RenderResourceRegistry.cpp (no orphan id).
+  2. CONCRETE LIFETIME -- the RenderResourceLifetime arg is present and is a
+     concrete class (Persistent / Mission / FrameLocal / External), NOT a
+     defaulted/Unset one. An owner constructed with ::Unset (or a missing
+     lifetime arg) FAILs -- exactly the regression this gate blocks.
+  3. NAME MATCHES ID -- the debugName string literal equals toString(id), so the
+     registry's human label can't drift from the logical id.
+
+Additionally asserts the runtime doctest suite still EXISTS so the runtime arm
+of the invariant stays covered:
+
+  4. DOCTEST PRESENT -- TEST_SUITE("GpuBufferOwnerLifetimeCheck") is present in
+     tests/unit/test_gpu_buffer_owner.cpp.
+
+Pure stdlib, grep/parse only. Exit 0 = all owners clean; nonzero + message on
+any violation.
+"""
+import argparse
+import os
+import re
+import sys
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+REGISTRY_H   = os.path.join(REPO_ROOT, "RenderCore", "RenderResourceRegistry.h")
+REGISTRY_CPP = os.path.join(REPO_ROOT, "RenderCore", "RenderResourceRegistry.cpp")
+DOCTEST      = os.path.join(REPO_ROOT, "tests", "unit", "test_gpu_buffer_owner.cpp")
+
+# TUs that may host an owner construction site.
+SCAN_DIRS = [
+    os.path.join(REPO_ROOT, "GameOS", "gameos"),
+    os.path.join(REPO_ROOT, "RenderCore"),
+]
+
+CONCRETE_LIFETIMES = {"FrameLocal", "Mission", "Persistent", "External"}
+
+# `RenderCore::GpuBufferOwner   s_name{` (var-decl construction, not a typedef/include/comment).
+OWNER_DECL = re.compile(
+    r"(?:RenderCore::)?GpuBufferOwner\s+[A-Za-z_]\w*\s*\{", re.M)
+
+
+def read(path):
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def parse_enum_ids():
+    """Names in `enum class RenderResourceId` (excluding Unknown/Count)."""
+    text = read(REGISTRY_H)
+    m = re.search(r"enum\s+class\s+RenderResourceId\s*:[^\{]*\{(.*?)\};", text, re.DOTALL)
+    if not m:
+        return None
+    body = re.sub(r"//.*$", "", m.group(1), flags=re.MULTILINE)
+    body = re.sub(r"/\*.*?\*/", "", body, flags=re.DOTALL)
+    ids = set()
+    for raw in body.split(","):
+        name = raw.split("=")[0].strip()
+        if re.match(r"^[A-Za-z_]\w*$", name):
+            ids.add(name)
+    return ids
+
+
+def parse_tostring_cases():
+    """{idName: literal} from toString(RenderResourceId) cases."""
+    text = read(REGISTRY_CPP)
+    out = {}
+    for m in re.finditer(
+            r"case\s+RenderResourceId::(\w+)\s*:\s*return\s+\"([^\"]*)\"", text):
+        out[m.group(1)] = m.group(2)
+    return out
+
+
+def strip_comments(s):
+    s = re.sub(r"/\*.*?\*/", "", s, flags=re.DOTALL)
+    s = re.sub(r"//.*$", "", s, flags=re.MULTILINE)
+    return s
+
+
+def owner_sites():
+    """Yield (relpath, lineno, args[]) for each owner construction site.
+
+    args = the 4 positional initializer tokens between the outermost braces:
+    [id-expr, lifetime-expr, name-literal-or-expr, glName-expr].
+    """
+    for d in SCAN_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".cpp"):
+                continue
+            path = os.path.join(d, fn)
+            rel = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
+            text = read(path)
+            for m in OWNER_DECL.finditer(text):
+                brace_open = m.end() - 1  # index of the `{`
+                lineno = text.count("\n", 0, m.start()) + 1
+                # Find the matching close brace.
+                depth = 0
+                i = brace_open
+                while i < len(text):
+                    c = text[i]
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    i += 1
+                inner = strip_comments(text[brace_open + 1:i])
+                # Split on top-level commas (no nesting expected in these PODs).
+                args = [a.strip() for a in inner.split(",") if a.strip()]
+                yield rel, lineno, args
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--quiet", "-q", action="store_true",
+                    help="suppress OK chatter; offenders still printed")
+    args = ap.parse_args()
+
+    for p in (REGISTRY_H, REGISTRY_CPP, DOCTEST):
+        if not os.path.exists(p):
+            print("[check-gpu-buffer-owners] ERROR: missing %s"
+                  % os.path.relpath(p, REPO_ROOT), file=sys.stderr)
+            return 2
+
+    enum_ids = parse_enum_ids()
+    if not enum_ids:
+        print("[check-gpu-buffer-owners] ERROR: could not parse "
+              "enum class RenderResourceId", file=sys.stderr)
+        return 2
+    tostring = parse_tostring_cases()
+
+    failures = []
+    sites = list(owner_sites())
+    if not sites:
+        print("[check-gpu-buffer-owners] ERROR: parsed 0 GpuBufferOwner "
+              "construction sites (parser broke?)", file=sys.stderr)
+        return 2
+
+    ok = []
+    for rel, lineno, av in sites:
+        where = "%s:%d" % (rel, lineno)
+        if len(av) < 3:
+            failures.append("%s -- only %d initializer args (need id, "
+                            "lifetime, name, ...)" % (where, len(av)))
+            continue
+
+        id_arg, life_arg, name_arg = av[0], av[1], av[2]
+
+        # 1. id registered (enum + toString case).
+        idm = re.search(r"RenderResourceId::(\w+)", id_arg)
+        if not idm:
+            failures.append("%s -- arg0 is not a RenderResourceId:: enumerator: %r"
+                            % (where, id_arg))
+            continue
+        idname = idm.group(1)
+        if idname not in enum_ids:
+            failures.append("%s -- RenderResourceId::%s not in enum (orphan id)"
+                            % (where, idname))
+        if idname not in tostring:
+            failures.append("%s -- RenderResourceId::%s has no toString() case "
+                            "(orphan id)" % (where, idname))
+
+        # 2. concrete, non-Unset lifetime.
+        lifem = re.search(r"RenderResourceLifetime::(\w+)", life_arg)
+        if not lifem:
+            failures.append("%s -- arg1 is not a RenderResourceLifetime:: "
+                            "value: %r" % (where, life_arg))
+        else:
+            life = lifem.group(1)
+            if life == "Unset":
+                failures.append("%s -- owner %s constructed with Unset lifetime "
+                                "(defaulted/regression)" % (where, idname))
+            elif life not in CONCRETE_LIFETIMES:
+                failures.append("%s -- unknown lifetime %s" % (where, life))
+
+        # 3. debugName literal matches toString(id).
+        nm = re.match(r'^\s*"([^"]*)"\s*$', name_arg)
+        if not nm:
+            failures.append("%s -- arg2 debugName is not a string literal: %r"
+                            % (where, name_arg))
+        elif idname in tostring and nm.group(1) != tostring[idname]:
+            failures.append("%s -- debugName %r != toString(%s)=%r"
+                            % (where, nm.group(1), idname, tostring[idname]))
+
+        if not any(f.startswith(where) for f in failures):
+            ok.append((where, idname,
+                       lifem.group(1) if lifem else "?"))
+
+    # 4. runtime doctest suite still present.
+    if 'TEST_SUITE("GpuBufferOwnerLifetimeCheck")' not in read(DOCTEST):
+        failures.append("tests/unit/test_gpu_buffer_owner.cpp -- runtime suite "
+                        'TEST_SUITE("GpuBufferOwnerLifetimeCheck") missing '
+                        "(runtime invariant arm gone)")
+
+    if failures:
+        print("[check-gpu-buffer-owners] FAIL:", file=sys.stderr)
+        for f in failures:
+            print("  - %s" % f, file=sys.stderr)
+        return 1
+
+    if not args.quiet:
+        print("[check-gpu-buffer-owners] %d GpuBufferOwner construction site(s):"
+              % len(sites))
+        for where, idname, life in ok:
+            print("  OK  %-30s %-12s %s" % (idname, life, where))
+        print("[check-gpu-buffer-owners] PASS -- all owners use a registered id "
+              "+ concrete non-Unset lifetime + matching name; runtime doctest "
+              "present.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

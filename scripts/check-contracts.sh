@@ -111,6 +111,7 @@ run_check "apply_pass_bumped"      "py -3 scripts/check-apply-pass-bumped.py --q
 run_check "static_prop_family"     "py -3 scripts/check-static-prop-family.py --quiet"
 run_check "mdi_submission"         "py -3 scripts/check-mdi-submission-ownership.py --quiet"
 run_check "buffer_lifetime"        "py -3 scripts/check-buffer-lifetime-ownership.py --quiet"
+run_check "gpu_buffer_owners"      "py -3 scripts/check-gpu-buffer-owners.py --quiet"
 run_check "shader_variant"         "py -3 scripts/check-shader-variant.py --quiet"
 run_check "spirv_artifacts"        "py -3 scripts/check-spirv-artifacts.py --quiet"
 run_check "spirv_reflection"       "py -3 scripts/check-spirv-reflection-contract.py --quiet"
