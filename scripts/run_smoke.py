@@ -1554,7 +1554,17 @@ def main():
                             # never runs (no [VK_SWAPCHAIN_PRESENT_HEALTH] line).
                             "MC2_VULKAN_PROBE",
                             "MC2_VULKAN_SWAPCHAIN_PRESENT",
-                            "MC2_VULKAN_SWAPCHAIN_PRESENT_HIDDEN")},
+                            "MC2_VULKAN_SWAPCHAIN_PRESENT_HIDDEN",
+                            # TERRAIN-VISUAL-HEIGHT-CONSUMER-1: visual-height
+                            # displacement gate (default-OFF; loader also
+                            # accepts MC2_TERRAIN_VISUAL_HEIGHT for load-only).
+                            # Without these in the allowlist Popen drops them
+                            # and the gate-ON smoke silently runs the coarse
+                            # (undisplaced) LOD0 path -- no [VISUAL_HEIGHT v1]
+                            # LOADED line, no SSBO upload.
+                            "MC2_TERRAIN_VISUAL_DISPLACE",
+                            "MC2_TERRAIN_VISUAL_HEIGHT",
+                            "MC2_TERRAIN_VISUAL_HEIGHT_FILE")},
             },
         )
         # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.
