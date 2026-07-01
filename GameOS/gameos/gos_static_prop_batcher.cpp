@@ -397,7 +397,25 @@ static GLuint s_staticBldgShadowSsbo = 0;
 // instance SSBO (declared here so onMapUnload can free it; built per-frame in
 // drawDynamicPropShadows). Separate from the static building SSBO so the two
 // passes never alias.
-static GLuint s_dynamicPropShadowSsbo = 0;
+// SCENE-SSBO-OWNER-SWEEP-1: this is the ONE live default-path buffer in COMPLETENESS-
+// SWEEP gap B#5 -- the dynamic prop-shadow caster path is gated MC2_SHADOW_DYNAMIC_PROP_
+// CASTERS (DEFAULT ON) inside the always-on dynamic shadow pass, so it is created on the
+// stock run. Narrowed behind a GpuBufferOwner identity record; every gen/bind/bufferData/
+// bindbase/delete site reaches the raw handle ONLY via s_dynamicPropShadowSsbo (the
+// #define below aliases the bare name to owner.glName -> zero site churn). Same GL args/
+// slot/flags/order. Mission lifetime: rebuilt per frame but freed on onMapUnload;
+// registered at create (bufferData), invalidated on destroy.
+// The sibling buffers in gap B#5 are DEFERRED to the exclusion ledger (created only under
+// default-OFF gates): s_staticBldgShadowSsbo (MC2_STATIC_PROP_BUILDING_SHADOW, default
+// OFF); s_blockVisSsbo (gos_vegetation.cpp, MC2_VEGETATION_CARDS, default OFF); particle
+// s_ssbo (gos_particle_bridge.cpp, MC2_GPU_PARTICLES, default OFF -- CPU/MLR is the stock
+// path) + s_tubePos/Col/UvSsbo (MC2_VFX_ORACLE_TUBE, default OFF/parked).
+static RenderCore::GpuBufferOwner s_dynamicPropShadowOwner{
+    RenderCore::RenderResourceId::DynamicPropShadowSsbo,
+    RenderCore::RenderResourceLifetime::Mission,
+    "DynamicPropShadowSsbo",
+    0u};
+#define s_dynamicPropShadowSsbo (s_dynamicPropShadowOwner.glName)
 // typeIDs drawn into the static building shadow map. When the static building
 // shadow is active, flushShadow(skipStaticBuildingTypes=true) skips these in the
 // DYNAMIC pass so buildings don't cast a redundant (fuzzy) second shadow.
@@ -2024,7 +2042,15 @@ void GpuStaticPropBatcher::onMapUnload() {
     if (s_perTypeSsbo) { glDeleteBuffers(1, &s_perTypeSsbo); s_perTypeSsbo = 0; }
     // SHADOW-STATIC-BUILDINGS-2: per-map one-shot building shadow SSBO.
     if (s_staticBldgShadowSsbo) { glDeleteBuffers(1, &s_staticBldgShadowSsbo); s_staticBldgShadowSsbo = 0; }
-    if (s_dynamicPropShadowSsbo) { glDeleteBuffers(1, &s_dynamicPropShadowSsbo); s_dynamicPropShadowSsbo = 0; }
+    if (s_dynamicPropShadowSsbo) {
+        GLuint dynShadowLocal = static_cast<GLuint>(s_dynamicPropShadowOwner.glName);
+        glDeleteBuffers(1, &dynShadowLocal); s_dynamicPropShadowSsbo = 0;
+        // SCENE-SSBO-OWNER-SWEEP-1: mark the registry slot unavailable on teardown.
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id    = RenderCore::RenderResourceId::DynamicPropShadowSsbo;
+        invalid.valid = false;
+        RenderCore::registerOrUpdateRenderResource(invalid);
+    }
     // Ring buffers are kept across maps (sized to map's worst case -- grow on demand).
 
     // Substrate-coalesce per-mission cleanup (plan v3.8 Step group 4).
@@ -8035,12 +8061,34 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
     glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElemBuf);
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
 
-    if (s_dynamicPropShadowSsbo == 0) glGenBuffers(1, &s_dynamicPropShadowSsbo);
+    if (s_dynamicPropShadowSsbo == 0) {
+        GLuint dynShadowGen = 0;
+        glGenBuffers(1, &dynShadowGen);
+        s_dynamicPropShadowOwner.glName = dynShadowGen;
+    }
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_dynamicPropShadowSsbo);
     // GPU-UPDATE-BUFFER-COUNTER-1: per-frame transient shadow SSBO orphan-on-write.
+    const GLsizeiptr dynShadowBytes =
+        static_cast<GLsizeiptr>(sorted.size() * sizeof(GpuStaticPropInstance));
     MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER,
-        static_cast<GLsizeiptr>(sorted.size() * sizeof(GpuStaticPropInstance)),
+        dynShadowBytes,
         sorted.data(), GL_DYNAMIC_DRAW, StaticPropShadow);   // rebuilt every frame
+    {
+        // SCENE-SSBO-OWNER-SWEEP-1: (re)register the live dynamic prop-shadow SSBO
+        // (observe-only metadata; never read by the draw path). Registered at create;
+        // glGenBuffers above allocates the handle once per map (Mission lifetime), and
+        // the per-frame orphaning bufferData refreshes the size without a new handle.
+        RenderCore::RenderResourceDesc d;
+        d.id        = s_dynamicPropShadowOwner.id;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = s_dynamicPropShadowOwner.lifetime;
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = s_dynamicPropShadowOwner.debugName;
+        d.glName    = s_dynamicPropShadowOwner.glName;
+        d.sizeBytes = static_cast<uint64_t>(dynShadowBytes);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
 
     glUseProgram(shadowProg);
     const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");

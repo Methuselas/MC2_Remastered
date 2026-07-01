@@ -243,6 +243,30 @@ TEST_CASE("LIGHTDATA-SSBO-OWNER-1 light-data owner round-trips id/lifetime/name 
     CHECK((RenderResourceId::LightDataSsbo != RenderResourceId::TerrainHeightSsbo));
 }
 
+TEST_CASE("SCENE-SSBO-OWNER-SWEEP-1 dynamic prop-shadow owner round-trips id/lifetime/name and valid->invalid (Mission, per-frame orphan)") {
+    // Mission lifetime: handle glGen'd once per map, freed on onMapUnload. Per-frame
+    // orphan-on-write bufferData refreshes size WITHOUT a new handle.
+    GpuBufferOwner o{ RenderResourceId::DynamicPropShadowSsbo, RenderResourceLifetime::Mission,
+                      "DynamicPropShadowSsbo", 0u };
+    CHECK_FALSE(o.valid());                       // glName 0 -> unallocated (no shadow set yet)
+    o.glName = 36u;                               // glGenBuffers stores a handle
+    CHECK((o.id == RenderResourceId::DynamicPropShadowSsbo));
+    CHECK((o.lifetime == RenderResourceLifetime::Mission));
+    CHECK(std::strcmp(o.debugName, "DynamicPropShadowSsbo") == 0);
+    CHECK(o.valid());
+    // Per-frame re-register keeps the SAME handle -> still valid, id/name preserved.
+    CHECK(o.valid());
+    CHECK((o.id == RenderResourceId::DynamicPropShadowSsbo));
+    // Invalidate-on-destroy (onMapUnload).
+    o.glName = 0u;
+    CHECK_FALSE(o.valid());
+    // Registered id + matching toString label, strictly below Count, distinct.
+    CHECK(std::strcmp(toString(RenderResourceId::DynamicPropShadowSsbo), "DynamicPropShadowSsbo") == 0);
+    CHECK(int(RenderResourceId::DynamicPropShadowSsbo) < int(RenderResourceId::Count));
+    CHECK((RenderResourceId::DynamicPropShadowSsbo != RenderResourceId::LightDataSsbo));
+    CHECK((RenderResourceId::DynamicPropShadowSsbo != RenderResourceId::StaticPropMaterialGpuBuffer));
+}
+
 TEST_CASE("GpuBufferOwner is a trivially-copyable POD") {
     CHECK(std::is_trivially_copyable<GpuBufferOwner>::value);
 }
