@@ -103,21 +103,33 @@ def _run(cmd: list[str], env: dict | None = None, timeout: int = CAP_TIMEOUT_S) 
 
 def capture_state(label: str, scene: str, exe: Path, work: Path,
                   gate_name: str | None, gate_value: str | None,
-                  fixed_timestep: bool) -> dict:
+                  fixed_timestep: bool,
+                  backend: str | None = None,
+                  region: str | None = None) -> dict:
     """Run BOTH the visual-capture pixel oracle and the golden_scene structural
-    manifest for ONE state (gate OFF or ON), then synthesize a combined manifest.
+    manifest for ONE state (gate OFF or ON, or a backend selection), then
+    synthesize a combined manifest.
     Returns the combined manifest dict (also written to work/<label>_combined.json).
 
     label: 'A' / 'B' / 'floor0' ... (namespaces artifacts).
     gate_name/value: the island gate to set for THIS state (None => OFF/unset).
+    backend: BACKEND-COMPARE mode. When set ('gl'|'vk'), the state is defined by
+      MC2_RENDER_BACKEND_REGION_IFACE=1 + MC2_POSTPROCESS_BACKEND=<backend>
+      (region-selectable PostprocessFog), NOT by a single feature gate. region
+      names the region-under-test (default PostprocessFog) for reporting.
     """
     state_dir = work / label
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    # Base env for both children. The island gate is applied (or explicitly
-    # cleared) so OFF and ON differ only by that one knob.
+    # Base env for both children.
     env = os.environ.copy()
-    if gate_name:
+    if backend is not None:
+        # BACKEND-COMPARE: the state is "which backend implements the region",
+        # not a feature-gate on/off. Enable the region interface + pick backend.
+        env["MC2_RENDER_BACKEND_REGION_IFACE"] = "1"
+        env["MC2_POSTPROCESS_BACKEND"] = backend
+    elif gate_name:
+        # FEATURE-GATE mode: OFF and ON differ only by this one knob.
         if gate_value is None:
             env.pop(gate_name, None)
         else:
@@ -193,6 +205,13 @@ def capture_state(label: str, scene: str, exe: Path, work: Path,
             "aborting parity run." % (label, rc, gs_out.exists()))
     gs = json.loads(gs_out.read_text(encoding="utf-8"))
 
+    # --- 2b) BACKEND-REGION health (region_impl) for fallback detection --------
+    # golden_scene does not carry render_backend_region; read it straight from the
+    # engine state dump it just produced. region_impl == "FallbackGL" means the
+    # Vulkan backend failed to init and the region silently ran on GL -- a
+    # backend compare against that is GL-vs-GL, NOT a real backend compare.
+    region_health = read_backend_region_health(exe)
+
     # --- 3) COMBINED manifest (the thing we floor/compare) ---------------------
     combined = {
         "schema": "GOLDEN_PARITY_COMBINED_V1",
@@ -200,6 +219,12 @@ def capture_state(label: str, scene: str, exe: Path, work: Path,
         "scene": scene,
         "gate_name": gate_name or "",
         "gate_value": gate_value,
+        # BACKEND-COMPARE provenance (empty in feature-gate mode):
+        "backend": backend or "",
+        "region": region or "",
+        "region_impl": region_health.get("region_impl"),
+        "backend_region_selected": region_health.get("backend_region_selected"),
+        "fallback_reason": region_health.get("fallback_reason"),
         # deterministic structural fields from golden_scene:
         "registry_hash": gs.get("registry_hash"),
         "registry_resource_count": gs.get("registry_resource_count"),
@@ -262,6 +287,36 @@ def _dig_field(obj, key):
             r = _dig_field(v, key)
             if r is not None:
                 return r
+    return None
+
+
+def read_backend_region_health(exe: Path) -> dict:
+    """Read the render_backend_region block from the engine state dump that
+    golden_scene just produced (<exe_dir>/debug_state/latest_render_state.json).
+    Returns {} if absent (e.g. an older exe). Keys of interest:
+      region_impl: "GLInline" | "VulkanSubgraph" | "FallbackGL" | "None"
+      backend_region_selected: "gl" | "vk" | "fallback_gl" | "none"
+      fallback_reason: str
+    """
+    dump = exe.parent / "debug_state" / "latest_render_state.json"
+    if not dump.exists():
+        return {}
+    try:
+        d = json.loads(dump.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    rbr = d.get("render_backend_region")
+    return rbr if isinstance(rbr, dict) else {}
+
+
+def detect_fallback(man: dict) -> str | None:
+    """If a backend-compare state's region fell back to GL, return a human
+    reason string; else None. A FallbackGL region means the Vulkan backend
+    failed to init -> the compare is GL-vs-GL, not a real backend compare."""
+    impl = man.get("region_impl")
+    if impl == "FallbackGL":
+        why = man.get("fallback_reason") or "(no reason reported)"
+        return "region_impl=FallbackGL (fallback_reason=%s)" % why
     return None
 
 
@@ -341,13 +396,17 @@ def load_expected_bookmarks(scene: str) -> list[str] | None:
 
 
 def build_floor(scene: str, exe: Path, work: Path, n: int,
-                fixed_timestep: bool, out_path: Path) -> Path:
-    """Capture N OFF states and build a noise floor over the combined manifests."""
+                fixed_timestep: bool, out_path: Path,
+                backend: str | None = None, region: str | None = None) -> Path:
+    """Capture N same-state captures and build a noise floor over the combined
+    manifests. In feature-gate mode these are N OFF captures; in backend-compare
+    mode these are N captures of backend-A (a real GL-vs-GL floor for THIS exe)."""
     manifests = []
     for i in range(n):
         m = capture_state("floor%d" % i, scene, exe, work,
                           gate_name=None, gate_value=None,
-                          fixed_timestep=fixed_timestep)
+                          fixed_timestep=fixed_timestep,
+                          backend=backend, region=region)
         manifests.append(m["_path"])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [sys.executable, str(GOLDEN_COMPARE), "noise-floor",
@@ -375,11 +434,25 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("scene", help="scene/mission stem (e.g. mc2_01); a bookmark "
                                    "JSON tests/visual/bookmarks/<scene>.json must exist")
-    ap.add_argument("gate_name", help="island gate env-var to toggle OFF->ON "
-                                      "(use a no-op name for a self-test)")
+    ap.add_argument("gate_name", nargs="?", default=None,
+                    help="FEATURE-GATE mode: island gate env-var to toggle "
+                         "OFF->ON. Omit when using --backend-a/--backend-b "
+                         "(BACKEND-COMPARE mode).")
     ap.add_argument("--gate-value", default="1",
                     help="value to set gate_name to for state B (default '1'); "
                          "state A always clears it")
+    # --- BACKEND-COMPARE mode (RENDER-BACKEND-REGION-IFACE-1) ------------------
+    ap.add_argument("--backend-a", default=None,
+                    help="BACKEND-COMPARE: backend for state A (e.g. 'gl'). "
+                         "Requires --backend-b. Sets MC2_RENDER_BACKEND_REGION_"
+                         "IFACE=1 + MC2_POSTPROCESS_BACKEND=<a> for that state.")
+    ap.add_argument("--backend-b", default=None,
+                    help="BACKEND-COMPARE: backend for state B (e.g. 'vk').")
+    ap.add_argument("--region", default="PostprocessFog",
+                    help="BACKEND-COMPARE: region under test (default "
+                         "PostprocessFog -- the only region-selectable region).")
+    ap.add_argument("--backend-compare", action="store_true",
+                    help="BACKEND-COMPARE shorthand: gl vs vk on --region.")
     ap.add_argument("--exe", default=str(DEFAULT_EXE),
                     help="deployed mc2.exe (default v0.4 deploy)")
     ap.add_argument("--noise-floor", default=None,
@@ -398,6 +471,29 @@ def main() -> int:
                     help="artifact dir (default <exe_dir>/debug_state/"
                          "golden_parity/<scene>)")
     args = ap.parse_args()
+
+    # --- MODE RESOLUTION: feature-gate (default) vs backend-compare -----------
+    backend_a = args.backend_a
+    backend_b = args.backend_b
+    if args.backend_compare and not (backend_a or backend_b):
+        backend_a, backend_b = "gl", "vk"
+    backend_mode = bool(backend_a or backend_b)
+    if backend_mode:
+        if not (backend_a and backend_b):
+            print("[golden_parity] ERROR: BACKEND-COMPARE needs BOTH --backend-a "
+                  "and --backend-b (or --backend-compare for gl vs vk).",
+                  file=sys.stderr)
+            return 2
+        if args.gate_name:
+            print("[golden_parity] ERROR: a positional gate_name is incompatible "
+                  "with BACKEND-COMPARE mode; drop it.", file=sys.stderr)
+            return 2
+    else:
+        if not args.gate_name:
+            print("[golden_parity] ERROR: FEATURE-GATE mode needs a gate_name "
+                  "(or use --backend-a/--backend-b for BACKEND-COMPARE).",
+                  file=sys.stderr)
+            return 2
 
     exe = Path(args.exe).resolve()
     if not exe.exists():
@@ -420,20 +516,39 @@ def main() -> int:
             print("[golden_parity] using existing floor: %s" % floor_path)
         else:
             floor_path = work / "noise_floor.json"
-            print("[golden_parity] building floor from %d OFF captures..."
-                  % args.n_floor)
-            build_floor(args.scene, exe, work, args.n_floor,
-                        args.fixed_timestep, floor_path)
+            if backend_mode:
+                print("[golden_parity] building REAL %s-vs-%s floor from %d "
+                      "backend-A(%s) captures on region=%s..."
+                      % (backend_a, backend_a, args.n_floor, backend_a, args.region))
+                build_floor(args.scene, exe, work, args.n_floor,
+                            args.fixed_timestep, floor_path,
+                            backend=backend_a, region=args.region)
+            else:
+                print("[golden_parity] building floor from %d OFF captures..."
+                      % args.n_floor)
+                build_floor(args.scene, exe, work, args.n_floor,
+                            args.fixed_timestep, floor_path)
 
         exact_px, nonexact_px = classify_pixel_fields(floor_path)
 
-        # --- state A (gate OFF) + state B (gate ON) ---------------------------
-        man_a = capture_state("A", args.scene, exe, work,
-                              gate_name=args.gate_name, gate_value=None,
-                              fixed_timestep=args.fixed_timestep)
-        man_b = capture_state("B", args.scene, exe, work,
-                              gate_name=args.gate_name, gate_value=args.gate_value,
-                              fixed_timestep=args.fixed_timestep)
+        if backend_mode:
+            # --- state A (backend-A) + state B (backend-B) --------------------
+            man_a = capture_state("A", args.scene, exe, work,
+                                  gate_name=None, gate_value=None,
+                                  fixed_timestep=args.fixed_timestep,
+                                  backend=backend_a, region=args.region)
+            man_b = capture_state("B", args.scene, exe, work,
+                                  gate_name=None, gate_value=None,
+                                  fixed_timestep=args.fixed_timestep,
+                                  backend=backend_b, region=args.region)
+        else:
+            # --- state A (gate OFF) + state B (gate ON) -----------------------
+            man_a = capture_state("A", args.scene, exe, work,
+                                  gate_name=args.gate_name, gate_value=None,
+                                  fixed_timestep=args.fixed_timestep)
+            man_b = capture_state("B", args.scene, exe, work,
+                                  gate_name=args.gate_name, gate_value=args.gate_value,
+                                  fixed_timestep=args.fixed_timestep)
     except CaptureLivenessError as e:
         # Should not normally reach here (capture_state raises plain RuntimeError
         # on child failure); kept for symmetry.
@@ -452,16 +567,36 @@ def main() -> int:
     # populated pixel data BEFORE we ever call golden_compare, so "capture broke"
     # (exit 4) is never confused with "pixels differ" (parity FAIL, exit 1).
     expected = load_expected_bookmarks(args.scene)
+    lbl_a = ("backend=%s" % backend_a) if backend_mode else "OFF"
+    lbl_b = ("backend=%s" % backend_b) if backend_mode else "ON"
+    ctx = ("region=%s" % args.region) if backend_mode else args.gate_name
     try:
-        capture_liveness_preflight(man_a, "OFF", expected)
-        capture_liveness_preflight(man_b, "ON", expected)
+        capture_liveness_preflight(man_a, lbl_a, expected)
+        capture_liveness_preflight(man_b, lbl_b, expected)
     except CaptureLivenessError as e:
         print("[golden_parity] %s" % e, file=sys.stderr)
-        print("RESULT: CAPTURE-LIVENESS-FAIL scene=%s gate=%s reason=%s"
-              % (args.scene, args.gate_name, e))
+        print("RESULT: CAPTURE-LIVENESS-FAIL scene=%s %s reason=%s"
+              % (args.scene, ctx, e))
         return 4
-    print("[golden_parity] capture-liveness preflight OK (OFF+ON fired, "
-          "all expected bookmarks present, hashes populated)")
+    print("[golden_parity] capture-liveness preflight OK (%s+%s fired, "
+          "all expected bookmarks present, hashes populated)"
+          % (lbl_a, lbl_b))
+
+    # --- BACKEND-COMPARE fallback detection -----------------------------------
+    # If the Vulkan backend failed to init and the region ran on GL (FallbackGL),
+    # a "backend compare" is really GL-vs-GL and would pass trivially. DETECT and
+    # report it rather than let a fallback masquerade as proven backend parity.
+    fell_back = None
+    if backend_mode:
+        fb_a = detect_fallback(man_a)
+        fb_b = detect_fallback(man_b)
+        # backend-B is the one expected to be VulkanSubgraph; a fallback there
+        # (or on A) collapses the compare to same-backend.
+        if fb_b or fb_a:
+            fell_back = fb_b or fb_a
+        print("[golden_parity] backend-region impl: A(%s)=%s  B(%s)=%s"
+              % (backend_a, man_a.get("region_impl"),
+                 backend_b, man_b.get("region_impl")))
 
     # --- compare A vs B against the floor -------------------------------------
     cmp_cmd = [sys.executable, str(GOLDEN_COMPARE), "compare",
@@ -483,16 +618,41 @@ def main() -> int:
                 else "BLUNT(0 exact px fields -- pixel oracle too noisy for this "
                      "scene; cannot catch a shading-only island diff)")
     verdict = "PASS" if cmp_rc == 0 else "FAIL"
-    print("RESULT: %s scene=%s gate=%s=%s within_floor=%s pixel_oracle=%s "
-          "culprits=%s report=%s elapsed=%ds"
-          % (verdict, args.scene, args.gate_name, args.gate_value,
-             cmp_rc == 0, px_sharp,
-             (",".join(culprits) if culprits else "(none)"),
-             report_path if report_path.exists() else "(none)", dt))
+
+    if backend_mode:
+        # Distinct backend-parity wording + named region + named bucket/culprit.
+        within = cmp_rc == 0
+        culprit_str = (",".join(culprits) if culprits else "(none)")
+        if fell_back:
+            # A fallback must NOT masquerade as proven backend parity.
+            print("RESULT: FALLBACK backend parity: %s vs %s (region=%s) "
+                  "NOT-A-REAL-BACKEND-COMPARE -- Vulkan backend fell back to GL "
+                  "[%s]; compare degenerates to GL-vs-GL. within_floor=%s "
+                  "pixel_oracle=%s report=%s elapsed=%ds"
+                  % (backend_a, backend_b, args.region, fell_back,
+                     within, px_sharp,
+                     report_path if report_path.exists() else "(none)", dt))
+            print("[golden_parity] A green here would be GL-vs-GL, not a proven "
+                  "GL-vs-Vulkan backend parity. Treating as INCONCLUSIVE.")
+            return 5
+        print("RESULT: %s backend parity: %s vs %s (region=%s) within_floor=%s "
+              "pixel_oracle=%s culprit_bookmark=%s report=%s elapsed=%ds"
+              % (verdict, backend_a.upper() if backend_a == "gl" else backend_a,
+                 "Vulkan" if backend_b == "vk" else backend_b, args.region,
+                 within, px_sharp, culprit_str,
+                 report_path if report_path.exists() else "(none)", dt))
+    else:
+        print("RESULT: %s scene=%s gate=%s=%s within_floor=%s pixel_oracle=%s "
+              "culprits=%s report=%s elapsed=%ds"
+              % (verdict, args.scene, args.gate_name, args.gate_value,
+                 cmp_rc == 0, px_sharp,
+                 (",".join(culprits) if culprits else "(none)"),
+                 report_path if report_path.exists() else "(none)", dt))
     if nonexact_px:
+        drift_ref = "backend-A-vs-backend-A" if backend_mode else "OFF-vs-OFF"
         print("[golden_parity] NOTE: %d pixel field(s) were NOT exact in the "
-              "floor (drift OFF-vs-OFF), so they cannot fail an ON candidate: %s"
-              % (len(nonexact_px), ", ".join(nonexact_px)))
+              "floor (drift %s), so they cannot fail the candidate: %s"
+              % (len(nonexact_px), drift_ref, ", ".join(nonexact_px)))
     return 0 if cmp_rc == 0 else 1
 
 
@@ -568,6 +728,18 @@ def _selftest() -> int:
         ok = ok and want
         print("[selftest] (c) partial manifest        -> ABORT (%s) [%s]"
               % (e, "names missing bookmark" if want else "WRONG BOOKMARK"))
+
+    # (d) BACKEND-COMPARE fallback detection: a FallbackGL manifest is flagged,
+    #     a VulkanSubgraph manifest is not. (arg-plumbing / no-GPU logic check.)
+    fb_real = {"region_impl": "VulkanSubgraph", "fallback_reason": ""}
+    fb_fell = {"region_impl": "FallbackGL",
+               "fallback_reason": "vk device init failed"}
+    d_ok = (detect_fallback(fb_real) is None
+            and detect_fallback(fb_fell) is not None
+            and "FallbackGL" in (detect_fallback(fb_fell) or ""))
+    ok = ok and d_ok
+    print("[selftest] (d) backend fallback detect  -> %s (real->None, "
+          "FallbackGL->flagged)" % ("OK" if d_ok else "WRONG"))
 
     print("[selftest] RESULT: %s" % ("ALL PASS" if ok else "FAILED"))
     return 0 if ok else 1

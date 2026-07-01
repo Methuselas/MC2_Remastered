@@ -64,6 +64,16 @@ IGNORE_SUFFIXES = (
     "gate_value",
     "viscap_manifest",
     "golden_scene_manifest",
+    # BACKEND-COMPARE-HARNESS-1: in backend-compare mode A and B INTENTIONALLY
+    # differ by which backend implements the region. These describe the request /
+    # region-selection provenance, NOT render output -- the load-bearing oracle is
+    # still the per-bookmark pixel sha. (Fallback masquerade is caught separately
+    # by run_golden_parity's region_impl==FallbackGL detection, not here.)
+    "backend",
+    "region",
+    "region_impl",
+    "backend_region_selected",
+    "fallback_reason",
     # GOLDEN-PARITY-FRAMECOUNT-NORMALIZE-1: cumulative per-frame occupancy-query
     # counts. These probes fire once per pass per FRAME, so their absolute value
     # is proportional to how many frames the run reached in the fixed 30s window.
