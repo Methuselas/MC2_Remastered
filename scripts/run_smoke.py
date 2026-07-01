@@ -1350,6 +1350,11 @@ def main():
                             # the allowlist Popen drops it and the gate-ON smoke runs
                             # an engine that never backs off (numbers match OFF).
                             "MC2_PATH_JUMP_FAIL_BACKOFF",
+                            # PATHFINDING-SOLVER-ISOLATION-1: per-solve SolveContext
+                            # gate (default-OFF). Without this in the allowlist Popen
+                            # drops it and the gate-ON path-trace proof runs the OFF
+                            # engine (traces match trivially, proving nothing).
+                            "MC2_PATH_SOLVE_ISOLATED",
                             # VEG-SMOKE-FLOOR-1: vegetation card output contract gate.
                             # MC2_VEGETATION_CARDS=1 enables GPU instanced vegetation
                             # and triggers VEG-SMOKE-FLOOR-1 assertions in this runner.

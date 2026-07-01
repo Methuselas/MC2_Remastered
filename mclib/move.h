@@ -1592,6 +1592,14 @@ class MoveMap {
 		void				(*blockedDoorCallback) (int moveLevel, int door, char* openCells);
 		void				(*placeStationaryMoversCallback) (MoveMapPtr map);
 
+		// PATHFINDING-SOLVER-ISOLATION-1: per-solve seam. Set at the top of each
+		// solve (calcPath/calcPathJUMP/calcEscapePath). OFF they mirror the file-
+		// static globals (::openList / ::JumpOnBlocked) so behavior is identical;
+		// ON they point at the SolveContext's private queue + flag snapshot, so
+		// the solve + its cost helpers touch NO file-static mutable solver state.
+		class PriorityQueue* solveOpen;   // OPEN list this solve uses
+		bool				solveJumpOnBlocked;
+
 		static float		distanceFloat[DISTANCE_TABLE_DIM][DISTANCE_TABLE_DIM];
 		static int			distanceInt[DISTANCE_TABLE_DIM][DISTANCE_TABLE_DIM];
 		static int			forestCost;
@@ -1645,6 +1653,8 @@ class MoveMap {
 			overlayWeightTable = NULL;
 			blockedDoorCallback = NULL;
 			placeStationaryMoversCallback = NULL;
+			solveOpen = NULL;               // PATHFINDING-SOLVER-ISOLATION-1
+			solveJumpOnBlocked = false;
 		}
 		
 		MoveMap (void) {
