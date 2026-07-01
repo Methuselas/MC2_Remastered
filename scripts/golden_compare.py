@@ -56,6 +56,14 @@ IGNORE_SUFFIXES = (
     "dump_source",
     "tga_source",
     "exe",  # absolute path string; exe_md5 is the load-bearing identity
+    # GOLDEN-SCENE-PARITY-1 combined-manifest bookkeeping: these fields
+    # INTENTIONALLY differ between the OFF (A) and ON (B) state and describe the
+    # harness run, not the render -- they must never fail a parity compare.
+    "label",
+    "gate_name",
+    "gate_value",
+    "viscap_manifest",
+    "golden_scene_manifest",
 )
 
 # Numeric drift fields get a small symmetric pad on the observed range so a
