@@ -1204,6 +1204,15 @@ def main():
                             # (docs/testing-strategy.md). Forwarded so
                             # --gl-debug-fatal reaches the engine subprocess.
                             "MC2_GL_DEBUG_FATAL",
+                            # RENDER-BACKEND-IFACE / GPU-DEBUG-NAMES: render
+                            # backend interface seam + GPU object labeling gates.
+                            # MC2_GL_DEBUG must be forwarded so glObjectLabel is
+                            # available when exercising debug names. Without these
+                            # in the allowlist subprocess.Popen drops them and the
+                            # gate-ON smoke runs are inert.
+                            "MC2_GL_DEBUG",
+                            "MC2_RENDER_BACKEND_IFACE",
+                            "MC2_GPU_DEBUG_NAMES",
                             # Integrated gosFX-retirement / GPU-particles plan
                             # (2026-05-20-integrated-gosfx-retirement-*):
                             # MC2_FX_TRACE = neutral fx invocation counter
