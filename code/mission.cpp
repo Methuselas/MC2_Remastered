@@ -95,6 +95,8 @@ extern void terrainMaterials_apply(const char*);     // TERRAIN-MATERIAL-LIB-1
 #endif
 
 #include "frame_jobs.h"  // FRAME-JOBS-1: fixed worker pool for parallel CPU prep
+#include <vector>        // TERRAIN-REAUTH-UNPIN-1 Half B: mover cell scratch
+#include "../GameOS/gameos/gos_terrain_lod_chunk.h"  // TERRAIN-REAUTH-UNPIN-1 Half B: visual-damp mover stamps
 
 #ifndef MULTPLYR_H
 #include"multplyr.h"
@@ -877,7 +879,41 @@ long Mission::update (void)
 		}
 
 		{ ZoneScopedN("GameLogic.Mission.Craters"); craterManager->update(); }
-		
+
+		// TERRAIN-REAUTH-UNPIN-1 Half B: near-object displacement fade, mover
+		// half. Gathers live mover positions in coarse-cell space and stamps
+		// them into the visual-displacement damp map (min-combined with the
+		// static building damp) so units always stand on TRUE gameplay height
+		// with no visual pop. Rides MC2_TERRAIN_VISUAL_DISPLACE; whole block is
+		// a single cheap bool check when the displace gate / damp map is off.
+		if (gos_TerrainLodChunk_VisualDampWanted())
+		{
+			ZoneScopedN("GameLogic.Mission.VisualDampMovers");
+			static std::vector<float> s_moverCells;
+			s_moverCells.clear();
+			const float halfMap = Terrain::worldUnitsMapSide * 0.5f;
+			const float wupv    = Terrain::worldUnitsPerVertex;   // 128
+			for (long mi = 0; mi < ObjectManager->getNumMovers(); ++mi)
+			{
+				MoverPtr mv = ObjectManager->getMover(mi);
+				if (!mv || !mv->getExists())
+					continue;
+				Stuff::Vector3D mp = mv->getPosition();
+				s_moverCells.push_back((mp.x + halfMap) / wupv);
+				s_moverCells.push_back((halfMap - mp.y) / wupv);
+			}
+			static const float s_objfadeRadiusWu = []() {
+				const char* v = getenv("MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE_RADIUS");
+				float r = (v && v[0]) ? (float)atof(v) : 256.0f;
+				if (r < 32.0f) r = 32.0f;
+				if (r > 1024.0f) r = 1024.0f;
+				return r;
+			}();
+			gos_TerrainLodChunk_UpdateVisualDampMovers(
+				s_moverCells.data(), (int)(s_moverCells.size() / 2),
+				s_objfadeRadiusWu / wupv, 48.0f / wupv);
+		}
+
 		//Do not UPDATE the textures during a pause.
 		//This uncaches things which only objectManager->update can cache back in!!!!!
 		if ( !missionInterface->isPaused() || MPlayer )

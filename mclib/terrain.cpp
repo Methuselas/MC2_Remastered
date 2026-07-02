@@ -1276,6 +1276,99 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 								       "-- re-bake with visual_heightfield.py --reshape)\n",
 								       maxAbs, meanAbs, frac5, frac50);
 								fflush(stdout);
+
+								// TERRAIN-REAUTH-UNPIN-1 Half B: near-object displacement
+								// fade (objfade). Load the static damp sidecar
+								// (visual_damp.r32, mapSide^2 floats, 0 = displacement OFF
+								// on/near building footprints) from the same .beauty dir;
+								// absent -> all-ones (movers-only fade). Gate
+								// MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE default ON when
+								// displacing (it is the safety). Also logs the
+								// grounding-drift evidence: p99 EFFECTIVE displacement
+								// (|bake - gameplay| * damp) at coarse cells, split into
+								// the inner (damp==0) zone — must be exactly 0 — and the
+								// fade annulus.
+								{
+									static const bool s_objfadeGate = []() {
+										const char* v = getenv("MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE");
+										return !(v && v[0] == '0');
+									}();
+									if (s_objfadeGate)
+									{
+										char dampPath[600];
+										snprintf(dampPath, sizeof(dampPath), "%s", vhPath);
+										char* bs2 = strrchr(dampPath, '\\');
+										char* fs2 = strrchr(dampPath, '/');
+										char* slash2 = (fs2 > bs2) ? fs2 : bs2;
+										if (slash2)
+											snprintf(slash2 + 1,
+											         sizeof(dampPath) - (size_t)(slash2 + 1 - dampPath),
+											         "visual_damp.r32");
+										std::vector<float> damp((size_t)mapSide * (size_t)mapSide, 1.0f);
+										bool haveSidecar = false;
+										if (FILE* df = fopen(dampPath, "rb"))
+										{
+											fseek(df, 0, SEEK_END);
+											long dsz = ftell(df);
+											fseek(df, 0, SEEK_SET);
+											if ((size_t)dsz == damp.size() * sizeof(float))
+											{
+												haveSidecar =
+													(fread(damp.data(), sizeof(float), damp.size(), df)
+													 == damp.size());
+											}
+											fclose(df);
+											if (!haveSidecar)
+											{
+												printf("[VISUAL_DAMP v1] SIZE/READ MISMATCH path=%s got=%ld "
+												       "want=%zu -- movers-only fade\n",
+												       dampPath, dsz, damp.size() * sizeof(float));
+												std::fill(damp.begin(), damp.end(), 1.0f);
+											}
+										}
+										else
+										{
+											printf("[VISUAL_DAMP v1] sidecar NOT FOUND path=%s "
+											       "-- movers-only fade\n", dampPath);
+										}
+										gos_TerrainLodChunk_UploadVisualDampStatic(damp.data(), mapSide);
+										// Grounding-drift evidence (the objfade acceptance
+										// number): effective displacement per coarse cell.
+										std::vector<double> inner, annulus;
+										double innerMax = 0.0;
+										for (int cy = 0; cy < mapSide; ++cy)
+											for (int cx = 0; cx < mapSide; ++cx)
+											{
+												const size_t ci = (size_t)cx + (size_t)cy * mapSide;
+												const size_t fi = (size_t)(cx * 4)
+													+ (size_t)(cy * 4) * (size_t)V;
+												const double full = fabs((double)vh[fi] - (double)elev[ci]);
+												const double d = (double)damp[ci];
+												const double eff = full * d;
+												if (d <= 0.0)
+												{
+													inner.push_back(eff);
+													if (eff > innerMax) innerMax = eff;
+												}
+												else if (d < 0.999)
+													annulus.push_back(eff);
+											}
+										auto p99 = [](std::vector<double>& v2) -> double {
+											if (v2.empty()) return 0.0;
+											std::sort(v2.begin(), v2.end());
+											return v2[(size_t)((double)(v2.size() - 1) * 0.99)];
+										};
+										const double innerP99 = p99(inner);
+										const double annP99 = p99(annulus);
+										printf("[VISUAL_DAMP v1] %s side=%d objfade drift-near-objects: "
+										       "inner(damp==0) cells=%zu p99=%.3fwu max=%.3fwu (must be ~0) "
+										       "fade-annulus cells=%zu p99=%.2fwu\n",
+										       haveSidecar ? "LOADED" : "ALL-ONES (no sidecar)",
+										       mapSide, inner.size(), innerP99, innerMax,
+										       annulus.size(), annP99);
+										fflush(stdout);
+									}
+								}
 							}
 						}
 					}

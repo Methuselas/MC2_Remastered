@@ -17,6 +17,7 @@ constexpr uint32_t TERRAIN_HEIGHT_SSBO_BINDING = 23u;
 constexpr uint32_t TERRAIN_TYPE_SSBO_BINDING   = 24u;  // Step 5b: per-vertex terrainType (concrete)
 constexpr uint32_t TERRAIN_CEMENT_SSBO_BINDING = 25u;  // Step 5c: per-vertex cement word (valid|layerIdx)
 constexpr uint32_t TERRAIN_VISUAL_HEIGHT_SSBO_BINDING = 26u; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: 4x VISUAL heightfield (render-only)
+constexpr uint32_t TERRAIN_VISUAL_DAMP_SSBO_BINDING   = 27u; // TERRAIN-REAUTH-UNPIN-1 Half B: coarse object-proximity displacement damp
 
 // TERRAIN-CONTROLMAP-SAMPLE-1: authored RGBA control-map texture unit (not an
 // SSBO — sampled with GL_LINEAR like the colormap). Gate MC2_TERRAIN_CONTROLMAP,
@@ -71,6 +72,27 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide);
 // a dedicated SSBO (binding 26). visualHeights: float[V*V] row-major, V=(mapSide-1)*4+1.
 // Stage 1 is load+log only — NO geometry samples binding 26 yet (Stage 2 displaces).
 void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int V);
+
+// TERRAIN-REAUTH-UNPIN-1 Half B: near-object displacement fade (the objfade
+// safety). Static damp map (float[side*side] row-major, 0 = displacement OFF on
+// object footprints .. 1 = full displacement) uploaded once per mission load to
+// SSBO binding 27; the bake tool emits it as <mission>.beauty/visual_damp.r32.
+// Rides MC2_TERRAIN_VISUAL_DISPLACE; MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE=0
+// disables (default ON when displacing — it is the safety).
+void gos_TerrainLodChunk_UploadVisualDampStatic(const float* damp01, int side);
+
+// Per-frame MOVER stamps: combined = min(static damp, per-mover smoothstep
+// falloff). cellXY = float pairs in COARSE CELL space (x = (worldX+halfMap)/128,
+// y = (halfMap-worldY)/128), count = number of movers. radiusCells / innerCells
+// are the fade radius / inner full-damp radius in cell units. No-op unless the
+// damp SSBO is live. Cheap: N^2 copy + count small stamps + one BufferSubData.
+void gos_TerrainLodChunk_UpdateVisualDampMovers(const float* cellXY, int count,
+                                                float radiusCells, float innerCells);
+
+// True when the mover-damp update is worth computing this frame (displace gate
+// on + bake loaded + objfade gate on + static damp uploaded). Lets the game
+// layer (code/mission.cpp) skip mover gathering entirely when inactive.
+bool gos_TerrainLodChunk_VisualDampWanted();
 
 // Step 5b: upload per-vertex terrainType (0..N; cement/concrete ~3) to its SSBO.
 // types: float[mapSide*mapSide] row-major (parallel to the heightfield).

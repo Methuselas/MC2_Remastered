@@ -78,6 +78,21 @@ static RenderCore::GpuBufferOwner s_visualHeightSsbo{ // TERRAIN-VISUAL-HEIGHT-S
     "TerrainVisualHeightSsbo",
     0u};
 static int    s_visualSide       = 0; // V = (mapSide-1)*4+1, fine grid side (0 = bake not loaded)
+// TERRAIN-REAUTH-UNPIN-1 Half B: coarse object-proximity displacement damp
+// (binding 27). Static half = building footprints from the bake sidecar
+// (visual_damp.r32), uploaded once per mission load; dynamic half = per-frame
+// mover stamps min-combined on the CPU and re-uploaded (side^2 floats — tiny).
+// CREATE gated upstream like the visual-height SSBO (displace gate + sidecar);
+// glName 0 => never bound, u_visualDampOn stays 0 (passthrough).
+static RenderCore::GpuBufferOwner s_visualDampSsbo{
+    RenderCore::RenderResourceId::TerrainVisualDampSsbo,
+    RenderCore::RenderResourceLifetime::Mission,
+    "TerrainVisualDampSsbo",
+    0u};
+static int s_visualDampSide = 0;                 // == mapSide when loaded
+static std::vector<float> s_visualDampStatic;    // load-time (buildings)
+static std::vector<float> s_visualDampCombined;  // static + mover stamps
+static bool s_visualDampHadMovers = false;       // skip redundant re-uploads
 // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: per-LOD-band displaced-chunk counters, reset
 // and logged once per submit alongside [TerrainLOD v1] so acceptance has hard
 // per-band numbers. Index = LOD level (0..5), same mapping as [TerrainLOD v1].
@@ -232,6 +247,7 @@ static GLint s_locEdgeFeatherStr     = -1;
 static GLint s_locVisualDisplace     = -1; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1
 static GLint s_locVisualSide         = -1;
 static GLint s_locVisualDisplaceFar  = -1; // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD
+static GLint s_locVisualDampOn       = -1; // TERRAIN-REAUTH-UNPIN-1 Half B
 static GLint s_locPomParams      = -1;
 static GLint s_locMatProfile     = -1;
 static GLint s_locControlMap     = -1;  // TERRAIN-CONTROLMAP-SAMPLE-1: u_controlMap sampler
@@ -651,6 +667,7 @@ void gos_TerrainLodChunk_Init()
             s_locVisualDisplace    = glGetUniformLocation(s_terrainProgram, "u_visualDisplace");
             s_locVisualSide        = glGetUniformLocation(s_terrainProgram, "u_visualSide");
             s_locVisualDisplaceFar = glGetUniformLocation(s_terrainProgram, "u_visualDisplaceFar");
+            s_locVisualDampOn      = glGetUniformLocation(s_terrainProgram, "u_visualDampOn");
             s_locPomParams   = glGetUniformLocation(s_terrainProgram, "pomParams");
             s_locMatProfile  = glGetUniformLocation(s_terrainProgram, "g_terrainMaterialProfile");
             s_locCementAtlas    = glGetUniformLocation(s_terrainProgram, "u_cementAtlas");
@@ -747,6 +764,21 @@ void gos_TerrainLodChunk_Destroy()
         invalid.id = RenderCore::RenderResourceId::TerrainVisualHeightSsbo;
         RenderCore::registerOrUpdateRenderResource(invalid);
     }
+    // TERRAIN-REAUTH-UNPIN-1 Half B: free the damp SSBO + CPU copies on teardown.
+    if (s_visualDampSsbo.glName != 0)
+    {
+        GLuint dampBuf = static_cast<GLuint>(s_visualDampSsbo.glName);
+        glDeleteBuffers(1, &dampBuf);
+        s_visualDampSsbo.glName = 0;
+
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id = RenderCore::RenderResourceId::TerrainVisualDampSsbo;
+        RenderCore::registerOrUpdateRenderResource(invalid);
+    }
+    s_visualDampSide = 0;
+    s_visualDampStatic.clear();
+    s_visualDampCombined.clear();
+    s_visualDampHadMovers = false;
     if (s_heightSsbo.glName != 0)
     {
         GLuint heightBuf = static_cast<GLuint>(s_heightSsbo.glName);
@@ -938,6 +970,21 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, static_cast<GLuint>(s_visualHeightSsbo.glName));
     if (s_locVisualSide >= 0)
         glUniform1i(s_locVisualSide, s_visualSide);
+    // TERRAIN-REAUTH-UNPIN-1 Half B: near-object displacement fade. Active only
+    // when displacing AND the objfade gate is on (default ON when displacing —
+    // it is the safety) AND a damp map for THIS map size was uploaded. Binds
+    // binding 27 for the whole draw; u_visualDampOn=0 => shader never reads it.
+    static const bool s_visualDampGate = []() {
+        const char* v = getenv("MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE");
+        return !(v && v[0] == '0');   // default ON (unset/other => on)
+    }();
+    const bool visualDampActive = visualDisplaceActive && s_visualDampGate
+                                  && s_visualDampSsbo.glName != 0
+                                  && s_visualDampSide == s_mapSide;
+    if (visualDampActive)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_VISUAL_DAMP_SSBO_BINDING, static_cast<GLuint>(s_visualDampSsbo.glName));
+    if (s_locVisualDampOn >= 0)
+        glUniform1i(s_locVisualDampOn, visualDampActive ? 1 : 0);
     // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: far-band displacement fade, 0..1, default 1
     // (full displacement). Only scales the coarser-band (u_visualDisplace==2) verts;
     // LOD0 (mode 1) is untouched by this knob.
@@ -1577,6 +1624,8 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, 0);
     if (visualDisplaceActive)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, 0);
+    if (visualDampActive)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_VISUAL_DAMP_SSBO_BINDING, 0);
     if (!useGuards) {
         // Phase 10.3: restore inherited cull/depth/blend state (legacy path).
         if (prevCullFace)   glEnable(GL_CULL_FACE);
@@ -1695,6 +1744,109 @@ void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int 
     fprintf(stderr, "[VISUAL_HEIGHT v1] SSBO uploaded binding=%u V=%d bytes=%lld first=%.3f\n",
             TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, V, (long long)bytes, visualHeights[0]);
     fflush(stderr);
+}
+
+// TERRAIN-REAUTH-UNPIN-1 Half B: static (buildings) object-proximity damp map.
+// Reached only when the upstream gates passed (mclib/terrain.cpp). Keeps a CPU
+// copy so per-frame mover stamps can min-combine without re-reading the GPU.
+void gos_TerrainLodChunk_UploadVisualDampStatic(const float* damp01, int side)
+{
+    if (!damp01 || side <= 0)
+        return;
+    const size_t count = (size_t)side * (size_t)side;
+    s_visualDampStatic.assign(damp01, damp01 + count);
+    s_visualDampCombined = s_visualDampStatic;
+    s_visualDampSide = side;
+    s_visualDampHadMovers = false;
+    if (s_visualDampSsbo.glName == 0)
+    {
+        GLuint local = 0;
+        glGenBuffers(1, &local);
+        s_visualDampSsbo.glName = static_cast<uint32_t>(local);
+        if (s_visualDampSsbo.glName == 0)
+        {
+            fprintf(stderr, "[VISUAL_DAMP v1] glGenBuffers failed\n");
+            fflush(stderr);
+            return;
+        }
+    }
+    const GLsizeiptr bytes = (GLsizeiptr)(count * sizeof(float));
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_visualDampSsbo.glName));
+    glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, s_visualDampCombined.data(), GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::TerrainVisualDampSsbo;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Mission;
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = s_visualDampSsbo.debugName;
+        d.glName    = s_visualDampSsbo.glName;
+        d.sizeBytes = static_cast<uint64_t>(bytes);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
+    fprintf(stderr, "[VISUAL_DAMP v1] SSBO uploaded binding=%u side=%d bytes=%lld\n",
+            TERRAIN_VISUAL_DAMP_SSBO_BINDING, side, (long long)bytes);
+    fflush(stderr);
+}
+
+bool gos_TerrainLodChunk_VisualDampWanted()
+{
+    static const bool s_displaceGate = []() {
+        const char* v = getenv("MC2_TERRAIN_VISUAL_DISPLACE");
+        return v && v[0] && v[0] != '0';
+    }();
+    static const bool s_dampGate = []() {
+        const char* v = getenv("MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE");
+        return !(v && v[0] == '0');
+    }();
+    return s_displaceGate && s_dampGate && s_visualDampSsbo.glName != 0
+           && s_visualDampSide > 0 && !s_visualDampStatic.empty();
+}
+
+// Per-frame mover stamps. combined = min(static, smoothstep(inner, inner+radius,
+// dist)) per mover; one full-buffer BufferSubData (side^2 floats, ~57KB@120 —
+// negligible). Zero-mover frames upload only on the first one after movers
+// disappear (restores the pure-static map, then no-ops).
+void gos_TerrainLodChunk_UpdateVisualDampMovers(const float* cellXY, int count,
+                                                float radiusCells, float innerCells)
+{
+    if (s_visualDampSsbo.glName == 0 || s_visualDampSide <= 0 || s_visualDampStatic.empty())
+        return;
+    if (count <= 0 && !s_visualDampHadMovers)
+        return;   // steady state: static map already on the GPU
+    const int N = s_visualDampSide;
+    s_visualDampCombined = s_visualDampStatic;
+    if (radiusCells < 0.25f) radiusCells = 0.25f;
+    if (innerCells < 0.0f) innerCells = 0.0f;
+    const float reach = innerCells + radiusCells;
+    for (int m = 0; m < count; ++m)
+    {
+        const float cx = cellXY[m * 2 + 0];
+        const float cy = cellXY[m * 2 + 1];
+        int x0 = (int)floorf(cx - reach), x1 = (int)ceilf(cx + reach);
+        int y0 = (int)floorf(cy - reach), y1 = (int)ceilf(cy + reach);
+        if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
+        if (x1 > N - 1) x1 = N - 1; if (y1 > N - 1) y1 = N - 1;
+        for (int iy = y0; iy <= y1; ++iy)
+            for (int ix = x0; ix <= x1; ++ix)
+            {
+                const float dx = (float)ix - cx;
+                const float dy = (float)iy - cy;
+                float t = (sqrtf(dx * dx + dy * dy) - innerCells) / radiusCells;
+                if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+                const float s = t * t * (3.0f - 2.0f * t);
+                float& ref = s_visualDampCombined[(size_t)ix + (size_t)iy * N];
+                if (s < ref) ref = s;
+            }
+    }
+    s_visualDampHadMovers = (count > 0);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_visualDampSsbo.glName));
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                    (GLsizeiptr)(s_visualDampCombined.size() * sizeof(float)),
+                    s_visualDampCombined.data());
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
 // Step 5b: per-vertex terrainType upload (parallel to the heightfield). Used by
