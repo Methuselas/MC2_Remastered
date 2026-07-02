@@ -2582,6 +2582,18 @@ void gosPostProcess::runEdgeFog()
         edgeFogProg_->setInt("stencilTex", 1);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, sceneStencilViewTex_);
+
+        // SKYBOX-FOG-EXCLUDE-1 review fix: this pass samples the stencil
+        // view of the shared depth-stencil attachment while GL_STENCIL_TEST
+        // may still be enabled (left ON by the skybox stencil-tag pass, and
+        // PipelineRegistry's PostProcessEdgeFog desc has no stencil fields --
+        // stencil state is never part of the state-guard idiom here, only
+        // inherited). Sampling a texture that aliases the currently-bound
+        // stencil attachment while stencil writes are possible is exactly
+        // the feedback case GL disallows; force test off + write mask 0 so
+        // this pass never writes stencil regardless of inherited state.
+        glDisable(GL_STENCIL_TEST);
+        glStencilMask(0x00);
     }
 
     glActiveTexture(GL_TEXTURE0);
@@ -2679,6 +2691,14 @@ void gosPostProcess::runFogOob()
         fogOobProg_->setInt("stencilTex", 1);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, sceneStencilViewTex_);
+
+        // SKYBOX-FOG-EXCLUDE-1 review fix: same reasoning as runEdgeFog() --
+        // this pass samples the stencil view of the shared depth-stencil
+        // attachment; force stencil test off + write mask 0 so the GL
+        // feedback-exception rule (no writes to a resource being sampled)
+        // can never be violated regardless of inherited stencil state.
+        glDisable(GL_STENCIL_TEST);
+        glStencilMask(0x00);
     }
 
     glActiveTexture(GL_TEXTURE0);
@@ -3608,6 +3628,18 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
             if (nAtt > 0) glColorMaski(0, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
             if (nAtt > 1) glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
             if (nAtt > 2) glColorMaski(2, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+            // SKYBOX-FOG-EXCLUDE-1 review fix: clear stencil once per frame
+            // before tagging. Without this, stencil=1 from a prior frame's
+            // deep-sky pixels persists on pixels the camera has since panned
+            // away from sky (nothing else in the renderer clears stencil),
+            // so fog would incorrectly stay excluded there. Cheap because
+            // it's a single clear of the currently-bound sceneFBO_'s stencil
+            // plane, gated behind skyExclude so gate-OFF has zero cost.
+            {
+                const GLint zero = 0;
+                glClearBufferiv(GL_STENCIL, 0, &zero);
+            }
 
             hdriSkyboxStencilTagProg_->apply();
             hdriSkyboxStencilTagProg_->setMat4("invProj", invProjArray);
