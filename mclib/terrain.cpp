@@ -1232,9 +1232,49 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 							else
 							{
 								gos_TerrainLodChunk_UploadVisualHeightFull(vh.data(), V);
+								// TERRAIN-DISPLACEMENT-TRUTH-1: report the REAL state, not
+								// the stale Stage-1 lie. Stage 2 shipped: when
+								// MC2_TERRAIN_VISUAL_DISPLACE is on the vert shader
+								// (terrain_lod_chunk.vert) samples binding 26 and MOVES
+								// geometry (proven by a checkerboard pixel oracle). The old
+								// "(Stage 1: SSBO only, geometry unchanged)" text is FALSE
+								// under the displace gate and caused the pipeline to be
+								// repeatedly (mis)diagnosed as broken. Also surface the
+								// actual displacement amplitude vs the coarse gameplay grid
+								// so an invisible-because-too-subtle bake is obvious at load
+								// time instead of after four viewing runs.
+								const char* dv = getenv("MC2_TERRAIN_VISUAL_DISPLACE");
+								const bool displaceOn = (dv && dv[0] && dv[0] != '0');
+								double maxAbs = 0.0, sumAbs = 0.0;
+								size_t moved5 = 0, moved50 = 0, cnt = 0;
+								// Compare every fine bake vertex to the coarse gameplay
+								// elevation at its containing coarse cell (the "blocky"
+								// baseline the displacement smooths away). elev[] is the
+								// mapSide*mapSide coarse grid loaded above (row-major).
+								for (int fy = 0; fy < V; ++fy)
+									for (int fx = 0; fx < V; ++fx)
+									{
+										int cx = fx / 4; if (cx > mapSide - 1) cx = mapSide - 1;
+										int cy = fy / 4; if (cy > mapSide - 1) cy = mapSide - 1;
+										double d = fabs((double)vh[(size_t)fx + (size_t)fy * V]
+										                - (double)elev[(size_t)cx + (size_t)cy * mapSide]);
+										if (d > maxAbs) maxAbs = d;
+										sumAbs += d; ++cnt;
+										if (d > 5.0)  ++moved5;
+										if (d > 50.0) ++moved50;
+									}
+								const double meanAbs = cnt ? sumAbs / (double)cnt : 0.0;
+								const double frac5  = cnt ? (100.0 * (double)moved5  / (double)cnt) : 0.0;
+								const double frac50 = cnt ? (100.0 * (double)moved50 / (double)cnt) : 0.0;
 								printf("[VISUAL_HEIGHT v1] LOADED path=%s V=%d mapSide=%d bytes=%zu "
-								       "(Stage 1: SSBO only, geometry unchanged)\n",
-								       vhPath, V, mapSide, want);
+								       "(Stage 2: geometry %s when MC2_TERRAIN_VISUAL_DISPLACE on)\n",
+								       vhPath, V, mapSide, want,
+								       displaceOn ? "DISPLACED" : "will displace");
+								printf("[VISUAL_HEIGHT v1] displacement-amplitude vs coarse grid: "
+								       "max=%.1fwu mean=%.2fwu moved>5wu=%.1f%% moved>50wu=%.2f%% "
+								       "(vertex spacing=128wu; if mean<~5wu the reshape is near-invisible "
+								       "-- re-bake with visual_heightfield.py --reshape)\n",
+								       maxAbs, meanAbs, frac5, frac50);
 								fflush(stdout);
 							}
 						}
