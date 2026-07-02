@@ -49,6 +49,7 @@ add_executable(mc2_tests
     test_vulkan_layout_chain.cpp  # VULKAN-LAYOUT-CHAIN-VALIDATOR-2: sampled-image layout-chain coverage/producer (offline)
     test_subgraph_contiguity.cpp  # SUBGRAPH-CONTIGUITY-GUARD-1: postprocess sub-pass contiguity rule (offline)
     test_file_inifile.cpp   # MINIMAL-VIABLE-HARNESS-1: real file/inifile/packet stack, game-free
+    test_csvfile.cpp        # MINIMAL-VIABLE-HARNESS-2: real csvfile.cpp (Buildings.csv-shaped)
 
     # MINIMAL-VIABLE-HARNESS-1: malloc-backed heap + GameOS-global shim.
     # Replaces heap.cpp (won't compile standalone -- see
@@ -78,6 +79,10 @@ add_executable(mc2_tests
     ${MC2_WORKTREE_ROOT}/mclib/lzcomp.cpp     # LZCompress (ffile writeFast path)
     ${MC2_WORKTREE_ROOT}/mclib/err.cpp        # Fatal/Assert -> STOP (inifile error paths)
     ${MC2_WORKTREE_ROOT}/GameOS/src/platform_str.cpp  # S_strlwr/S_stricmp/S_strnicmp
+
+    # MINIMAL-VIABLE-HARNESS-2: csvfile.cpp is a File subclass -> zero new link
+    # frontier (same shim, same base class). Completes the data-ingest spine.
+    ${MC2_WORKTREE_ROOT}/mclib/csvfile.cpp    # CSVFile (Excel-CSV reader, Buildings.csv)
 )
 
 target_include_directories(mc2_tests PRIVATE
