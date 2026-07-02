@@ -2914,8 +2914,21 @@ void MC_TextureManager::renderLists (void)
 					if (s_casterLightboxCull) {
 						ZoneScopedN("Shadow.CasterCull");
 						static std::vector<GpuStaticPropInstance> s_culledDynPropInsts; // reused, no churn
-						s_culledDynPropInsts.clear();
-						s_culledDynPropInsts.reserve(s_dynPropInsts.size());
+						// SHADOW-CASTER-CULL-CACHE-1 (TXMMGR-PERF-EASYWINS-1, gate
+						// MC2_SHADOW_CASTER_CULL_CACHE, DEFAULT OFF): the cull result is a
+						// pure function of (caster set, light-space matrix, margin). The
+						// caster set is generation-keyed (rebuilt above only on
+						// s_registryGeneration change) and the matrix is camera-fit — on a
+						// stationary camera its 16 floats are bit-identical across frames.
+						// Reuse the previous culled vector when BOTH are unchanged; any
+						// camera motion or registry mutation recomputes exactly as before.
+						// margin + includeBldg are session-static (env-init'd) — no key part.
+						static const bool s_cullCacheEnabled = []() {
+							const char* v = getenv("MC2_SHADOW_CASTER_CULL_CACHE");
+							return v && v[0] != '0';
+						}();
+						static uint64_t s_cullCacheGen = UINT64_MAX;   // sentinel: no cache
+						static float    s_cullCacheM[16] = {};
 						static const float s_cullMargin = []() {
 							const char* v = getenv("MC2_SHADOW_CASTER_CULL_MARGIN");
 							const float m = (v && v[0]) ? static_cast<float>(atof(v)) : 0.25f;
@@ -2928,7 +2941,15 @@ void MC_TextureManager::renderLists (void)
 						if (!M) {
 							// No matrix yet (early frames) -> keep everything (safe).
 							dynShadowSet = &s_dynPropInsts;
+						} else if (s_cullCacheEnabled &&
+						           s_cullCacheGen == GpuStaticPropRegistry::getRegistryGeneration() &&
+						           0 == memcmp(s_cullCacheM, M, sizeof(s_cullCacheM))) {
+							// Cache HIT: same caster generation + bit-identical light matrix
+							// -> the cull result is unchanged; reuse the retained vector.
+							dynShadowSet = &s_culledDynPropInsts;
 						} else {
+							s_culledDynPropInsts.clear();
+							s_culledDynPropInsts.reserve(s_dynPropInsts.size());
 							const float lim = 1.0f + s_cullMargin;
 							int dbgN = 0;
 							for (const GpuStaticPropInstance& inst : s_dynPropInsts) {
@@ -2964,6 +2985,10 @@ void MC_TextureManager::renderLists (void)
 								if (keep) s_culledDynPropInsts.push_back(inst);
 							}
 							dynShadowSet = &s_culledDynPropInsts;
+							if (s_cullCacheEnabled) {
+								s_cullCacheGen = GpuStaticPropRegistry::getRegistryGeneration();
+								memcpy(s_cullCacheM, M, sizeof(s_cullCacheM));
+							}
 
 							static bool s_cullLogged = false;
 							if (!s_cullLogged) {
