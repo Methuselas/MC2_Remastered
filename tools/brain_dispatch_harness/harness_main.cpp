@@ -31,6 +31,7 @@
 // Real dispatch API (code/brain_special_dispatch.h — LEAF, no engine deps)
 #include "brain_special_dispatch.h"
 #include "mech_brain_runtime.h"
+#include "fitblockwriter.h"   // FITBLOCK-WRITER-1: writer round-trip self-test
 
 // BRAINSPECIAL-FLOW-WAIT-1: settable brain-time (stubs/brain_tick_stub.cpp).
 extern void harnessSetBrainTimeMs(uint32_t ms);
@@ -470,12 +471,119 @@ static ApplyRunResult runApply(const BrainSpecialBody& body, const SpecialIndex&
 // Main
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// FITBLOCK-WRITER-1: writer round-trip self-test (--fitwriter-selftest).
+//
+// 1. Emit a specials file (Aliases block + TechSpecial blocks with alias= /
+//    variantOf= / quoted DO args / WAIT / STOP) with FitBlockWriter.
+// 2. Re-parse it with the REAL raw scanner (parseBrainSpecialBodyFromPath) and
+//    assert keys, entry selection, verb round-trip, alias lookup and variantOf
+//    inheritance all hold on the writer's output.
+// 3. Golden-string compare of a carver-shaped Brain{} block (deterministic output).
+// 4. Negative test: saveToFile refuses unbalanced blocks.
+// Exit 0 = all checks pass; 1 = failure (each failure printed).
+static int runFitWriterSelfTest() {
+    int fails = 0;
+    auto check = [&](bool ok, const char* what) {
+        std::printf("  %-64s %s\n", what, ok ? "PASS" : "FAIL");
+        if (!ok) ++fails;
+    };
+
+    // --- 1. Emit a specials file. ---
+    FitBlockWriter w;
+    w.writeRaw("FITini");
+    w.blankLine();
+    w.writeComment("FITBLOCK-WRITER-1 self-test emission (round-trip fixture)");
+    w.beginBlock("Aliases");
+    w.writeString("holdfast", "OPORD.CoreGuard");
+    w.endBlock();
+    w.blankLine();
+    w.beginBlock("TechSpecial");
+    w.writeString("key",   "writer.scenario_main");
+    w.writeString("alias", "Writer.Main");
+    w.writeString("type",  "MissionSpecial");
+    w.beginBlock("Body");
+    w.writeRaw("DO Var.Set \"ScenarioResult\" PLAYING scope=Mission");
+    w.writeRaw("WAIT 5");
+    w.writeRaw("DO holdfast");
+    w.writeRaw("STOP");
+    w.endBlock();
+    w.endBlock();
+    w.blankLine();
+    w.beginBlock("TechSpecial");
+    w.writeString("key", "writer.variant.child");
+    w.writeString("variantOf", "writer.scenario_main");
+    w.endBlock();
+    check(w.depth() == 0, "writer: blocks balanced after emission");
+
+    const char* tmpPath = "fitwriter_roundtrip_tmp.fit";
+    check(w.saveToFile(tmpPath), "writer: saveToFile succeeds on balanced writer");
+
+    // --- 2. Re-parse with the real scanner (gates were set in main before this). ---
+    BrainSpecialBody body;
+    SpecialIndex     index;
+    bool parsed = parseBrainSpecialBodyFromPath(tmpPath, body, &index);
+    check(parsed, "roundtrip: raw scanner parses writer output");
+    check(index.size() == 2, "roundtrip: index has 2 TechSpecial blocks");
+    const SpecialIndexEntry* mainE = specialIndexFind(index, "writer.scenario_main");
+    check(mainE != nullptr, "roundtrip: key= field round-trips");
+    const SpecialIndexEntry* byAlias = specialIndexFind(index, "Writer.Main");
+    check(byAlias == mainE && byAlias != nullptr, "roundtrip: block alias= resolves (MC2_BRAIN_ALIAS)");
+    check(body.verbs.size() == 4, "roundtrip: entry body has 4 verbs (DO/WAIT/DO/STOP)");
+    check(body.verbs.size() >= 1 &&
+          body.verbs[0] == "Var.Set \"ScenarioResult\" PLAYING scope=Mission",
+          "roundtrip: inline-quoted DO args survive verbatim");
+    check(body.verbs.size() >= 2 && body.verbs[1] == "WAIT 5",
+          "roundtrip: WAIT flow line collected (MC2_BRAIN_FLOW)");
+    check(body.verbs.size() >= 4 && body.verbs[3] == "STOP",
+          "roundtrip: STOP flow verb collected");
+    const SpecialIndexEntry* childE = specialIndexFind(index, "writer.variant.child");
+    check(childE != nullptr && childE->body.verbs.size() == body.verbs.size(),
+          "roundtrip: empty-body variant inherited parent verbs (MC2_BRAIN_VARIANTOF)");
+    std::remove(tmpPath);
+
+    // --- 3. Brain{} golden-string compare (carver shape). ---
+    FitBlockWriter b;
+    b.beginBlock("Brain");
+    b.writeString("sourceABLBrain", "PBrain");
+    b.writeString("compatibilityMode", "Enhanced");
+    b.writeInlineBlock("PrimaryOPORD", "type = PlayerControlled");
+    b.beginBlock("Tactics");
+    b.writeFloat("Standard", 1.0f);
+    b.writeFloat("Suppress", 0.5f);
+    b.writeFloat("EngageRadius", 250.0f, 1);
+    b.endBlock();
+    b.endBlock();
+    const char* kGolden =
+        "Brain {\n"
+        "\tsourceABLBrain = \"PBrain\"\n"
+        "\tcompatibilityMode = \"Enhanced\"\n"
+        "\tPrimaryOPORD { type = PlayerControlled }\n"
+        "\tTactics {\n"
+        "\t\tStandard = 1.00\n"
+        "\t\tSuppress = 0.50\n"
+        "\t\tEngageRadius = 250.0\n"
+        "\t}\n"
+        "}\n";
+    check(b.str() == kGolden, "golden: Brain{} block matches carver shape exactly");
+
+    // --- 4. Negative: unbalanced save refused. ---
+    FitBlockWriter u;
+    u.beginBlock("Brain");
+    check(!u.saveToFile("fitwriter_should_not_exist.fit"),
+          "negative: saveToFile refuses unbalanced blocks");
+
+    std::printf("fitwriter-selftest: %s (%d failure(s))\n", fails == 0 ? "PASS" : "FAIL", fails);
+    return fails == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     // --- Parse CLI ---
     std::string manifestPath;
     std::string fixtureDir = "tests/fixtures/brain_runtime";
     bool        jsonOutput  = false;
     bool        applyMode   = false;
+    bool        fitWriterSelfTest = false;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--manifest") == 0 && i+1 < argc)
@@ -486,10 +594,12 @@ int main(int argc, char** argv) {
             jsonOutput = true;
         else if (std::strcmp(argv[i], "--apply-mode") == 0)
             applyMode = true;
+        else if (std::strcmp(argv[i], "--fitwriter-selftest") == 0)
+            fitWriterSelfTest = true;
     }
 
-    if (manifestPath.empty()) {
-        std::fprintf(stderr, "Usage: brain_dispatch_harness --manifest <path> [--fixture-dir <dir>] [--json] [--apply-mode]\n");
+    if (manifestPath.empty() && !fitWriterSelfTest) {
+        std::fprintf(stderr, "Usage: brain_dispatch_harness --manifest <path> [--fixture-dir <dir>] [--json] [--apply-mode] [--fitwriter-selftest]\n");
         return 2;
     }
 
@@ -534,6 +644,11 @@ int main(int argc, char** argv) {
     // Detect intent queue gate state (read BEFORE first static-init call).
     const char* intentQueueEnv = std::getenv("MC2_BRAIN_INTENT_QUEUE");
     bool intentQueueGateOn = (intentQueueEnv && std::atoi(intentQueueEnv) != 0);
+
+    // FITBLOCK-WRITER-1: writer round-trip self-test (needs the gates set above:
+    // ALIAS for alias= lookup, VARIANTOF for inheritance, FLOW for WAIT/STOP verbs).
+    if (fitWriterSelfTest)
+        return runFitWriterSelfTest();
 
     // --- Load manifest ---
     std::string jsonErr;
