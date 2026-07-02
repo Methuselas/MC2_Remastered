@@ -325,6 +325,7 @@ static GLint s_locShorelineBounds   = -1;  // u_shorelineBounds (vec4 minX,minY,
 static GLint s_locWaterElevation    = -1;  // u_waterElevation (Terrain::waterElevation, world units)
 static GLint s_locShorelineWetHeight  = -1;  // u_shorelineWetHeight (world units above water)
 static GLint s_locShorelineFoamHeight = -1;  // u_shorelineFoamHeight (world units above water)
+static GLint s_locShorelineEdgeJitter = -1;  // u_shorelineEdgeJitter (V4-STYLE: static world-XY band jitter, wu)
 static GLint s_locShaderTime        = -1;  // u_shaderTime (f(worldPos,time)-only foam animation clock)
 static GLint s_locShorelineStrength     = -1;  // u_shorelineStrength (wet/damp darken multiplier)
 static GLint s_locShorelineFoamStrength = -1;  // u_shorelineFoamStrength (foam rim multiplier)
@@ -753,6 +754,7 @@ void gos_TerrainLodChunk_Init()
             s_locWaterElevation    = glGetUniformLocation(s_terrainProgram, "u_waterElevation");
             s_locShorelineWetHeight  = glGetUniformLocation(s_terrainProgram, "u_shorelineWetHeight");
             s_locShorelineFoamHeight = glGetUniformLocation(s_terrainProgram, "u_shorelineFoamHeight");
+            s_locShorelineEdgeJitter = glGetUniformLocation(s_terrainProgram, "u_shorelineEdgeJitter");  // TERRAIN-SHORELINE-V4-STYLE
             s_locShaderTime        = glGetUniformLocation(s_terrainProgram, "u_shaderTime");
             s_locShorelineStrength     = glGetUniformLocation(s_terrainProgram, "u_shorelineStrength");
             s_locShorelineFoamStrength = glGetUniformLocation(s_terrainProgram, "u_shorelineFoamStrength");
@@ -1501,6 +1503,20 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                 glUniform1f(s_locShorelineWetHeight, s_shorelineWetHeight);
             if (s_locShorelineFoamHeight >= 0)
                 glUniform1f(s_locShorelineFoamHeight, s_shorelineFoamHeight);
+            // TERRAIN-SHORELINE-V4-STYLE (zigzag fix): static world-XY jitter
+            // amplitude (wu) for the band's distance-from-waterline, so the
+            // wet/foam lobes stop tracing the mesh waterline's straight
+            // diamond segments. 0 = exact V3 contour. Clamp [0,32] so a bad
+            // env value can't scatter the band across the whole beach.
+            static const float s_shorelineEdgeJitter = []() {
+                const char* v = std::getenv("MC2_TERRAIN_SHORELINE_EDGE_JITTER");
+                float f = v ? (float)std::atof(v) : 4.0f;
+                if (!(f == f)) f = 4.0f; // NaN guard
+                if (f < 0.0f) f = 0.0f; if (f > 32.0f) f = 32.0f;
+                return f;
+            }();
+            if (s_locShorelineEdgeJitter >= 0)
+                glUniform1f(s_locShorelineEdgeJitter, s_shorelineEdgeJitter);
         }
     }
 

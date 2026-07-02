@@ -107,6 +107,15 @@ uniform float     u_shorelineFoamStrength; // foam rim multiplier
 // foam 5wu (MC2_TERRAIN_SHORELINE_WET_RUN / _FOAM_RUN; legacy _HEIGHT aliased).
 uniform float     u_shorelineWetHeight;    // default 16.0 wu horizontal run
 uniform float     u_shorelineFoamHeight;   // default 5.0 wu horizontal run
+// TERRAIN-SHORELINE-V4-STYLE (zigzag fix): STATIC world-XY fbm jitter (wu,
+// horizontal) added to the band's distance-from-waterline before the lobes
+// are shaped. The drawn waterline on the coarse/displaced mesh is a polyline
+// of long straight segments (the "diamond" zigzag); an un-jittered band traces
+// it faithfully, so the foam rim reads as a hard zigzag edge. Signed noise
+// breaks that contour into organic wisp clusters that cross the line
+// irregularly. f(worldPos) ONLY -- no time (placement must not swim), no
+// camera (advisor ruling). 0 = exact V3 contour behavior.
+uniform float     u_shorelineEdgeJitter;   // default 4.0 wu (MC2_TERRAIN_SHORELINE_EDGE_JITTER)
 
 uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uniform as legacy)
 uniform int   u_shadowTier;               // Slice B: per-chunk shadow tier (0=high,1=low,2=static,3=none)
@@ -1199,6 +1208,15 @@ void main() {
         float sinSlope = sqrt(max(1.0 - nzc * nzc, 1e-6));
         sinSlope       = max(sinSlope, 0.03);            // >= ~1.7deg -> bounded run
         float horizDist = max(aboveWater, 0.0) * (nzc / sinSlope);
+        // TERRAIN-SHORELINE-V4-STYLE (zigzag fix, user verdict D): jitter the
+        // band distance with STATIC signed world-XY fbm so the lobes stop
+        // tracing the mesh waterline's straight diamond segments. Applied to
+        // the SHAPING distance only -- the strictly-above-water clamp below
+        // uses the un-jittered distance, so jitter can never push a band
+        // below the drawn waterline. fbm(p,2) ~ [-0.75,0.75] -> effective
+        // wander ~ +/-0.75*u_shorelineEdgeJitter wu.
+        float edgeJit    = fbm(v_worldPos.xy * 0.055, 2) * u_shorelineEdgeJitter;
+        float horizDistJ = max(horizDist + edgeJit, 0.0);
         // Widths are HORIZONTAL world-units from the waterline (defaults now
         // horizontal-native: wet 16wu / foam 5wu -- the c1593a1f conversion
         // kept the vertical 3.0/1.2 defaults, ~1m of band, invisible at RTS
@@ -1208,9 +1226,9 @@ void main() {
         float foamHeight = max(u_shorelineFoamHeight,  1e-4);
         // Wet lobe: strongest just above the waterline, fading to 0.0 by
         // wetHeight (horizontal wu) inland. Mirrors the mask's old G channel.
-        float slWet  = 1.0 - smoothstep(0.0, wetHeight, horizDist);
-        // Foam rim: narrower band hugging the waterline.
-        float slFoam = 1.0 - smoothstep(0.0, foamHeight, horizDist);
+        float slWet  = 1.0 - smoothstep(0.0, wetHeight, horizDistJ);
+        // Foam rim: narrower band hugging the waterline (jittered inland edge).
+        float slFoam = 1.0 - smoothstep(0.0, foamHeight, horizDistJ);
         // TERRAIN-SHORELINE-V4-STYLE (underwater-leak fix, user verdicts A+C):
         // bands live STRICTLY ABOVE the drawn waterline. The V3 code FORCED
         // slWet/slFoam to 1.0 on submerged land (aboveWater <= 0); the water
@@ -1222,7 +1240,7 @@ void main() {
         // horizDist is already 0 for all submerged fragments (max(aboveWater,0)),
         // so a short fade-in over the first ~1.5 horizontal wu ABOVE the
         // waterline zeroes both lobes at/below the water plane and feathers
-        // them in on land.
+        // them in on land. Uses the UN-jittered distance (leak-proof bound).
         const float kShoreEdgeFeatherWu = 1.5;  // horizontal wu fade-in above the waterline
         float aboveFade = smoothstep(0.0, kShoreEdgeFeatherWu, horizDist);
         slWet  *= aboveFade;
@@ -1305,15 +1323,17 @@ void main() {
         float nzcDbg        = clamp(abs(macroNDbg.z), 0.0, 0.9995);
         float sinSlopeDbg   = max(sqrt(max(1.0 - nzcDbg * nzcDbg, 1e-6)), 0.03);
         float horizDistDbg  = max(aboveWaterDbg, 0.0) * (nzcDbg / sinSlopeDbg);
-        // V4-STYLE: mirror the strictly-above-water fade so the debug view
-        // shows the weights the lit path actually applies.
+        // V4-STYLE: mirror the jitter + strictly-above-water fade so the debug
+        // view shows the weights the lit path actually applies.
+        float edgeJitDbg    = fbm(v_worldPos.xy * 0.055, 2) * u_shorelineEdgeJitter;
+        float horizDistJDbg = max(horizDistDbg + edgeJitDbg, 0.0);
         float aboveFadeDbg  = smoothstep(0.0, 1.5, horizDistDbg);
         float wetHeightDbg  = max(u_shorelineWetHeight,  1e-4);
         float foamHeightDbg = max(u_shorelineFoamHeight, 1e-4);
         vec3 dbgCol = vec3(
             clamp(horizDistDbg / max(wetHeightDbg, 1e-4), 0.0, 1.0),
-            (1.0 - smoothstep(0.0, wetHeightDbg,  horizDistDbg)) * aboveFadeDbg,
-            (1.0 - smoothstep(0.0, foamHeightDbg, horizDistDbg)) * aboveFadeDbg);
+            (1.0 - smoothstep(0.0, wetHeightDbg,  horizDistJDbg)) * aboveFadeDbg,
+            (1.0 - smoothstep(0.0, foamHeightDbg, horizDistJDbg)) * aboveFadeDbg);
         fragColor = vec4(dbgCol, 1.0);
         if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
         return;
