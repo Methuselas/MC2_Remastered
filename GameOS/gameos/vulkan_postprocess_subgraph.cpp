@@ -838,6 +838,21 @@ bool gosPostProcess::vulkanPostprocessSubgraphEnabled()
     }
     if (envState != 1) return false;
 
+    // Env gate ON -> defer to the gate-free readiness half (lazy init + size + device).
+    return postprocessSubgraphReadyForRegion();
+}
+
+// ---------------------------------------------------------------------------
+// postprocessSubgraphReadyForRegion(): POSTPROCESS-VULKAN-BACKEND-OPT-IN.
+// The env-gate-FREE readiness half extracted from vulkanPostprocessSubgraphEnabled():
+// lazy device init, size-match rebuild, and fail-soft self-disable -- with NO
+// MC2_VULKAN_POSTPROCESS_SUBGRAPH check. The region-iface Vulkan backend calls this
+// DIRECTLY (backend=vk IS the enable signal), so selecting the Vulkan backend runs
+// Vulkan independent of the standalone subgraph gate. On any genuine device/init
+// failure returns false (real failure) -> caller falls back to GL.
+// ---------------------------------------------------------------------------
+bool gosPostProcess::postprocessSubgraphReadyForRegion()
+{
     if (width_ <= 0 || height_ <= 0 || sceneColorTex_ == 0 || sceneDepthTex_ == 0) return false;
 
     if (!vkPostprocessSubgraph_) vkPostprocessSubgraph_ = new VulkanPostprocessSubgraph();

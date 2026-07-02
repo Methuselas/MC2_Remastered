@@ -2661,13 +2661,17 @@ unsigned int gosPostProcess::resolveRegionResource(RenderCore::RenderResourceId 
 
 #ifdef MC2_VULKAN_ISLAND
 // 1C: Vulkan impl of the PostprocessFog region. Reuses the shipped, parity-proven
-// subgraph. Fail-soft: vulkanPostprocessSubgraphEnabled() returns false on any
-// init failure (and disables itself), so we return false -> caller runs GL. To
-// keep the subgraph gate INDEPENDENTLY runnable, backend=vk requires
-// MC2_VULKAN_POSTPROCESS_SUBGRAPH=1 as well (this method does not secretly
-// re-gate the subgraph). The neutral ctx values already equal the subgraph's
-// EXACT member-sourced uploads, so no data is threaded through here — the ctx is
-// carried for contract symmetry and resolver exercise.
+// subgraph. POSTPROCESS-VULKAN-BACKEND-OPT-IN: the region-iface routing backend=vk
+// IS the enable signal for Vulkan -- so this DECOUPLES from the standalone subgraph
+// gate. It invokes postprocessSubgraphReadyForRegion() (lazy init + fail-soft, NO
+// MC2_VULKAN_POSTPROCESS_SUBGRAPH check), NOT vulkanPostprocessSubgraphEnabled().
+// Fail-soft: readiness returns false ONLY on a genuine device/init failure (and
+// self-disables), so we return false -> caller runs GL (FallbackGL = real failure,
+// not "gate off"). The standalone MC2_VULKAN_POSTPROCESS_SUBGRAPH path stays
+// independently runnable (that gate still routes through the same readiness half).
+// The neutral ctx values already equal the subgraph's EXACT member-sourced uploads,
+// so no data is threaded through here — the ctx is carried for contract symmetry
+// and resolver exercise.
 bool gosPostProcess::runFogRegionVulkanBackend(
     const RenderCore::PostprocessFogRegionContext& ctx,
     RenderCore::RegionOutput* out)
@@ -2676,9 +2680,9 @@ bool gosPostProcess::runFogRegionVulkanBackend(
         (void)ctx.resolver->resolve(ctx.color);
         (void)ctx.resolver->resolve(ctx.depth);
     }
-    if (!vulkanPostprocessSubgraphEnabled()) {
+    if (!postprocessSubgraphReadyForRegion()) {
         if (out) { out->impl = RenderCore::RenderRegionImpl::None;
-                   out->fallbackReason = "subgraph_disabled_or_gate_off";
+                   out->fallbackReason = "vk_device_init_failed";
                    out->glPassesRun = 0; out->vkDraws = 0; }
         return false;
     }

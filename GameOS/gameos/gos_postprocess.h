@@ -402,6 +402,13 @@ public:
     // oob composite (does BOTH fog effects). destroyVulkanPostprocessSubgraph(): torn
     // down from destroy().
     bool  vulkanPostprocessSubgraphEnabled();
+    // POSTPROCESS-VULKAN-BACKEND-OPT-IN: the env-gate-FREE half of
+    // vulkanPostprocessSubgraphEnabled() -- lazy init + size-match + device-validity,
+    // with NO MC2_VULKAN_POSTPROCESS_SUBGRAPH check. Returns true iff the subgraph is
+    // ready to render THIS frame. Both the standalone gate path (after its env check)
+    // and the region-iface Vulkan backend (whose backend=vk selection IS the enable
+    // signal) route through this, so backend=vk runs Vulkan without the subgraph gate.
+    bool  postprocessSubgraphReadyForRegion();
     void  runPostprocessSubgraph();
     void  destroyVulkanPostprocessSubgraph();
 
