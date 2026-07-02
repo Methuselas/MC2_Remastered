@@ -263,14 +263,20 @@ static void setSceneDrawBuffers(SceneDrawBufferMode mode,
 
 } // namespace
 
-// SKYBOX-FOG-EXCLUDE-1: gate helper (read once). Default OFF -> byte-identical
-// legacy path (no stencil write on sky, no stencil sample/exclusion in the
-// fog frags -- shader uniform u_skyExcludeEnabled resolves to 0).
+// SKYBOX-FOG-EXCLUDE-1: gate helper (read once).
+// SKYBOX-FOG-EXCLUDE-DEFAULT-ON-1: flipped default OFF->ON. The gate is inert
+// on non-HDRI missions -- renderHdriSkybox() early-returns before the stencil-
+// tag pass ("black sky baseline"), so no stencil is ever tagged, the fog frags'
+// stencil branch is a no-op, and fog_oob.frag's worldDir.z<-0.22 band fallback
+// is retained (byte-identical to legacy there). On HDRI missions it excludes
+// fog from true-sky pixels so the skybox is visible instead of being painted
+// over by the OOB cloud bank (the user-reported "can't see the skybox").
+// Kill-switch preserved: MC2_SKYBOX_FOG_EXCLUDE=0 restores the legacy OFF path.
 static bool skyboxFogExcludeEnabled()
 {
     static const bool s_on = []() {
         const char* v = ::getenv("MC2_SKYBOX_FOG_EXCLUDE");
-        return v && v[0] == '1';
+        return !(v && v[0] == '0');   // default ON; explicit "0" disables.
     }();
     return s_on;
 }
