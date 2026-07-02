@@ -105,7 +105,13 @@ def write_clean_pak(template: str, out_pak: Path, pkt0: bytes, clear_objects: bo
         off = ent[i] & ((1 << 29) - 1)
         end = (ent[i + 1] & ((1 << 29) - 1)) if i + 1 < n else len(raw)
         packets.append([t, raw[off:end]])
-    packets[0][1] = pkt0                                   # our gaea terrain
+    packets[0] = [0, pkt0]                                  # our gaea terrain (RAW -- the
+        # template's packet 0 is typically STORAGE_TYPE_ZLIB (t=4); pkt0 here is raw
+        # uncompressed PostcompVertex bytes from build_packet0(), so the type tag MUST
+        # be forced to RAW (0) or the engine (packet.cpp STORAGE_TYPE_ZLIB branch) and
+        # any offline tooling (mission_terrain_analyzer.decode_packet) will try to
+        # zlib-decompress raw terrain data -- silent corruption / "no MapData packet
+        # matched signature" downstream (TERRAIN-GAEA-RELIEF-1).
     if clear_objects and n > 1:
         packets[1] = [0, _s.pack('<i', 0)]                # terrain objects: count=0 (RAW)
     # re-serialize with a fresh seek table (offsets shift because packet 1 resized).
