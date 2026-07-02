@@ -3653,50 +3653,14 @@ float cosineEyeHalfFOV = 0.0f;
 
 extern bool InEditor;
 
-// --- [SLIMSPLIT v1] -------------------------------------------------------
-// RDTSC sub-decomposition of the "Terrain::geometry slimReduce" per-vertex
-// loop. Distinct env gate MC2_SLIM_COST_SPLIT -- NOT the observer-effect-
-// dominated MC2_TERRAIN_COST_SPLIT chrono scopes (memory/cost_split_
-// instrumentation_is_observer_effect_dominated.md). __rdtsc() per-leaf
-// bracket, no Tracy zone by design (a per-vertex hot loop busts the 100ns
-// floor; same sanctioned exception as [LIGHT_COST_SPLIT v1] in tgl.cpp).
-// Isolates the three independent costs the single slimReduce Tracy zone
-// conflates, so the elimination campaign cuts in ROI order:
-//   PROJ : eye->projectForTerrainAdmission (survives for cull + raster)
-//   CULL : clipInfo + setObjBlock/VertexActive + solid-window append
-//   RED  : leastZ/mostZ/leastW/mostW reduction (retired Phase 4 2026-05-19; bracket retained as dead-instrumentation envelope until SLIMSPLIT demote/delete)
-// "front/other" (onScreenR sphere/cone math + raster px/pz write) =
-// Tracy slimReduce total - (PROJ+CULL+RED); not separately bracketed to
-// hold the per-vertex rdtsc-pair count at 3. Demote-not-delete after the
-// attribution lands (debug_instrumentation_rule.md).
-#include <intrin.h>
+// [SLIMSPLIT v1] RDTSC cost-split instrumentation (env MC2_SLIM_COST_SPLIT)
+// deleted by 8Z-DEADCODE-SWEEP-1: the slimReduce per-vertex loop it bracketed was
+// removed in 8z-A3, leaving SlimSplitOn()/SlimSplitRollAndMaybeEmit() and the g_ss*
+// counters with zero live callers. This is the "separate cleanup pass" the geometry()
+// comment named. The live [8Z_VESTIGIAL]/[8Z_RETIRED_ENV] opt-out warn stubs and the
+// still-wired GeoScope/MC2_GEOM_PHASE_SPLIT instrumentation below are retained.
 #include <stdlib.h>
 #include <stdio.h>
-namespace {
-	bool               g_ssInit = false, g_ssOn = false;
-	unsigned long long g_ssProjCyc = 0, g_ssCullCyc = 0, g_ssRedCyc = 0;
-	unsigned long long g_ssProjCall = 0, g_ssVtx = 0, g_ssFrames = 0;
-	bool SlimSplitOn()
-	{
-		if (!g_ssInit) { g_ssOn = (getenv("MC2_SLIM_COST_SPLIT") != nullptr); g_ssInit = true; }
-		return g_ssOn;
-	}
-	void SlimSplitRollAndMaybeEmit()
-	{
-		if (!g_ssOn) return;
-		++g_ssFrames;
-		if (g_ssFrames % 600ULL != 0ULL) return;
-		const double f = 600.0;
-		fprintf(stderr,
-			"[SLIMSPLIT v1] event=summary frames=600 "
-			"vtx_per_frame=%.0f proj_cyc_per_frame=%.0f proj_calls_per_frame=%.0f "
-			"cull_cyc_per_frame=%.0f red_cyc_per_frame=%.0f\n",
-			(double)g_ssVtx / f, (double)g_ssProjCyc / f, (double)g_ssProjCall / f,
-			(double)g_ssCullCyc / f, (double)g_ssRedCyc / f);
-		g_ssProjCyc = g_ssCullCyc = g_ssRedCyc = 0;
-		g_ssProjCall = g_ssVtx = 0;
-	}
-}  // namespace
 
 // ---- MC2_GEOM_PHASE_SPLIT: wall-ns split of Terrain::geometry() phases -------
 // Locate the 1K-map geometry() spike (avg ~2.25ms / max ~236ms) by phase.
@@ -3897,8 +3861,8 @@ void Terrain::geometry (void)
 	// 8z-A3: slimReduce per-vertex loop deleted. Under chunk=ON, makeLists is
 	// skipped (numberVertices==0) so this loop was a no-op. Production
 	// objBlockInfo.active/objVertexActive/solid-window written by s_lodChunkProd
-	// (Phase 8c). The SlimSplit RDTSC machinery above is now dead; left in place
-	// until a separate cleanup pass removes the GeoScope/SlimSplit helpers.
+	// (Phase 8c). The dead SlimSplit RDTSC machinery was removed by
+	// 8Z-DEADCODE-SWEEP-1; the live GeoScope/MC2_GEOM_PHASE_SPLIT helpers remain.
 
 	// MC2_BLOCK_FRUSTUM_FALLBACK: post-slimReduce block-level frustum AABB pass.
 	// Widens object-block admission for cameras where the per-vertex angular cull

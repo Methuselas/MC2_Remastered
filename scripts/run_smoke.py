@@ -1353,7 +1353,6 @@ def main():
                             # campaign launch in smoke (loads corebrain.abx + object2.pak).
                             "MC2_MOD_DEPS",
                             "MC2_LIGHT_COST_SPLIT",
-                            "MC2_SLIM_COST_SPLIT",
                             "MC2_TOBJ_COST_SPLIT",
                             "MC2_STATIC_PROP_FLUSH_COST_SPLIT",
                             "MC2_STATIC_PROP_FLUSH_CACHED_BLOB",
