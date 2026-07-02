@@ -712,6 +712,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "SHADOW-BOUNDED-NEAR-FIT-1 tunable: bounded near-fit radius in world units (default 2500, clamped 512..mapClampR). Only consulted when MC2_SHADOW_BOUNDED_NEAR_FIT=1. Resolved once at process start."
     },
     {
+        "MC2_FEATURE_PROP_SHADOW_RECEIVE",
+        "MC2_PROP_SHADOW_RECEIVE",
+        EnvVarKind::Feature,
+        false,
+        "PROP-SHADOW-RECEIVE-1: static props RECEIVE the dynamic CSM cascade shadow in shadow_screen.frag (building self-shadow + prop-on-prop; the cascades already carry the full prop caster set via the DynShadowCSM replay). Default-OFF; =1 enables. OFF = legacy static-map-only reception for the GBuffer1.a=0.25 prop class (pixel-identical). Shares the existing PCF ledger (MC2_SHADOW_CSM_SOFTNESS, MC2_SHADOW_OBJ_NORMAL_BIAS) + the MC2_SHADOW_MECH_SOFT terminator smoothstep; floor 0.4 min-combined with the static map (no double-darken)."
+    },
+    {
         "MC2_FEATURE_SHADOW_STATIC_BUILDINGS",
         "MC2_STATIC_PROP_BUILDING_SHADOW",
         EnvVarKind::Feature,

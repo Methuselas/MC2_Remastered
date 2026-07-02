@@ -1290,6 +1290,11 @@ def main():
                             # allowlisted or Popen drops it and the gate-ON smoke
                             # does nothing.
                             "MC2_GROUND_CONTACT_BLOB",
+                            # PROP-SHADOW-RECEIVE-1 -- static props receive the
+                            # dynamic CSM cascade (self/prop-on-prop shadow) in
+                            # shadow_screen.frag (default OFF). Must be allowlisted
+                            # or Popen drops it and the gate-ON smoke does nothing.
+                            "MC2_PROP_SHADOW_RECEIVE",
                             # Mask-dispatch (pre-bake-terrain merge)
                             "MC2_TERRAIN_MASK_DISPATCH",
                             "MC2_TERRAIN_MASK_DISPATCH_PARITY",
