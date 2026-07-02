@@ -630,6 +630,8 @@ ALLOWLIST=(
     MC2_TERRAIN_LOD_CHUNK_NO_STITCH   # override -- LOD-chunk disable-stitch debug
     MC2_TERRAIN_LOD_CHUNK_SKIRT_MAX   # override -- LOD-chunk skirt-max override
     MC2_TERRAIN_LOD_DEPTH_ALWAYS      # feature -- LOD-chunk depth-always gate
+    MC2_TERRAIN_LOD_GEOMORPH          # override -- TERRAIN-LOD-GEOMORPH-1 killswitch (=0 disables mips+morph; rides MC2_TERRAIN_VISUAL_DISPLACE)
+    MC2_TERRAIN_LOD_MORPH_START       # override -- TERRAIN-LOD-GEOMORPH-1 morph ramp start fraction of band (default 0.6)
     MC2_TERRAIN_MACRO_VARIATION       # feature -- terrain macro-variation gate
     MC2_TERRAIN_MACRO_VARIATION_STRENGTH  # override -- terrain macro-variation strength tuning
     MC2_TERRAIN_MINE_AB               # parity
