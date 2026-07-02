@@ -278,13 +278,18 @@ def test_extract_missing_pak_fails(tmp_path):
 
 
 # --- twins CLI (real tile art, skipif; bicubic path for determinism) -------------
-@pytest.mark.skipif(not (STOCK_OVERLAYS / "runway0000.tga").is_file(),
+@pytest.mark.skipif(not (STOCK_OVERLAYS / "runway0011.tga").is_file(),
                     reason="mc2srcdata 64Overlays tile art not present")
 def test_twins_builds_runway_stamp_and_report(tmp_path):
+    """runway0011 carries real bright markings (threshold bars + numerals) ->
+    a stamp is built. runway0000 is a plain taxiway with NO bright markings
+    (only body gradient) -> under the marking-only contract it correctly
+    reports no_paint and ships no stamp. dirtroad has no paint at all."""
     markings = tmp_path / "m.json"
     markings.write_text(json.dumps({
         "mission": "synthetic", "side": 100,
-        "cells": [{"row": 1, "col": 1, "family": "runway", "tile": 0},
+        "cells": [{"row": 1, "col": 1, "family": "runway", "tile": 11},
+                  {"row": 1, "col": 3, "family": "runway", "tile": 0},
                   {"row": 1, "col": 2, "family": "dirtroad", "tile": 0}],
     }))
     out_dir = tmp_path / "twins"
@@ -293,13 +298,21 @@ def test_twins_builds_runway_stamp_and_report(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     report = json.loads((out_dir / "twins_report.json").read_text())
     assert report["upscaler"] == "bicubic"
-    assert report["tiles"]["runway0000"]["status"] in ("ok", "below_threshold_raster_used")
-    assert (out_dir / "runway0000.twin.png").is_file()
-    # dirt road has no paint -> INVARIANT: no twin file
+    # marking-bearing runway tile -> a stamp is built
+    assert report["tiles"]["runway0011"]["status"] in ("ok", "below_threshold_raster_used")
+    assert (out_dir / "runway0011.twin.png").is_file()
+    # plain taxiway (no bright paint) and dirt road -> INVARIANT: no twin file
+    assert report["tiles"]["runway0000"]["status"] == "no_paint"
+    assert not (out_dir / "runway0000.twin.png").is_file()
     assert report["tiles"]["dirtroad0000"]["status"] == "no_paint"
     assert not (out_dir / "dirtroad0000.twin.png").is_file()
-    twin = np.array(Image.open(out_dir / "runway0000.twin.png"))
+    twin = np.array(Image.open(out_dir / "runway0011.twin.png").convert("RGBA"))
     assert twin.shape[2] == 4 and int((twin[..., 3] > 0).sum()) > 0
+    # STAMP-ONLY-MARKING: the twin opaque region must be bright paint, NOT the
+    # dark asphalt body -- the whole point of the marking-only fix.
+    op = twin[..., 3] > 0
+    opaque_lum = twin[op][:, :3].astype(int).mean(axis=1)
+    assert float(opaque_lum.min()) > 100, "stamp must not carry dark body pixels"
 
 
 # --- compose ----------------------------------------------------------------------
@@ -403,6 +416,142 @@ def test_compose_deterministic(tmp_path):
              "--twins", str(twins), "--out", str(o2), "--px-per-wu", "0.125")
     assert r1.returncode == 0 and r2.returncode == 0
     assert o1.read_bytes() == o2.read_bytes()
+
+
+def test_compose_base_upsample_is_nearest_no_feather(tmp_path):
+    """ROOT-CAUSE regression (cement blobs): a coarse binary-alpha parity
+    raster composed at a larger canvas must upsample NEAREST -- no partial
+    alpha may appear along cement edges (that soft ramp rendered as translucent
+    'fog cloud' halos). BICUBIC would introduce hundreds of partial-alpha
+    texels here."""
+    # 4x4 parity raster with a hard-edged cement block (alpha 0 or 255 only)
+    small = np.zeros((4, 4, 4), dtype=np.uint8)
+    small[..., :3] = 150
+    small[1:3, 1:3, 3] = 255  # a 2x2 opaque cement pad, hard edges
+    overlay = tmp_path / "base_overlay.png"
+    Image.fromarray(small, "RGBA").save(overlay)
+    (tmp_path / "base_overlay.bounds.txt").write_text("-256.0 256.0 512.0 512.0\n")
+    twins = tmp_path / "twins"
+    twins.mkdir()
+    markings = tmp_path / "m.json"
+    markings.write_text(json.dumps({"mission": "x", "side": 4, "cells": []}))
+    out = tmp_path / "composed.png"
+    r = run("compose", "--markings", str(markings), "--overlay", str(overlay),
+            "--twins", str(twins), "--out", str(out), "--px-per-wu", "1.0")  # 512px canvas
+    assert r.returncode == 0, r.stdout + r.stderr
+    arr = np.array(Image.open(out).convert("RGBA"))
+    a = arr[..., 3]
+    partial = ((a > 0) & (a < 255)).sum()
+    assert partial == 0, f"cement edges feathered: {partial} partial-alpha texels (want 0)"
+
+
+# --- whole-image acceptance gate ---------------------------------------------
+def test_whole_image_gate_passes_when_diff_confined():
+    base = np.zeros((20, 20, 4), dtype=np.uint8)
+    base[..., :3] = 150
+    base[..., 3] = 255
+    composed = base.copy()
+    footprint = np.zeros((20, 20), dtype=bool)
+    footprint[8:12, 8:12] = True
+    composed[9:11, 9:11, :3] = 255  # a marking, inside the footprint
+    rep = cm.whole_image_diff_confined(composed, base, footprint)
+    assert rep["pass"], rep
+
+
+def test_whole_image_gate_fails_on_body_ship_outside_footprint():
+    """The 'solid white runway' class: the parity base is TRANSPARENT outside
+    the concrete cells; a stamp that ships opaque body pixels turns
+    transparent texels opaque OUTSIDE the true marking footprint -> the gate
+    must FAIL (the alpha 0->255 delta is what makes the runway read solid,
+    even when the grey RGB nearly matches the base)."""
+    base = np.zeros((20, 20, 4), dtype=np.uint8)
+    base[..., :3] = 150  # RGB present but...
+    base[..., 3] = 0     # ...fully transparent everywhere (no overlay here)
+    composed = base.copy()
+    footprint = np.zeros((20, 20), dtype=bool)
+    footprint[8:12, 8:12] = True
+    # a big opaque grey slab painted well outside the tiny footprint (body ship)
+    composed[2:18, 2:18, :3] = 152
+    composed[2:18, 2:18, 3] = 255
+    rep = cm.whole_image_diff_confined(composed, base, footprint)
+    assert not rep["pass"]
+    assert rep["outside_footprint_texels"] > 0
+
+
+def test_whole_image_gate_fails_on_feathered_base():
+    """The 'cement blob' class: feathering the base alpha changes texels with
+    NO stamp over them -> the gate must FAIL."""
+    base = np.zeros((20, 20, 4), dtype=np.uint8)
+    base[..., :3] = 150
+    base[5:15, 5:15, 3] = 255  # hard cement block
+    composed = base.copy()
+    footprint = np.zeros((20, 20), dtype=bool)  # no stamps at all
+    # simulate a bicubic feather: soft alpha ramp around the block edge
+    composed[4, 5:15, 3] = 120
+    composed[15, 5:15, 3] = 120
+    rep = cm.whole_image_diff_confined(composed, base, footprint)
+    assert not rep["pass"]
+    assert rep["outside_footprint_texels"] > 0
+
+
+def test_whole_image_gate_allows_aa_margin():
+    """A 1px LANCZOS AA fringe just past the recorded footprint is tolerated by
+    the AA margin (not a body-ship error)."""
+    base = np.zeros((20, 20, 4), dtype=np.uint8)
+    base[..., :3] = 150
+    base[..., 3] = 255
+    composed = base.copy()
+    footprint = np.zeros((20, 20), dtype=bool)
+    footprint[8:12, 8:12] = True
+    composed[7:13, 7:13, :3] = 255  # marking + 1px AA fringe past footprint
+    rep = cm.whole_image_diff_confined(composed, base, footprint, aa_margin=2)
+    assert rep["pass"], rep
+
+
+def test_verify_cli_passes_on_clean_compose(tmp_path):
+    """compose -> verify round-trip: a clean marking-only stamp passes."""
+    overlay = _make_overlay_png(tmp_path, 64, 64)
+    twins = tmp_path / "twins"
+    _make_twin(twins, "runway0000")  # small central dash, marking-only
+    markings = tmp_path / "m.json"
+    markings.write_text(json.dumps({
+        "mission": "synthetic", "side": 4,
+        "cells": [{"row": 1, "col": 2, "family": "runway", "tile": 0}],
+    }))
+    composed = tmp_path / "composed.png"
+    rc = run("compose", "--markings", str(markings), "--overlay", str(overlay),
+             "--twins", str(twins), "--out", str(composed), "--px-per-wu", "0.125")
+    assert rc.returncode == 0, rc.stdout + rc.stderr
+    rv = run("verify", "--markings", str(markings), "--overlay", str(overlay),
+             "--twins", str(twins), "--composed", str(composed))
+    assert rv.returncode == 0, rv.stdout + rv.stderr
+    assert "PASS" in rv.stdout
+
+
+def test_verify_cli_fails_on_altered_base(tmp_path):
+    """If the composed sidecar's base surface was altered outside stamps, the
+    whole-image gate FAILs (exit 1). This is the check the per-tile IoU gate
+    could not make."""
+    overlay = _make_overlay_png(tmp_path, 64, 64)
+    twins = tmp_path / "twins"
+    _make_twin(twins, "runway0000")
+    markings = tmp_path / "m.json"
+    markings.write_text(json.dumps({
+        "mission": "synthetic", "side": 4,
+        "cells": [{"row": 1, "col": 2, "family": "runway", "tile": 0}],
+    }))
+    composed = tmp_path / "composed.png"
+    rc = run("compose", "--markings", str(markings), "--overlay", str(overlay),
+             "--twins", str(twins), "--out", str(composed), "--px-per-wu", "0.125")
+    assert rc.returncode == 0
+    # corrupt the composed image far from the stamp (simulate body-ship/feather)
+    arr = np.array(Image.open(composed).convert("RGBA"))
+    arr[0:20, 0:20, :3] = 200
+    Image.fromarray(arr, "RGBA").save(composed)
+    rv = run("verify", "--markings", str(markings), "--overlay", str(overlay),
+             "--twins", str(twins), "--composed", str(composed))
+    assert rv.returncode == 1, rv.stdout + rv.stderr
+    assert "FAIL" in rv.stdout + rv.stderr
 
 
 # --- install --------------------------------------------------------------

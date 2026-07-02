@@ -49,6 +49,13 @@ Subcommands:
            --out <png> [--px-per-wu N] [--max-canvas N]
       Stamp each decoded cell's twin at its exact cell footprint over the
       untouched parity raster.
+  verify   --markings <json> --overlay <parity.png> --twins <dir>
+           --composed <sidecar.png> [--bounds F]
+      WHOLE-IMAGE acceptance gate: the composed sidecar may differ from the
+      pure parity raster ONLY where marking stamps land (+ AA margin). Any
+      difference outside a stamp footprint (body pixels shipped, edges
+      feathered) is a FAIL (exit 1). This catches the compose-level errors the
+      per-tile IoU gate is blind to.
   install  --png <file> --deploy <dir> --mission <stem>
       Same contract as overlay_extract.py's install.
   sheet    --png <file> --out <file>
@@ -286,12 +293,35 @@ MIN_COMP_PX = 8             # despeckle: ignore paint specks below this (at 256p
 # Paint thresholds are RELATIVE to the tile's road-body statistics -- the
 # legacy art is authored dark (dash lum ~121 on ~62 asphalt reads "white"
 # only by contrast; measured on runway0000/0011/pavedroad0000).
-WHITE_LUM_DELTA = 26        # lum > body_median + delta
+#
+# ROOT-CAUSE FIX (overlay_v2 "solid white runway"): a fixed `median + 26`
+# delta is NOT a marking-vs-body discriminator on this art. Measured body
+# luminance distributions have NO bimodal gap -- there is a smooth gradient
+# from the dark asphalt core up through edge antialiasing, and `med+26` swept
+# in 5-19% of the BODY on runway tiles (runway0000 pure-asphalt taxiway:
+# body&lum>88 = 8%). Those body texels were then shipped as OPAQUE grey
+# stamps, so the composed runway read as a solid whitish slab (dense region
+# 96% opaque grey ~150) with soft feathered edges. Real markings sit a LARGE
+# absolute contrast above the body median (authored as the brightest paint on
+# the tile), whereas the body gradient / edge antialiasing tapers only
+# modestly above it: measured runway0011/0014 threshold-bar/numeral paint
+# reaches med+79..92 at p97; markingless runway0000-0010 top out at only
+# med+38..50 at p97; faint pavedroad dashes at med+21..25 (pavedroad0006-14
+# dashes med+39..63). WHITE_MIN_CONTRAST=55 cleanly separates the populations:
+# tiles whose brightest texels are only body gradient (<55 over median) yield
+# a near-empty mask that despeckle drops -> no stamp ("no legacy paint -> no
+# vector paint"); only genuine bright markings survive. A single hard contrast
+# floor (NOT a percentile) is used deliberately -- a percentile lands ON the
+# marking luminance when markings are a non-trivial area fraction (a
+# threshold-bar tile), which would exclude the very paint we want to keep.
+WHITE_MIN_CONTRAST = 55     # lum >= body_median + this (marking-vs-body floor)
 WHITE_CHROMA_MAX = 26       # |r-b| below this = achromatic paint
 YELLOW_RB_DELTA = 18        # (r-b) > body_median_rb + delta
 YELLOW_GB_MIN = 40          # (g-b) floor: true yellow paint, NOT tan dirt
                             # (dirt shoulder g-b ~32; painted ticks g-b ~90)
-YELLOW_LUM_DELTA = 8        # and at least slightly brighter than the body
+YELLOW_LUM_DELTA = 30       # yellow paint is also well above the body, not a
+                            # faint tan tint (raised from 8: same body-gradient
+                            # leak class as the white delta above)
 # ROAD BODY = fully-opaque texels only. The tile alpha is the auto-tiler
 # shape mask: road core ~240-255, dirt shoulder blend zone ~68-140 (measured
 # pavedroad0000 alpha histogram {68,72,73,240,255}); a loose alpha gate lets
@@ -333,7 +363,13 @@ def extract_paint_mask(ref: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
     med = int(np.median(lum[body]))
     rb = r - b
     med_rb = int(np.median(rb[body]))
-    white = body & (lum > med + WHITE_LUM_DELTA) & (np.abs(rb - med_rb) < WHITE_CHROMA_MAX)
+    # White threshold: a hard absolute contrast floor above the body median so
+    # markingless asphalt (whose brightest texels are only body gradient,
+    # ~med+40) contributes NOTHING, while genuine bright paint (med+55..92 on
+    # real threshold bars/numerals/dashes) survives. Inclusive (>=) so a
+    # marking whose luminance equals the floor is kept.
+    white = (body & (lum >= med + WHITE_MIN_CONTRAST) &
+             (np.abs(rb - med_rb) < WHITE_CHROMA_MAX))
     yellow = (body & (rb > med_rb + YELLOW_RB_DELTA) & ((g - b) > YELLOW_GB_MIN) &
               (lum > med + YELLOW_LUM_DELTA))
     mask = white | yellow
@@ -425,13 +461,21 @@ def build_twin(ref: np.ndarray) -> tuple[np.ndarray, dict] | None:
     twin = np.zeros((h, w, 4), dtype=np.uint8)
     lbl, ncomp = ndimage.label(mask, structure=np.ones((3, 3)))
     n_vec = n_raster = 0
+    # STAMP-ONLY-MARKING GUARANTEE: a fitted rect/capsule primitive can bleed a
+    # pixel or two past the true paint into the body. Clip every vector stamp
+    # to a 1px dilation of the marking mask so the twin's opaque region is a
+    # subset of the markings (+1px AA) and NEVER ships raw asphalt/concrete
+    # body -- the exact defect that painted the runway solid grey. The raster
+    # fallback already writes only `comp` (a subset of the mask), so it needs
+    # no clip.
+    mask_dil = ndimage.binary_dilation(mask, structure=np.ones((3, 3), dtype=bool))
     for i in range(1, ncomp + 1):
         comp = lbl == i
         crow, ccol = np.where(comp)
         color = ref[crow, ccol, :3].mean(axis=0).astype(np.uint8)
         prim, kind = _render_capsule_or_rect((h, w), crow, ccol)
         if _iou(prim, comp) >= COMP_IOU_VECTOR_MIN:
-            sel = prim
+            sel = prim & mask_dil  # clip to marking mask: no body pixels ship
             twin[sel, 0] = color[0]
             twin[sel, 1] = color[1]
             twin[sel, 2] = color[2]
@@ -583,10 +627,22 @@ def cmd_compose(args) -> int:
               f"clamped to px_per_wu={px_per_wu:.4f} -> {canvas_w}x{canvas_h}")
 
     # the parity raster IS the base and stays visually identical (user
-    # ruling: footprint/surface pixel-faithful; only paint gets crisper)
+    # ruling: footprint/surface pixel-faithful; only paint gets crisper).
+    #
+    # ROOT-CAUSE FIX (overlay_v2 "scalloped semi-transparent cement transition
+    # blobs"): the parity raster is a coarse per-vertex-cell binary mask
+    # (side x side, e.g. 100x100 for mc2_01, hard 0/255 alpha at cement
+    # boundaries). BICUBIC-upsampling that to the 8192 canvas SMOOTHED the
+    # binary alpha into a soft ramp -- ~458k texels landed at partial alpha
+    # (1..249) along every cement edge, which the engine composited as
+    # translucent feathered halos ("fog clouds"). NEAREST keeps the cement
+    # edges hard (0 partial-alpha texels); the engine's own overlay transition
+    # shader is what softens cement borders, so the sidecar must NOT pre-blur
+    # them. Only the marking STAMPS below are anti-aliased (LANCZOS) -- paint
+    # gets crisper, bodies/edges stay pixel-faithful.
     base = Image.open(overlay_path).convert("RGBA")
     if base.size != (canvas_w, canvas_h):
-        base = base.resize((canvas_w, canvas_h), Image.BICUBIC)
+        base = base.resize((canvas_w, canvas_h), Image.NEAREST)
     canvas = base.copy()
 
     # per-cell stamp: cell (row,col) covers [col,col+1)x[row,row+1) of the
@@ -629,6 +685,129 @@ def cmd_compose(args) -> int:
           f"cells={len(cells)} stamped={stamped} skipped_no_paint={skipped} "
           f"bounds={out_bounds}")
     return 0
+
+
+# --- whole-image acceptance gate ---------------------------------------------
+# The per-tile IoU gate above scores each stamp against its own tile mask, but
+# it is BLIND to whole-image compose errors: a stamp that ships body pixels, or
+# a base that got feathered on upsample, both pass every per-tile check while
+# wrecking the composed sidecar (the "solid white runway" + "cement blob"
+# regressions). This gate closes that hole: the ONLY texels allowed to differ
+# between the composed sidecar and the pure parity raster are the ones the
+# marking stamps cover (+ a small AA margin). Any difference OUTSIDE a stamp
+# footprint means the base surface/edges were altered -> FAIL.
+GATE_AA_MARGIN = 2          # px dilation of stamp footprints (LANCZOS AA fringe)
+GATE_DIFF_EPS = 6           # per-channel |delta| below this = identical (noise)
+
+
+def whole_image_diff_confined(
+        composed: np.ndarray, parity_base: np.ndarray, stamp_footprint: np.ndarray,
+        aa_margin: int = GATE_AA_MARGIN, eps: int = GATE_DIFF_EPS) -> dict:
+    """Assert composed == parity_base everywhere OUTSIDE the (dilated) stamp
+    footprint. `composed`/`parity_base` are HxWx4 uint8 at the SAME size;
+    `stamp_footprint` is HxW bool (True where any marking stamp was composited).
+    Returns a report dict with `pass` (bool) and the offending-pixel count."""
+    assert composed.shape == parity_base.shape, (composed.shape, parity_base.shape)
+    assert stamp_footprint.shape == composed.shape[:2], stamp_footprint.shape
+    diff = np.abs(composed.astype(np.int16) - parity_base.astype(np.int16)).max(axis=2)
+    changed = diff > eps
+    allowed = stamp_footprint
+    if aa_margin > 0:
+        allowed = ndimage.binary_dilation(
+            allowed, structure=np.ones((3, 3), dtype=bool), iterations=aa_margin)
+    outside = changed & ~allowed
+    n_outside = int(outside.sum())
+    return {
+        "pass": n_outside == 0,
+        "changed_texels": int(changed.sum()),
+        "outside_footprint_texels": n_outside,
+        "footprint_texels": int(allowed.sum()),
+        "aa_margin": aa_margin, "eps": eps,
+    }
+
+
+def _reconstruct_parity_and_footprint(
+        overlay_path: Path, twins_dir: Path, doc: dict,
+        top_left_x: float, top_left_y: float, size_x: float, size_y: float,
+        canvas_w: int, canvas_h: int) -> tuple[np.ndarray, np.ndarray]:
+    """Rebuild the pure parity base (NEAREST-upsampled, NO stamps) and the
+    boolean stamp-footprint mask, using the SAME geometry as cmd_compose."""
+    side = int(doc["side"])
+    base = Image.open(overlay_path).convert("RGBA")
+    if base.size != (canvas_w, canvas_h):
+        base = base.resize((canvas_w, canvas_h), Image.NEAREST)
+    parity = np.array(base, dtype=np.uint8)
+    footprint = np.zeros((canvas_h, canvas_w), dtype=bool)
+    half_map = (side * WORLD_UNITS_PER_VERTEX) * 0.5
+    twin_cache: dict[str, Image.Image | None] = {}
+    for cell in doc.get("cells", []):
+        name = f"{cell['family']}{cell['tile']:04d}"
+        if name not in twin_cache:
+            p = twins_dir / f"{name}.twin.png"
+            twin_cache[name] = Image.open(p).convert("RGBA") if p.is_file() else None
+        twin = twin_cache[name]
+        if twin is None:
+            continue
+        r, c = int(cell["row"]), int(cell["col"])
+        wx0 = c * WORLD_UNITS_PER_VERTEX - half_map
+        wy0 = half_map - r * WORLD_UNITS_PER_VERTEX
+        x0 = round((wx0 - top_left_x) / size_x * canvas_w)
+        y0 = round((top_left_y - wy0) / size_y * canvas_h)
+        x1 = round((wx0 + WORLD_UNITS_PER_VERTEX - top_left_x) / size_x * canvas_w)
+        y1 = round((top_left_y - (wy0 - WORLD_UNITS_PER_VERTEX)) / size_y * canvas_h)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        stamp = np.array(twin.resize((x1 - x0, y1 - y0), Image.LANCZOS), dtype=np.uint8)
+        sx0, sy0 = max(0, x0), max(0, y0)
+        sx1, sy1 = min(canvas_w, x1), min(canvas_h, y1)
+        if sx1 <= sx0 or sy1 <= sy0:
+            continue
+        # a texel is "covered" wherever the resized stamp has any alpha
+        salpha = stamp[sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0, 3] > 0
+        footprint[sy0:sy1, sx0:sx1] |= salpha
+    return parity, footprint
+
+
+def cmd_verify(args) -> int:
+    """Whole-image acceptance: composed sidecar vs pure parity raster diff must
+    be confined to marking-stamp pixels (+ AA margin)."""
+    markings_path = Path(args.markings)
+    overlay_path = Path(args.overlay)
+    twins_dir = Path(args.twins)
+    composed_path = Path(args.composed)
+    for label, p in (("markings", markings_path), ("overlay", overlay_path),
+                     ("composed", composed_path)):
+        if not p.is_file():
+            print(f"[verify] ERROR {label} not found: {p}", file=sys.stderr)
+            return 4
+    if not twins_dir.is_dir():
+        print(f"[verify] ERROR twins dir not found: {twins_dir}", file=sys.stderr)
+        return 4
+
+    doc = json.loads(markings_path.read_text())
+    composed = np.array(Image.open(composed_path).convert("RGBA"), dtype=np.uint8)
+    canvas_h, canvas_w = composed.shape[:2]
+
+    bounds_path = Path(args.bounds) if args.bounds else None
+    try:
+        tlx, tly, sx, sy = _load_bounds(bounds_path, overlay_path)
+    except ValueError as e:
+        print(f"[verify] ERROR {e}", file=sys.stderr)
+        return 4
+
+    parity, footprint = _reconstruct_parity_and_footprint(
+        overlay_path, twins_dir, doc, tlx, tly, sx, sy, canvas_w, canvas_h)
+    rep = whole_image_diff_confined(composed, parity, footprint)
+    print(f"[verify] {composed_path.name}: changed={rep['changed_texels']} "
+          f"footprint={rep['footprint_texels']} "
+          f"outside_footprint={rep['outside_footprint_texels']} "
+          f"-> {'PASS' if rep['pass'] else 'FAIL'}")
+    if not rep["pass"]:
+        print(f"[verify] FAIL: {rep['outside_footprint_texels']} texels differ from the "
+              f"parity raster OUTSIDE any marking stamp -- the base surface/edges "
+              f"were altered (body pixels shipped, or edges feathered).",
+              file=sys.stderr)
+    return 0 if rep["pass"] else 1
 
 
 # --- install (delegates to overlay_extract.py's contract) --------------------
@@ -723,6 +902,14 @@ def main() -> int:
                    help="safety cap on canvas width/height in pixels (default 8192; "
                         "at 100-cell maps this gives ~82px/cell, beating the legacy 64px tile density)")
     p.set_defaults(func=cmd_compose)
+
+    p = sub.add_parser("verify", help="whole-image acceptance: composed vs pure parity raster diff must be confined to marking stamps")
+    p.add_argument("--markings", required=True)
+    p.add_argument("--overlay", required=True, help="the pure parity raster (overlay base, pre-stamp)")
+    p.add_argument("--twins", required=True)
+    p.add_argument("--composed", required=True, help="the composed sidecar to check")
+    p.add_argument("--bounds", help="explicit bounds file (default: <overlay-stem>.bounds.txt)")
+    p.set_defaults(func=cmd_verify)
 
     p = sub.add_parser("install", help="copy composed png(+bounds) into <deploy>/data/missions/<stem>.beauty/overlay_v2.png")
     p.add_argument("--png", required=True)
