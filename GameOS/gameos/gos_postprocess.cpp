@@ -34,8 +34,9 @@
 #include "../../RenderCore/frame_executor.h"  // FRAME-GRAPH-EXECUTOR-ISLAND-1 IslandContract
 
 // === Item 1: Cascaded Shadow Maps gate (dynamic shadow path) ==============
-// MC2_SHADOW_CSM  : master gate, DEFAULT OFF. OFF => legacy single dynamic
-//                   map path is byte-identical (none of the CSM code runs).
+// MC2_SHADOW_CSM  : master gate, DEFAULT ON (reworked 2026-06-18, `8ff13a36`;
+//                   see docs/tier1_env_vars.md "Dynamic CSM"). Set "=0" to opt
+//                   out to the legacy single dynamic map path.
 // MC2_SHADOW_CSM_COUNT  : cascade count, default 3, clamp [1,3].
 // MC2_SHADOW_CSM_LAMBDA : log/uniform split blend, default 0.5, clamp [0,1].
 bool mc2ShadowCsmEnabled()
