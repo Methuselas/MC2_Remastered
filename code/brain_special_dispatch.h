@@ -34,6 +34,10 @@
 //       built-in seeds + Aliases{} block entries + per-block alias= keys + case-insensitive
 //       catalog shorthand. OFF (default): only the 5 hardcoded aliasToCanonical mappings
 //       apply (pre-slice behavior, byte-identical).
+//   MC2_BRAIN_SCOPE_GLOBAL=1 (BRAINSPECIAL-SCOPE-GLOBAL-1) → global_specials.fit (same
+//       directory as the mission specials) merged into the special index as a shared
+//       Call-target library. Mission-local keys win on collision. Globals never provide
+//       the entry body. OFF (default): no global parse — byte-identical.
 //
 // FORBIDDEN-CALL GUARD (1A — executeSpecialBody_TraceOnly / executeSpecialBody_TraceOnlyChained):
 //   MUST NOT call ANY of: setGeneralTacOrder, setPlayerTacOrder, setAlarmTacOrder,

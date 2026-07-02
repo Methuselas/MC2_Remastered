@@ -499,6 +499,10 @@ int main(int argc, char** argv) {
     // Safe for all other fixtures: resolution only rewrites tokens that match the
     // registry or the catalog case-insensitively; exact canonical spellings pass through.
     (void)_putenv("MC2_BRAIN_ALIAS=1");
+    // BRAINSPECIAL-SCOPE-GLOBAL-1: merge global_specials.fit into every fixture parse.
+    // Safe for all other fixtures: global keys are namespaced global.* (no collisions),
+    // and merge only appends Call targets — entry-body selection is unaffected.
+    (void)_putenv("MC2_BRAIN_SCOPE_GLOBAL=1");
     if (applyMode) {
         (void)_putenv("MC2_BRAIN_DISPATCH_APPLY=1");
     }

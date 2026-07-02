@@ -2092,6 +2092,13 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
     std::string currentType;
     std::string currentAlias;   // BRAINSPECIAL-ALIAS-1: per-block alias= field
     std::vector<std::string> currentVerbs;
+    // BRAINSPECIAL-SCOPE-GLOBAL-1 (quirk fix): pre-slice, a TechSpecial WITH a Body was
+    // committed twice — once (with verbs) at the Body's closing brace, and once more
+    // (empty duplicate) at the TechSpecial's own closing brace. The duplicates were
+    // harmless for entry-body selection / Call lookup (first match wins) but inflate the
+    // index and double-count global merges. Track whether this TechSpecial already
+    // committed its Body so the closing brace only commits truly body-less blocks.
+    bool bodyCommittedThisSpecial = false;
 
     // Entry-body selection tracking.
     // We collect ALL blocks into the index, then choose outBody post-scan.
@@ -2146,6 +2153,7 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     currentType.clear();
                     currentAlias.clear();
                     currentVerbs.clear();
+                    bodyCommittedThisSpecial = false;
                 }
             } else if (std::strncmp(p, "Aliases", 7) == 0) {
                 // BRAINSPECIAL-ALIAS-1: top-level Aliases { <alias> = "<canonical>" } block.
@@ -2216,13 +2224,16 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     ++bodiesFound;
                 }
             } else if (*p == '}') {
-                // Closing brace of TechSpecial with no Body — commit block (no verbs).
-                RawBlock rb;
-                rb.key   = currentKey;
-                rb.type  = currentType;
-                rb.alias = currentAlias;
-                // no verbs
-                rawBlocks.push_back(std::move(rb));
+                // Closing brace of TechSpecial. Commit ONLY if no Body block was already
+                // committed for this TechSpecial (body-less block); see quirk-fix note above.
+                if (!bodyCommittedThisSpecial) {
+                    RawBlock rb;
+                    rb.key   = currentKey;
+                    rb.type  = currentType;
+                    rb.alias = currentAlias;
+                    // no verbs
+                    rawBlocks.push_back(std::move(rb));
+                }
                 state = OUTER;
             }
         } else { // IN_BODY
@@ -2235,6 +2246,7 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     rb.alias = currentAlias;
                     rb.verbs = currentVerbs;
                     rawBlocks.push_back(std::move(rb));
+                    bodyCommittedThisSpecial = true;  // suppress the empty duplicate commit
                 }
                 state = IN_SPECIAL;   // still inside TechSpecial; look for its closing '}'
             } else if (std::strncmp(p, "STOP", 4) == 0 &&
@@ -2360,6 +2372,75 @@ static bool parseBrainSpecialBody_FitIni(const char* fitPath, BrainSpecialBody& 
 }
 
 // ---------------------------------------------------------------------------
+// BRAINSPECIAL-SCOPE-GLOBAL-1 — GlobalSpecial scope (gate MC2_BRAIN_SCOPE_GLOBAL).
+//
+// Spec (discussion #18): four Special scopes; GlobalSpecial = reusable mod/game
+// scripts. Engine adaptation: a `global_specials.fit` file in the same directory
+// as the mission specials file is parsed at mission load and its TechSpecial
+// blocks are merged into the mission's special index as a shared LIBRARY:
+//   - global blocks are TechSpecial.Call targets (and, later, variantOf parents);
+//   - they NEVER provide a mission's root/entry body;
+//   - mission-local keys win on collision ([BRAIN_SCOPE_GLOBAL_SHADOWED]);
+//   - global Aliases{} blocks register FIRST, so mission aliases override them.
+// Gate OFF (default): no global parse, no merge — byte-identical.
+//
+// FORBIDDEN-CALL CONTRACT: file scan + string ops + fprintf only. No order functions.
+static bool s_brainScopeGlobalGate() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_SCOPE_GLOBAL");
+        return v && std::atoi(v) != 0;
+    })();
+    return kGate;
+}
+
+// Derive "<dir-of-missionFitPath>/global_specials.fit" and raw-scan it into gIndex.
+// Returns true if the file existed and contained at least one TechSpecial block.
+// No-op (false) when the gate is OFF.
+static bool parseGlobalSpecials(const char* missionFitPath, SpecialIndex& gIndex) {
+    if (!s_brainScopeGlobalGate()) return false;
+    char gpath[256];
+    const char* lastSlash = nullptr;
+    for (const char* c = missionFitPath; *c; ++c)
+        if (*c == '/' || *c == '\\') lastSlash = c;
+    if (lastSlash) {
+        size_t dirLen = (size_t)(lastSlash - missionFitPath) + 1;
+        if (dirLen >= sizeof(gpath) - 24) return false;
+        std::memcpy(gpath, missionFitPath, dirLen);
+        std::snprintf(gpath + dirLen, sizeof(gpath) - dirLen, "global_specials.fit");
+    } else {
+        std::snprintf(gpath, sizeof(gpath), "global_specials.fit");
+    }
+    BrainSpecialBody gBody;   // discarded — globals never provide the entry body
+    if (!parseBrainSpecialBody_RawScan(gpath, gBody, &gIndex))
+        return false;
+    std::fprintf(stderr, "[BRAIN_SCOPE_GLOBAL] parsed %d global special block(s) from %s\n",
+                 (int)gIndex.size(), gpath);
+    std::fflush(stderr);
+    return !gIndex.empty();
+}
+
+// Append non-colliding global entries into the mission index (mission-local wins).
+static void appendGlobalSpecials(SpecialIndex* outIndex, SpecialIndex& gIndex) {
+    if (!outIndex || gIndex.empty()) return;
+    int merged = 0, shadowed = 0;
+    for (SpecialIndexEntry& ge : gIndex) {
+        if (ge.key.empty()) continue;
+        if (specialIndexFind(*outIndex, ge.key)) {
+            std::fprintf(stderr, "[BRAIN_SCOPE_GLOBAL_SHADOWED] key=%s (mission-local wins)\n",
+                         ge.key.c_str());
+            std::fflush(stderr);
+            ++shadowed;
+            continue;
+        }
+        outIndex->push_back(std::move(ge));
+        ++merged;
+    }
+    std::fprintf(stderr, "[BRAIN_SCOPE_GLOBAL] merged=%d shadowed=%d (index=%d blocks)\n",
+                 merged, shadowed, (int)outIndex->size());
+    std::fflush(stderr);
+}
+
+// ---------------------------------------------------------------------------
 // parseBrainSpecialBody — public entry point (DISPATCH-LOADER-RAW-1)
 //
 // Strategy:
@@ -2367,6 +2448,9 @@ static bool parseBrainSpecialBody_FitIni(const char* fitPath, BrainSpecialBody& 
 //   2. If no TechSpecial blocks found (raw scanner returned empty), fall back
 //      to the legacy FitIniFile-based [BrainSpecial]/[Body]/DO0= form.
 //   Both forms emit the same [BRAIN_DISPATCH] trace on success.
+//   BRAINSPECIAL-SCOPE-GLOBAL-1: when MC2_BRAIN_SCOPE_GLOBAL=1, global_specials.fit
+//   (same directory) is parsed FIRST (alias precedence: mission overrides global)
+//   and its blocks are appended to the index AFTER the mission parse succeeds.
 //
 // Caller passes missionName like "mc2_01" (no path prefix, no extension).
 // Returns true if at least one verb was loaded.
@@ -2381,6 +2465,10 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
 
     char fitPath[256];
     std::snprintf(fitPath, sizeof(fitPath), "data/missions/%s_specials.fit", missionName);
+
+    // BRAINSPECIAL-SCOPE-GLOBAL-1: parse the global library first (gate-guarded no-op).
+    SpecialIndex gIndex;
+    bool haveGlobal = parseGlobalSpecials(fitPath, gIndex);
 
     // Try raw brace-block scanner first.
     // CALL-CHAIN-1A: outIndex forwarded (may be nullptr if caller doesn't need it).
@@ -2399,6 +2487,11 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
             std::fflush(stderr);
         }
     }
+
+    // BRAINSPECIAL-SCOPE-GLOBAL-1: merge global library blocks (mission-local wins).
+    // Only when the mission itself loaded — globals never provide the entry body.
+    if (ok && haveGlobal)
+        appendGlobalSpecials(outIndex, gIndex);
 
     if (ok) {
         outBody.loaded = true;
@@ -2465,6 +2558,10 @@ bool parseBrainSpecialBodyFromPath(const char* fitPath, BrainSpecialBody& outBod
     // BRAINSPECIAL-ALIAS-1: reset the alias registry to its built-in seeds (harness path).
     aliasRegistrySeed();
 
+    // BRAINSPECIAL-SCOPE-GLOBAL-1: parse the global library first (gate-guarded no-op).
+    SpecialIndex gIndex;
+    bool haveGlobal = parseGlobalSpecials(fitPath, gIndex);
+
     bool ok = parseBrainSpecialBody_RawScan(fitPath, outBody, outIndex);
     if (!ok) {
         std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] no TechSpecial blocks in %s — trying FitIni fallback\n", fitPath);
@@ -2476,6 +2573,8 @@ bool parseBrainSpecialBodyFromPath(const char* fitPath, BrainSpecialBody& outBod
             std::fflush(stderr);
         }
     }
+    if (ok && haveGlobal)
+        appendGlobalSpecials(outIndex, gIndex);
     if (ok) {
         outBody.loaded = true;
         std::fprintf(stderr, "[BRAIN_DISPATCH] parsed %s: %d verbs (index=%d blocks)\n",
