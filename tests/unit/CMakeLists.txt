@@ -50,6 +50,7 @@ add_executable(mc2_tests
     test_subgraph_contiguity.cpp  # SUBGRAPH-CONTIGUITY-GUARD-1: postprocess sub-pass contiguity rule (offline)
     test_file_inifile.cpp   # MINIMAL-VIABLE-HARNESS-1: real file/inifile/packet stack, game-free
     test_csvfile.cpp        # MINIMAL-VIABLE-HARNESS-2: real csvfile.cpp (Buildings.csv-shaped)
+    test_fst_roundtrip.cpp  # MINIMAL-VIABLE-HARNESS-2: FST create/writeFast -> loose-vs-FST ladder
 
     # MINIMAL-VIABLE-HARNESS-1: malloc-backed heap + GameOS-global shim.
     # Replaces heap.cpp (won't compile standalone -- see
