@@ -1619,6 +1619,11 @@ def main():
                             "MC2_QUADSETUP_ARMED_SKIP",
                             "MC2_GEOM_PHASE_SPLIT",
                             "MC2_MIF_SPLIT",
+                            # MISSION-INTERFACE-PERF-1: [IFACE_PERF v1] windowed
+                            # cost split of MissionInterfaceManager::update()
+                            # (default OFF). Must be allowlisted or Popen drops
+                            # it and the gate-ON smoke emits nothing.
+                            "MC2_IFACE_COST_SPLIT",
                             "MC2_PICK_RECON",
                             # Diagnostic JSONL trace (diagnostic_trace.cpp).
                             # MC2_DIAGNOSTIC_TRACE_FILE is handled above (absolute

@@ -1050,6 +1050,18 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "mclib/fx_trace/fx_cost_split.*. Zero cost unset."
     },
     {
+        "MC2_TRACE_IFACE_COST_SPLIT",
+        "MC2_IFACE_COST_SPLIT",
+        EnvVarKind::Trace,
+        false,
+        "MISSION-INTERFACE-PERF-1: chrono cost-split of MissionInterfaceManager::"
+        "update() (the GameLogic.Mission.Interface Tracy zone) incl. ControlGui "
+        "sub-phases (pauseWnd/btnHover/rosterScan/moverState/tacMap/infoWnd/"
+        "vehicleTab/fgBar). Emits one [IFACE_PERF v1] line per 900 frames + at "
+        "mission end. Superset of MC2_MIF_SPLIT (either env enables both). "
+        "code/missiongui.cpp + code/controlgui.cpp. Zero cost unset."
+    },
+    {
         "MC2_XFORM_PARITY_FATAL",
         "MC2_XFORM_PARITY_FATAL",
         EnvVarKind::Trace,
