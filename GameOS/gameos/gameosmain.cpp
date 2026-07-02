@@ -696,6 +696,20 @@ namespace {
 // without a new header. Pattern mirrors the startup timing above.
 static Uint64 g_mission_t0 = 0;
 
+// LOAD-PHASE-FACTS-1: coarse wall-clock phase breakdown for the mission-load
+// critical path (FST/pak parse, texture prewarm, object/actor spawn, etc).
+// Cheap fixed-size ring of (name, elapsed_ms) pairs recorded by every
+// mission_phase_mark() call; overhead is a handful of printf-equivalent
+// stores per mission load (~microseconds total) so this stays always-on,
+// no gate needed. Consolidated into one [LOAD_PHASES v1] line at
+// mission_phase_report(), called from Mission::start() right after
+// mission_ready is marked.
+namespace {
+    struct LoadPhaseSample { const char* name; double t_ms; };
+    static const int kMaxLoadPhaseSamples = 16;
+    static LoadPhaseSample g_loadPhaseSamples[kMaxLoadPhaseSamples];
+    static int g_loadPhaseCount = 0;
+}
 
 extern "C" void mission_phase_begin()
 {
@@ -703,6 +717,7 @@ extern "C" void mission_phase_begin()
     const double freq = (double)SDL_GetPerformanceFrequency();
     (void)freq; // suppress unused-var if compiler gets clever
     printf("[MISSION] t=  0.00s  phase=mission_load_start\n");
+    g_loadPhaseCount = 0;
 }
 
 extern "C" void mission_phase_mark(const char* name)
@@ -711,6 +726,34 @@ extern "C" void mission_phase_mark(const char* name)
     const double freq = (double)SDL_GetPerformanceFrequency();
     const double elapsed = (double)(now - g_mission_t0) / freq;
     printf("[MISSION] t=%6.2fs  phase=%s\n", elapsed, name);
+
+    if (g_loadPhaseCount < kMaxLoadPhaseSamples) {
+        g_loadPhaseSamples[g_loadPhaseCount].name = name;
+        g_loadPhaseSamples[g_loadPhaseCount].t_ms = elapsed * 1000.0;
+        g_loadPhaseCount++;
+    }
+}
+
+// LOAD-PHASE-FACTS-1: emit one consolidated line summarizing the phase
+// breakdown recorded since mission_phase_begin(). Each phaseN=NAME:MS is
+// the wall-clock delta since the PREVIOUS mark (or since mission_load_start
+// for the first mark), so the numbers sum to the final mark's total.
+extern "C" void mission_phase_report()
+{
+    char buf[1024];
+    int off = 0;
+    double prev_ms = 0.0;
+    const double total_ms = (g_loadPhaseCount > 0) ? g_loadPhaseSamples[g_loadPhaseCount - 1].t_ms : 0.0;
+
+    off += snprintf(buf + off, sizeof(buf) - off, "[LOAD_PHASES v1] total=%.1fms", total_ms);
+    for (int i = 0; i < g_loadPhaseCount && off < (int)sizeof(buf); i++) {
+        const double delta_ms = g_loadPhaseSamples[i].t_ms - prev_ms;
+        off += snprintf(buf + off, sizeof(buf) - off, " phase%d=%s:%.1fms",
+                         i + 1, g_loadPhaseSamples[i].name, delta_ms);
+        prev_ms = g_loadPhaseSamples[i].t_ms;
+    }
+    printf("%s\n", buf);
+    fflush(stdout);
 }
 
 //typedef void (GLAPIENTRY *GLDEBUGPROCARB)(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam);

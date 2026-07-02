@@ -314,6 +314,7 @@ extern PriorityQueuePtr	openList;
 // Phase-timing hooks implemented in GameOS/gameos/gameosmain.cpp.
 extern "C" void mission_phase_begin();
 extern "C" void mission_phase_mark(const char* name);
+extern "C" void mission_phase_report();
 
 long GameVisibleVertices		= 500;
 float BaseHeadShotElevation		= 1.0f;
@@ -2353,6 +2354,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	{ ZoneScopedN("Mission::init initBareMinimum"); initBareMinimum(); }
 	loadProgress = 4.0f;
 	{ ZoneScopedN("Mission::init initTGLForMission"); initTGLForMission(); }
+	mission_phase_mark("setup_tgl_ready"); // LOAD-PHASE-FACTS-1
 	
 	//--------------------------------------------------------------
 	// Start the Mission Heap
@@ -2872,6 +2874,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	loadProgress = 36.0f;
 	{ ZoneScopedN("Mission::init land->primeMissionTerrainCache"); land->primeMissionTerrainCache(loadProgress, 4.0f); }
 	loadProgress = 40.0f;
+	mission_phase_mark("terrain_ready"); // LOAD-PHASE-FACTS-1: FST/pak parse + terrain prime done
 
 //	land->recalcWater();		//Should have already been done in the editor
 
@@ -4025,10 +4028,12 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 #endif
 
 	loadProgress = 68.0f;
+	mission_phase_mark("actor_spawn_ready"); // LOAD-PHASE-FACTS-1: mover/vehicle/part object init done
 
 	{ ZoneScopedN("Mission::init ObjectManager::loadTerrainObjects"); ObjectManager->loadTerrainObjects(&pakFile, loadProgress, 30); }
 	{ ZoneScopedN("Mission::init ObjectManager::primeTerrainObjectsForMissionLoad"); ObjectManager->primeTerrainObjectsForMissionLoad(loadProgress, 2.0f); }
 	{ ZoneScopedN("Mission::init Track B static-prop registration walk"); ObjectManager->registerStaticPropsForMissionLoad(); }
+	mission_phase_mark("texture_prewarm_ready"); // LOAD-PHASE-FACTS-1: terrain-object load + static-prop residency prewarm done
 
 	loadProgress = 98.0f;
 
@@ -4289,6 +4294,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	{ ZoneScopedN("Mission::init prewarmStaticPropLightBakes");
 	  eye->primeActiveLightsForPrewarm();
 	  ObjectManager->prewarmStaticPropLightBakes(eye); }
+	mission_phase_mark("gpu_finalize_ready"); // LOAD-PHASE-FACTS-1: geometry finalize + indirect-buffer build + light-bake prewarm done
 
 	// Vegetation card system — notify adapter that terrain + move map are ready.
 	// land and GameMap are both stable by this point (terrain init + MOVE_readData
@@ -4307,6 +4313,7 @@ void Mission::start (void)
 {
 	active = true;
 	mission_phase_mark("mission_ready");
+	mission_phase_report(); // LOAD-PHASE-FACTS-1: emit consolidated [LOAD_PHASES v1] line
 	// MISSION-START-HOVER-TARGET-LIFETIME-1: mission world is now fully live (objects loaded,
 	// active set). Re-enable hover picking that was suppressed since invalidateHoverTarget().
 	if (missionInterface)
