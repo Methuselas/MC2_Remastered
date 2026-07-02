@@ -843,6 +843,24 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "TERRAIN-CHUNK-POM-1 knob: POM distance-fade band end in world units (default 3500). Beyond FAR the march is skipped entirely (strength 0 early-out). Clamped to > NEAR (NEAR+1 floor). NaN/non-positive -> default. Only consumed when MC2_TERRAIN_POM=1."
     },
+    // TERRAIN-MATERIAL-TEXTURES-1: per-layer PBR albedo textures on the LIVE
+    // LOD-chunk terrain path (gos_terrain_lod_chunk.cpp lazy loader + binder,
+    // terrain_lod_chunk.frag u_useMatAlbedo branch). Gate OFF -> u_useMatAlbedo
+    // uploads 0 -> the colormap-tint composition runs VERBATIM (byte-identical).
+    {
+        "MC2_FEATURE_TERRAIN_MATERIAL_TEXTURES",
+        "MC2_TERRAIN_MATERIAL_TEXTURES",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-MATERIAL-TEXTURES-1: 6-layer BC7 sRGB GL_TEXTURE_2D_ARRAY albedo (rock/grass/dirt/concrete/snow/cliff from data/terrain_layers/<channel>_albedo.ktx2, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM -- sampler does the sRGB decode) sampled world-space with the material-lib per-layer tiling (matTiling; rock /3 matches the detail-normal path). matWeights (classifier or control map) + HSV snow select layers; the colormap stays the MACRO tint (2x multiply keeps burn-in shading); steep slopes take the CLIFF layer triplanar (the 'cliffs look like rock' payoff). Mix knob u_matAlbedoStrength: env MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH > JSON matAlbedoStrength (terrain_materials.json; also supports textureRoot + layers.<channel>.albedo path overrides via the TinyJson nested-layers extension) > 0.7 default. Fail-soft: missing/mismatched/non-BC7-sRGB layer files log [TERRAIN_MAT_TEX] and leave the gate visually OFF. VRAM ~32 MiB (6x2048^2 BC7 + mips). Default-OFF byte-identical."
+    },
+    {
+        "MC2_TUNE_TERRAIN_MATERIAL_TEXTURES_STRENGTH",
+        "MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-MATERIAL-TEXTURES-1 knob: albedo mix strength override (float, clamped 0..1). 0 = legacy tinted colormap, 1 = full textured composite. Wins over the JSON matAlbedoStrength key; unset/NaN falls to JSON then the 0.7 default. Only consumed when MC2_TERRAIN_MATERIAL_TEXTURES=1."
+    },
     {
         "MC2_DIAG_VFX_DEBUG_MODE",
         "MC2_VFX_DEBUG_MODE",

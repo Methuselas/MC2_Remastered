@@ -1301,6 +1301,12 @@ def main():
                             # smoke does nothing.
                             "MC2_TERRAIN_CONTROLMAP_ALBEDO",
                             "MC2_TERRAIN_CONTROLMAP_ALBEDO_STRENGTH",
+                            # TERRAIN-MATERIAL-TEXTURES-1 -- per-layer BC7 sRGB
+                            # albedo array on the LOD-chunk terrain (default OFF)
+                            # + mix-strength knob. Must be allowlisted or Popen
+                            # drops them and the gate-ON smoke does nothing.
+                            "MC2_TERRAIN_MATERIAL_TEXTURES",
+                            "MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH",
                             # TERRAIN-CHUNK-POM-1 -- real view-vector POM on the
                             # LOD-chunk terrain (default OFF) + tuning knobs.
                             # Must be allowlisted or Popen drops them and the
