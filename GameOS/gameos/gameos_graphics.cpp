@@ -1896,6 +1896,16 @@ class gosRenderer {
         gos_TERRAIN_EXTRA* getTerrainExtraData() const { return terrain_extra_data_; }
         bool isTerrainMVPValid() const { return terrain_mvp_valid_; }
         const mat4& getTerrainMVP() const { return terrain_mvp_; }
+        // TERRAIN-SHORELINE-MASK-1: shared render-shader clock accessor (same
+        // epoch + SmokeMode fixed-timestep override as the water fast-path's
+        // "time" uniform, gameos_graphics.cpp:~3343). Exposed so gos_terrain_lod_chunk.cpp
+        // can upload an identical f(worldPos,time)-only clock to the chunk frag
+        // (camera-INDEPENDENT by construction — no view matrix involved).
+        float getShaderClockSeconds() const {
+            return SmokeMode::fixedTimestepEnabled()
+                       ? (float)SmokeMode::fixedClockSeconds()
+                       : (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0);
+        }
         gosRenderMaterial* getTerrainMaterial() const { return terrain_material_; }
         const vec4& getTerrainCameraPos() const { return terrain_camera_pos_; }
         // Shadow mode
@@ -3614,12 +3624,29 @@ void gosRenderer::renderWaterFastPath(
         // WATER-HDRI-REFL-1: bind HDRI equirect on unit 3 for direct specular
         // sampling (sun disk + sky color, LOD-filtered via mipmaps added in gos_hdri.cpp).
         // u_waterHdriLod < 0 signals no HDRI -> FS falls back to SH-L2.
-        // MC2_WATER_HDRI_LOD env (float) overrides default 2.5 (1024x512 for 4K HDRI).
+        // MC2_WATER_HDRI_LOD env (float) overrides the default.
+        //
+        // WATER-HDRI-REFL-PERF-1: the per-fragment HDRI path (waterEvalHdri:
+        // atan2+asin + textureLod against the live equirect) measured ~10ms/frame
+        // GPU at LOD 1.0 (2K mip of the 4K source) across a full-map water quad
+        // (451c9e49). The HDRI reflection is a heavily blurred, low-frequency sky
+        // read by design (Reinhard-toned broad color, not a sharp sun disk) — a
+        // much coarser mip costs the same ALU per fragment but a fraction of the
+        // texture bandwidth/cache pressure, with no visible quality loss at the
+        // gameplay camera. Default bumped 1.0 -> 4.0 (256x128 mip of a 4K source;
+        // recon's own "keep-cheap" recommendation). MC2_WATER_HDRI_REFL_FULL=1
+        // restores the old full-rate LOD 1.0 for A/B or regression checks.
         {
             static float s_waterHdriLod = -999.0f;
             if (s_waterHdriLod < -1.0f) {
                 const char* lv = getenv("MC2_WATER_HDRI_LOD");
-                s_waterHdriLod = (lv && lv[0]) ? (float)atof(lv) : 1.0f;
+                if (lv && lv[0]) {
+                    s_waterHdriLod = (float)atof(lv);
+                } else {
+                    const char* full = getenv("MC2_WATER_HDRI_REFL_FULL");
+                    const bool fullRate = (full && full[0] && full[0] != '0');
+                    s_waterHdriLod = fullRate ? 1.0f : 4.0f;
+                }
             }
             const bool hdriAvail = (ppRefl && ppRefl->isHdriReady());
             setMI("u_hdri", 3);
@@ -9824,6 +9851,13 @@ void gos_GetTerrainMatAO(float* rock, float* grass, float* dirt, float* concrete
     if (g_gos_renderer) g_gos_renderer->getTerrainMatAO(rock, grass, dirt, concrete);
     else { *rock = 1.0f; *grass = 1.0f; *dirt = 1.0f; *concrete = 1.0f; }
 }
+// TERRAIN-MATERIAL-LIB-1: public wrapper -- terrainMaterialLibEnabled() above is
+// file-static (TU-local); the live chunk binder (gos_terrain_lod_chunk.cpp) is a
+// separate TU and needs the same MC2_TERRAIN_MATERIAL_LIB gate value to drive its
+// own u_useMaterialLib upload. Same cached-static evaluation as the bridge path.
+bool gos_TerrainMaterialLibEnabled() {
+    return terrainMaterialLibEnabled();
+}
 // TERRAIN-TUNING-UI-1
 void gos_SetTerrainNormalsFromHeightStrength(float s) {
     if (g_gos_renderer) g_gos_renderer->setTerrainNormalsFromHeightStrength(s);
@@ -10650,6 +10684,15 @@ const float* gos_GetTerrainMVPMat4() {
         }
     }
     return p;
+}
+
+// TERRAIN-SHORELINE-MASK-1: shared render-shader clock, same computation as
+// the water fast-path's "time" uniform (SmokeMode fixed-timestep override for
+// deterministic capture, else wall-time since renderer init). Consumed by the
+// chunk terrain frag's shoreline wet/foam band (f(worldPos,time) ONLY — no
+// camera dependence, matching the water FS's camera-independence ruling).
+float gos_GetShaderClockSeconds() {
+    return g_gos_renderer ? g_gos_renderer->getShaderClockSeconds() : 0.0f;
 }
 
 // gos_GetTerrainTeseProgram removed in Task 7b (UBO pivot).

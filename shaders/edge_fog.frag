@@ -30,9 +30,27 @@ uniform float     u_fogHeight;
 uniform float     u_fogMax;
 uniform float     u_waterElevation;  // sea-level world Z — skip fog at/below water surface
 
+// SKYBOX-FOG-EXCLUDE-1 (gate MC2_SKYBOX_FOG_EXCLUDE, default OFF -> u_skyExcludeEnabled=0,
+// byte-identical to legacy). Mirrors fog_oob.frag: true-sky pixels are tagged
+// stencil=1 by the HDRI skybox's stencil-tag pass and hard-excluded here.
+// usampler2D: GL_DEPTH_STENCIL_TEXTURE_MODE=GL_STENCIL_INDEX views return raw
+// unsigned stencil index values (0..255), not normalized floats.
+uniform usampler2D stencilTex;
+uniform int        u_skyExcludeEnabled;
+
 void main()
 {
     float rawDepth = texture(depthTex, TexCoord).r;
+
+    // SKYBOX-FOG-EXCLUDE-1: hard-exclude true sky (stencil==1) when the gate is
+    // on. Stencil is only ever tagged for depth-unwritten pixels (sky never
+    // writes depth), so gate this on the same rawDepth<0.0001 population the
+    // void-height-plane branch below already targets.
+    if (u_skyExcludeEnabled != 0 && rawDepth < 0.0001) {
+        uint stencilVal = texture(stencilTex, TexCoord).r;
+        if (stencilVal != 0u) { outFog = vec4(0.0); return; }
+    }
+
     vec2 ndc = TexCoord * 2.0 - 1.0;
 
     // Camera ray in world space: from near plane (depth=1) to far plane (depth=0).

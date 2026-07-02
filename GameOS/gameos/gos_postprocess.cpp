@@ -262,6 +262,18 @@ static void setSceneDrawBuffers(SceneDrawBufferMode mode,
 
 } // namespace
 
+// SKYBOX-FOG-EXCLUDE-1: gate helper (read once). Default OFF -> byte-identical
+// legacy path (no stencil write on sky, no stencil sample/exclusion in the
+// fog frags -- shader uniform u_skyExcludeEnabled resolves to 0).
+static bool skyboxFogExcludeEnabled()
+{
+    static const bool s_on = []() {
+        const char* v = ::getenv("MC2_SKYBOX_FOG_EXCLUDE");
+        return v && v[0] == '1';
+    }();
+    return s_on;
+}
+
 static gosPostProcess* s_postProcess = nullptr;
 
 gosPostProcess* getGosPostProcess()
@@ -792,6 +804,10 @@ void gosPostProcess::destroy()
         glsl_program::deleteProgram("hdri_skybox");
         hdriSkyboxProg_ = nullptr;
     }
+    if (hdriSkyboxStencilTagProg_) {
+        glsl_program::deleteProgram("hdri_skybox_stencil_tag");
+        hdriSkyboxStencilTagProg_ = nullptr;
+    }
     if (hdriTex_) {
         glDeleteTextures(1, &hdriTex_);
         hdriTex_ = 0;
@@ -917,6 +933,26 @@ void gosPostProcess::createFBOs(int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                            GL_TEXTURE_2D, sceneDepthTex_, 0);
+
+    // SKYBOX-FOG-EXCLUDE-1: stencil-only view onto sceneDepthTex_'s storage.
+    // glTextureView requires immutable storage (glTexStorage2D above), which
+    // sceneDepthTex_ already uses. GL_DEPTH_STENCIL_TEXTURE_MODE=GL_STENCIL_INDEX
+    // is baked into the view at creation, so runEdgeFog/runFogOob can sample
+    // depth (via sceneDepthTex_) and stencil (via this view) in the SAME draw
+    // without per-bind mode toggling on one shared object. Gated on
+    // MC2_SKYBOX_FOG_EXCLUDE=1 -- skipped entirely when OFF (zero cost OFF).
+    if (skyboxFogExcludeEnabled()) {
+        glGenTextures(1, &sceneStencilViewTex_);
+        glTextureView(sceneStencilViewTex_, GL_TEXTURE_2D, sceneDepthTex_,
+                      GL_DEPTH24_STENCIL8, 0, 1, 0, 1);
+        glBindTexture(GL_TEXTURE_2D, sceneStencilViewTex_);
+        glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE, GL_STENCIL_INDEX);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
 
     // Normal buffer: MRT attachment 1 (rgb=world normal encoded, a=shadow skip flag)
     // TEX-CLASS: render-target -- GBuffer normal (MRT1, FBO attach)
@@ -1310,6 +1346,15 @@ void gosPostProcess::destroyFBOs()
         RenderCore::RenderResourceDesc inv;
         inv.id = RenderCore::RenderResourceId::MainDepth; inv.valid = false;
         RenderCore::registerOrUpdateRenderResource(inv);
+    }
+    // SKYBOX-FOG-EXCLUDE-1: the stencil view is a texture-view onto
+    // sceneDepthTex_'s storage, not a separate allocation -- it must be
+    // deleted before/independently of the parent (view deletion never frees
+    // the parent's storage either way, but drop our handle so resize()
+    // re-creates a fresh view against the new sceneDepthTex_).
+    if (sceneStencilViewTex_) {
+        glDeleteTextures(1, &sceneStencilViewTex_);
+        sceneStencilViewTex_ = 0;
     }
     if (sceneNormalTex_) {
         glDeleteTextures(1, &sceneNormalTex_);
@@ -2426,7 +2471,11 @@ void gosPostProcess::runShoreline()
     ZoneScopedN("Render.Shoreline");
     TracyGpuZone("Render.Shoreline");
 
-    if (!shorelineEnabled_ || !sceneHasTerrain_ || !shorelineProg_ || !shorelineProg_->is_valid()) return;
+    // TERRAIN-SHORELINE-MASK-1: yield to the terrain-side wet/foam band when
+    // active (recon landmine #6 "double-shore" -- avoid brightening the seam
+    // twice). Default false -> byte-identical to the pre-slice gate.
+    if (!shorelineEnabled_ || !sceneHasTerrain_ || !shorelineProg_ || !shorelineProg_->is_valid()
+        || shorelineSuppressedByTerrainMask_) return;
 
     // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: skip the 4 setup calls when the executor
     // already applied them (MC2_FRAMEGRAPH_EXECUTOR ON). Reset one-shot before draw.
@@ -2524,12 +2573,40 @@ void gosPostProcess::runEdgeFog()
     edgeFogProg_->setFloat("u_fogMax",           edgeFogMax_);
     edgeFogProg_->setFloat("u_waterElevation",   waterElevation_);
 
+    // SKYBOX-FOG-EXCLUDE-1: gate-ON only; default OFF -> u_skyExcludeEnabled=0,
+    // stencilTex left unbound (unit 1 stays whatever it was -- shader never
+    // reads it when the uniform is 0, so this is byte-identical OFF).
+    const bool skyExclude = skyboxFogExcludeEnabled() && sceneStencilViewTex_ != 0;
+    edgeFogProg_->setInt("u_skyExcludeEnabled", skyExclude ? 1 : 0);
+    if (skyExclude) {
+        edgeFogProg_->setInt("stencilTex", 1);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, sceneStencilViewTex_);
+
+        // SKYBOX-FOG-EXCLUDE-1 review fix: this pass samples the stencil
+        // view of the shared depth-stencil attachment while GL_STENCIL_TEST
+        // may still be enabled (left ON by the skybox stencil-tag pass, and
+        // PipelineRegistry's PostProcessEdgeFog desc has no stencil fields --
+        // stencil state is never part of the state-guard idiom here, only
+        // inherited). Sampling a texture that aliases the currently-bound
+        // stencil attachment while stencil writes are possible is exactly
+        // the feedback case GL disallows; force test off + write mask 0 so
+        // this pass never writes stencil regardless of inherited state.
+        glDisable(GL_STENCIL_TEST);
+        glStencilMask(0x00);
+    }
+
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
 
     glBindVertexArray(quadVAO_);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
+
+    if (skyExclude) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
 
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
@@ -2605,12 +2682,36 @@ void gosPostProcess::runFogOob()
     fogOobProg_->setFloat("u_fogOpacity", oobFogOpacity_);
     fogOobProg_->setFloat("u_time", fogTime);
 
+    // SKYBOX-FOG-EXCLUDE-1: gate-ON only; default OFF -> u_skyExcludeEnabled=0,
+    // stencilTex left unbound (shader never reads it when the uniform is 0,
+    // so this is byte-identical OFF).
+    const bool skyExclude = skyboxFogExcludeEnabled() && sceneStencilViewTex_ != 0;
+    fogOobProg_->setInt("u_skyExcludeEnabled", skyExclude ? 1 : 0);
+    if (skyExclude) {
+        fogOobProg_->setInt("stencilTex", 1);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, sceneStencilViewTex_);
+
+        // SKYBOX-FOG-EXCLUDE-1 review fix: same reasoning as runEdgeFog() --
+        // this pass samples the stencil view of the shared depth-stencil
+        // attachment; force stencil test off + write mask 0 so the GL
+        // feedback-exception rule (no writes to a resource being sampled)
+        // can never be violated regardless of inherited stencil state.
+        glDisable(GL_STENCIL_TEST);
+        glStencilMask(0x00);
+    }
+
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
 
     glBindVertexArray(quadVAO_);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
+
+    if (skyExclude) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
 
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
@@ -3350,6 +3451,26 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     GLint     prevVAO        = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
 
+    // SKYBOX-FOG-EXCLUDE-1: gate ON only. Save stencil state so the write
+    // below cannot leak into any pass downstream of the sky draw. sceneFBO_'s
+    // depth attachment is GL_DEPTH24_STENCIL8 (real stencil bits available --
+    // see createFBOs() sceneDepthTex_ alloc), so no fallback design is needed.
+    const bool skyExclude = skyboxFogExcludeEnabled();
+    GLboolean prevStencilTest = GL_FALSE;
+    GLint     prevStencilFunc = GL_ALWAYS, prevStencilRef = 0, prevStencilValueMask = 0xFF;
+    GLint     prevStencilFail = GL_KEEP, prevStencilZFail = GL_KEEP, prevStencilZPass = GL_KEEP;
+    GLint     prevStencilWriteMask = 0xFF;
+    if (skyExclude) {
+        prevStencilTest = glIsEnabled(GL_STENCIL_TEST);
+        glGetIntegerv(GL_STENCIL_FUNC,       &prevStencilFunc);
+        glGetIntegerv(GL_STENCIL_REF,        &prevStencilRef);
+        glGetIntegerv(GL_STENCIL_VALUE_MASK, &prevStencilValueMask);
+        glGetIntegerv(GL_STENCIL_FAIL,       &prevStencilFail);
+        glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &prevStencilZFail);
+        glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &prevStencilZPass);
+        glGetIntegerv(GL_STENCIL_WRITEMASK,  &prevStencilWriteMask);
+    }
+
     // Save per-attachment color masks for whichever attachments exist.
     GLboolean prevMask[3][4] = {
         { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE },
@@ -3477,6 +3598,72 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     }
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
+    // SKYBOX-FOG-EXCLUDE-1: second, stencil-only pass. Tags stencil=1 for
+    // pixels the fog passes must hard-exclude (deep sky, worldDir.z < -0.22 --
+    // the same threshold fog_oob.frag already uses). Pixels at/below that
+    // band (horizon + OOB void) are `discard`ed by the frag shader, leaving
+    // their stencil at the frame-clear value (0) so fog behavior there is
+    // unchanged. Color writes are masked off; only the stencil buffer is
+    // touched. Ordering note: terrain/props may later redraw over the same
+    // screen pixels -- that is harmless, because the fog passes only ever
+    // consult stencil for pixels where rawDepth is still the clear value
+    // (nothing drew there); terrain pixels have rawDepth != 0 and never
+    // reach the stencil check regardless of what stencil holds underneath.
+    if (skyExclude) {
+        if (!hdriSkyboxStencilTagProg_) {
+            static const char* kStencilTagPrefix = "#version 430\n";
+            hdriSkyboxStencilTagProg_ = glsl_program::makeProgram(
+                "hdri_skybox_stencil_tag",
+                "shaders/hdri_skybox.vert",
+                "shaders/hdri_skybox_stencil_tag.frag",
+                kStencilTagPrefix);
+            if (!hdriSkyboxStencilTagProg_ || !hdriSkyboxStencilTagProg_->is_valid()) {
+                std::fprintf(stderr,
+                    "[SKYBOX_FOG_EXCLUDE v1] stencil-tag shader failed to compile; "
+                    "gate stays ON but exclusion pass is skipped this/every frame\n");
+            }
+        }
+        if (hdriSkyboxStencilTagProg_ && hdriSkyboxStencilTagProg_->is_valid()) {
+            glEnable(GL_STENCIL_TEST);
+            glStencilFunc(GL_ALWAYS, 1, 0xFF);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+            glStencilMask(0xFF);
+            // Color writes off for every attachment -- this pass only tags stencil.
+            if (nAtt > 0) glColorMaski(0, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            if (nAtt > 1) glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            if (nAtt > 2) glColorMaski(2, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+            // SKYBOX-FOG-EXCLUDE-1 review fix: clear stencil once per frame
+            // before tagging. Without this, stencil=1 from a prior frame's
+            // deep-sky pixels persists on pixels the camera has since panned
+            // away from sky (nothing else in the renderer clears stencil),
+            // so fog would incorrectly stay excluded there. Cheap because
+            // it's a single clear of the currently-bound sceneFBO_'s stencil
+            // plane, gated behind skyExclude so gate-OFF has zero cost.
+            {
+                const GLint zero = 0;
+                glClearBufferiv(GL_STENCIL, 0, &zero);
+            }
+
+            hdriSkyboxStencilTagProg_->apply();
+            hdriSkyboxStencilTagProg_->setMat4("invProj", invProjArray);
+            hdriSkyboxStencilTagProg_->setMat3("invViewRot", invViewRot);
+            hdriSkyboxStencilTagProg_->setFloat("skyYaw", skyYaw);
+
+            glBindVertexArray(quadVAO_ != 0 ? quadVAO_ : hdriDummyVao_);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+
+            static const bool s_tagLogOnce = []() {
+                std::fprintf(stderr,
+                    "[SKYBOX_FOG_EXCLUDE v1] enabled=1 stencil_tag_pass=active "
+                    "threshold=worldDir.z<-0.22\n");
+                std::fflush(stderr);
+                return true;
+            }();
+            (void)s_tagLogOnce;
+        }
+    }
+
     // --- Restore state (exact) ---
     glBindVertexArray(prevVAO);
     glActiveTexture(GL_TEXTURE0);
@@ -3493,6 +3680,15 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
     if (prevBlend)     glEnable(GL_BLEND);      else glDisable(GL_BLEND);
     if (prevCull)      glEnable(GL_CULL_FACE);  else glDisable(GL_CULL_FACE);
+
+    // SKYBOX-FOG-EXCLUDE-1: restore stencil state exactly (mirrors the
+    // depth/blend/cull restore pattern above).
+    if (skyExclude) {
+        if (prevStencilTest) glEnable(GL_STENCIL_TEST); else glDisable(GL_STENCIL_TEST);
+        glStencilFunc((GLenum)prevStencilFunc, prevStencilRef, (GLuint)prevStencilValueMask);
+        glStencilOp((GLenum)prevStencilFail, (GLenum)prevStencilZFail, (GLenum)prevStencilZPass);
+        glStencilMask((GLuint)prevStencilWriteMask);
+    }
 
     // --- Phase 3: GL-state probe (read-only; never calls glDrawBuffers). ---
     // After the restore block above, every piece of state we touched must match
@@ -5126,8 +5322,9 @@ bool gosPostProcess::executorSceneDepthTexValid() const
 
 bool gosPostProcess::executorShorelineWillRun() const
 {
+    // TERRAIN-SHORELINE-MASK-1: mirrors runShoreline()'s suppression term.
     return shorelineEnabled_ && shorelineProg_ && shorelineProg_->is_valid()
-        && sceneHasTerrain_;
+        && sceneHasTerrain_ && !shorelineSuppressedByTerrainMask_;
 }
 
 bool gosPostProcess::executorCloudShadowWillRun() const

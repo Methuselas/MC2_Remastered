@@ -69,6 +69,31 @@ uniform sampler2D u_overlaySidecar;
 uniform int       u_useOverlaySidecar;
 uniform vec4      u_overlayBounds;  // topLeftX, topLeftY(=maxY), sizeX, sizeY (world units)
 
+// TERRAIN-SHORELINE-MASK-1: authored land-side wet/foam shoreline mask
+// (unit TERRAIN_SHORELINE_TEXUNIT). R=signed dist (0.5=waterline, <0.5 water
+// side/>0.5 land side), G=wet weight, B=foam weight, A=valid/coverage.
+// World-XY sampled via u_shorelineBounds, IDENTICAL convention/shape to
+// u_overlaySidecar/u_overlayBounds just above (topLeftX=MIN world X,
+// topLeftY=MAX world Y, PNG row 0 = north edge, no vertical flip). Composited
+// AFTER the cement/overlay blocks and BEFORE final lighting (recon Sec.3/6):
+// multiplies base albedo by a wet-darken factor (G) + adds a bright foam rim
+// (B, fBm on v_worldPos+u_shaderTime -- camera-INDEPENDENT by construction,
+// f(worldPos,time) ONLY per the advisor ruling), feathered by R. Gate OFF or
+// no mask -> u_useShorelineMask=0 -> this whole block is skipped -> byte-
+// identical to the pre-slice composite (the legacy screen runShoreline() pass
+// stays active in that case; the C++ driver suppresses it only when this gate
+// is genuinely active -- see gos_postprocess.cpp runShoreline()).
+uniform sampler2D u_shorelineMask;
+uniform int       u_useShorelineMask;
+uniform vec4      u_shorelineBounds; // topLeftX, topLeftY(=maxY), sizeX, sizeY (world units)
+uniform float     u_shaderTime;      // f(worldPos,time)-only clock for foam animation (NOT camera)
+// TERRAIN-SHORELINE-MASK-1 (visual-quality pass): user-tunable overall
+// strength knobs (MC2_TERRAIN_SHORELINE_STRENGTH / _FOAM env vars, C++ side
+// clamps to [0,2], default 1.0 = the authored look below). Kept separate from
+// the mask's own G/B weights so art can dial intensity without a re-cook.
+uniform float     u_shorelineStrength;     // wet/damp darken multiplier
+uniform float     u_shorelineFoamStrength; // foam rim multiplier
+
 uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uniform as legacy)
 uniform int   u_shadowTier;               // Slice B: per-chunk shadow tier (0=high,1=low,2=static,3=none)
 uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_CHUNK_DIAG):
@@ -82,6 +107,8 @@ uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_
                                           //  128 = viz v_terrainType (grey + red=concrete)
                                           // 1024 = viz control-map weights (matWeights.rgb,
                                           //        after selection): TERRAIN-CONTROLMAP-SAMPLE-1
+                                          // 2048 = viz shoreline mask channels (R=dist,G=wet,
+                                          //        B=foam as RGB): TERRAIN-SHORELINE-MASK-1
 
 // LIGHTING-DEBUG-VIEWS-1A-CHUNK: unified lighting debug channel, SAME enum as
 // static_prop / gos_terrain.frag. Separate from u_diag (bitmask) to avoid
@@ -952,6 +979,85 @@ void main() {
     if (u_edgeFeather != 0 && u_halfMap > 0.0) {
         float haze = edgeHazeAmount(v_worldPos.xy, u_halfMap) * u_edgeFeatherStrength;
         lit = mix(lit, EDGE_HAZE_SKY, clamp(haze, 0.0, 1.0));
+    }
+
+    // TERRAIN-SHORELINE-MASK-1: land-side wet-darken + foam band, sampled by
+    // WORLD XY (same u_*Bounds pattern as the overlay-V2 sidecar block above).
+    // Gate OFF or no mask loaded -> u_useShorelineMask==0 -> this whole block
+    // is skipped -> byte-identical (recon Sec.5 "byte-identity via uniform
+    // else-branch"). cement/concrete excluded from wet-darken (recon ruling
+    // #6 / open ruling 6: cementHit already computed above). Foam is
+    // f(v_worldPos, u_shaderTime) ONLY -- no view-dependent term anywhere in
+    // this block (advisor camera-independence ruling, recon landmine #2).
+    //
+    // VISUAL-QUALITY FIX (post-ship): the original band read as a bright grey
+    // painted stripe, especially where the mask's own R-channel geometry
+    // still carries coarse-grid stair-steps (see cook_shoreline.py hi-res
+    // sourcing). Two independent mitigations, both f(worldPos,time) only:
+    //   1. Slope guard -- steep banks project the mask by world-XY distance
+    //      regardless of slope, so a band would otherwise smear straight
+    //      down a cliff face. Attenuate by the terrain normal's slope angle
+    //      (from N, already computed above): full strength on ~flat beaches,
+    //      fading to 0 by ~20 deg (cos(20deg)~=0.94).
+    //   2. Noise-BROKEN foam coverage -- foam alpha is now `band * fbm`
+    //      thresholded into a coverage mask (wisps of foam), not a smooth
+    //      multiply-brighten of the whole lobe (which read as a solid tint).
+    if (u_useShorelineMask != 0) {
+        vec2 slUV;
+        slUV.x = (v_worldPos.x - u_shorelineBounds.x) / max(u_shorelineBounds.z, 1e-5);
+        slUV.y = (u_shorelineBounds.y - v_worldPos.y) / max(u_shorelineBounds.w, 1e-5);
+        if (slUV.x >= 0.0 && slUV.x <= 1.0 && slUV.y >= 0.0 && slUV.y <= 1.0) {
+            vec4 sl = texture(u_shorelineMask, slUV);
+            float slValid = sl.a;
+            float slWet   = sl.g * slValid;
+            float slFoam  = sl.b * slValid;
+
+            // Slope guard: N.z == cos(slope angle) for a unit normal (N.z=1 on
+            // flat ground). Full band strength up to ~12 deg, linear falloff
+            // to 0 by ~20 deg, so steep hillsides never carry a wet/foam smear.
+            const float kSlopeFullCos = 0.978; // cos(12 deg)
+            const float kSlopeZeroCos = 0.940; // cos(20 deg)
+            float slopeAtten = clamp((N.z - kSlopeZeroCos) / max(kSlopeFullCos - kSlopeZeroCos, 1e-5), 0.0, 1.0);
+
+            // Wet/damp darken: SUBTLE multiplicative darken only (no forced
+            // desaturation-toward-luma -- that read as a grey paint stripe).
+            // u_shorelineStrength scales overall intensity (art/runtime knob).
+            if (slWet > 0.001 && cementHit == false && slopeAtten > 0.0) {
+                float wetAmt = clamp(slWet, 0.0, 1.0) * (1.0 - pureConcrete) * slopeAtten * u_shorelineStrength;
+                vec3  wetDark = lit * 0.86; // subtle darken, no luma flattening
+                lit = mix(lit, wetDark, clamp(wetAmt, 0.0, 1.0));
+            }
+            // Foam: procedural fBm, f(worldPos,time) ONLY (camera-INDEPENDENT
+            // by construction -- no view matrix/camera pos anywhere in this
+            // expression). Coverage is THRESHOLDED noise (wisps), not a smooth
+            // brighten of the whole lobe -- band*fbm decides WHERE foam shows,
+            // not just how bright it is.
+            if (slFoam > 0.001 && slopeAtten > 0.0) {
+                float foamScroll = fbm(v_worldPos.xy * 0.09 + u_shaderTime * 0.15, 3) * 0.5 + 0.5;
+                float foamPulse  = fbm(v_worldPos.xy * 0.20 - u_shaderTime * 0.22 + 19.0, 2) * 0.5 + 0.5;
+                float foamNoise  = clamp(mix(foamScroll, foamPulse, 0.5), 0.0, 1.0);
+                // Coverage threshold: the noise must clear a bar that rises as
+                // the band weight falls, so foam appears as broken wisps near
+                // the lobe's edge and near-solid only at the exact waterline.
+                float coverage  = smoothstep(1.0 - clamp(slFoam, 0.0, 1.0) * 0.85, 1.0, foamNoise + (1.0 - clamp(slFoam, 0.0, 1.0)) * 0.15);
+                float foamAmt   = coverage * slopeAtten * u_shorelineFoamStrength;
+                lit = mix(lit, vec3(0.90, 0.93, 0.92), clamp(foamAmt, 0.0, 1.0) * (1.0 - pureConcrete));
+            }
+        }
+    }
+    // DIAG bit 2048: visualize the raw shoreline mask channels as RGB
+    // (R=dist, G=wet, B=foam) so authored bands are directly inspectable.
+    if ((u_diag & 2048) != 0 && u_useShorelineMask != 0) {
+        vec2 slDbgUV;
+        slDbgUV.x = (v_worldPos.x - u_shorelineBounds.x) / max(u_shorelineBounds.z, 1e-5);
+        slDbgUV.y = (u_shorelineBounds.y - v_worldPos.y) / max(u_shorelineBounds.w, 1e-5);
+        vec3 dbgCol = vec3(0.0);
+        if (slDbgUV.x >= 0.0 && slDbgUV.x <= 1.0 && slDbgUV.y >= 0.0 && slDbgUV.y <= 1.0) {
+            dbgCol = texture(u_shorelineMask, slDbgUV).rgb;
+        }
+        fragColor = vec4(dbgCol, 1.0);
+        if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
     }
 
     // TERRAIN-MATERIAL-LIB-1: per-layer roughness/AO scalars, weighted by the

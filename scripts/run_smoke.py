@@ -1592,6 +1592,12 @@ def main():
                             # FallbackGL path is provable under smoke.
                             "MC2_RENDER_BACKEND_REGION_IFACE",
                             "MC2_POSTPROCESS_BACKEND",
+                            # SKYBOX-FOG-EXCLUDE-1: stencil-tag true sky pixels during
+                            # the HDRI skybox draw so runEdgeFog/runFogOob hard-exclude
+                            # them (default OFF -> byte-identical). Without this in the
+                            # allowlist Popen drops it and gate-ON smoke silently runs
+                            # the legacy worldDir.z-only fog path.
+                            "MC2_SKYBOX_FOG_EXCLUDE",
                             # VULKAN-ISLAND-VALIDATION-WIRING-1: opt-in Vulkan
                             # validation preset (off/core/sync/gpu-assisted/
                             # best-practices/debug-printf). Without this in the
@@ -1618,7 +1624,26 @@ def main():
                             # LOADED line, no SSBO upload.
                             "MC2_TERRAIN_VISUAL_DISPLACE",
                             "MC2_TERRAIN_VISUAL_HEIGHT",
-                            "MC2_TERRAIN_VISUAL_HEIGHT_FILE")},
+                            "MC2_TERRAIN_VISUAL_HEIGHT_FILE",
+                            # WATER-HDRI-REFL-PERF-1: MC2_WATER_HDRI_REFL_FULL=1
+                            # restores the old full-rate LOD-1.0 HDRI reflection
+                            # for A/B perf checks; MC2_WATER_HDRI_LOD overrides
+                            # the sample LOD directly. Without these in the
+                            # allowlist Popen drops them and the A/B smoke both
+                            # run at the new default (LOD 4.0).
+                            "MC2_WATER_HDRI_REFL_FULL",
+                            "MC2_WATER_HDRI_LOD",
+                            # WATER-REFLECTION-CLIP-1: MC2_WATER_REFLECTION_RT
+                            # arms the quarter-res terrain reflection RT fill
+                            # pass (default OFF); MC2_WATER_REFL_RT_PIXELPROOF
+                            # opts into the old whole-RT glReadPixels coverage
+                            # breakdown for deep debug (default: cheap
+                            # mirrored_cmd_count-only proof). Without these in
+                            # the allowlist Popen drops them and gate-ON smoke
+                            # silently runs with the RT pass off / the pixel
+                            # proof unreachable.
+                            "MC2_WATER_REFLECTION_RT",
+                            "MC2_WATER_REFL_RT_PIXELPROOF")},
             },
         )
         # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.

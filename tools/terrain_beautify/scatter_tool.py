@@ -73,12 +73,40 @@ import pak_append  # noqa: E402
 # a re-cook. If a further scatter prop type is later installed, its
 # FitID/objTypeNum must be appended to this tuple and documented here (do not
 # reuse a hand-placed building's type).
-RESERVED_SCATTER_OBJTYPENUMS = (1189,)
+# TERRAIN-TREE-SCATTER-V0: three dedicated TREE-class scatter clones were
+# added (tools/install_tree_scatter.py) -- "PineScatter1/2/3", FitID/
+# objTypeNum 1190/1191/1192, reusing stock AppearanceName="Pine1"/"Pine2"/
+# "Pine3" (shapes+icons already fully resolved via tgl.fst/art.fst, no new
+# art). Same rationale as the rock clone: a dedicated objTypeNum per class
+# means a re-cook's delete-by-type step can never touch hand placements of
+# the stock Pine1/2/3 catalog entries (FitID 210/352/353), which share the
+# same AppearanceName but are NOT reserved scatter types.
+PINE_SCATTER_OBJTYPENUMS = (1190, 1191, 1192)
+
+RESERVED_SCATTER_OBJTYPENUMS = (1189,) + PINE_SCATTER_OBJTYPENUMS
 MARBLECLIFF_OBJTYPENUM = 1189
+
+# Per-channel prop lists: "rock" scatters a single objTypeNum; "tree" picks
+# randomly per-instance across all three PineScatter clones for silhouette
+# variety (no per-instance scale field exists on the 40-byte record -- see
+# TERRAIN-SCATTER-MASK-1-RECON.md landmine #2 -- so variety must come from
+# prop *type*, not scale).
+PROP_CHANNELS = {
+    "rock": (MARBLECLIFF_OBJTYPENUM,),
+    "tree": PINE_SCATTER_OBJTYPENUMS,
+}
 
 HARD_CAP = 500
 DEFAULT_MIN_DIST_WU = 256.0  # blue-noise minimum spacing, world units
-DEFAULT_SLOPE_MAX_DEG = 40.0  # reject if steeper (single-point grounding risk)
+DEFAULT_SLOPE_MAX_DEG = 40.0  # reject if steeper (single-point grounding risk) -- rock channel
+# Tree channel favors a moderate slope band (per TERRAIN-TREE-SCATTER-ASSET-
+# RECON-1 recommendation: conifers on gaea_peaks-style slopes read best in a
+# 5-25 degree band -- too flat looks planted-in-a-field, too steep is both
+# visually wrong for a rooted tree and a single-point-grounding risk same as
+# rock). Trees EXCLUDE outside this band; rock instead prefers the shoulder
+# around the cliff band (see load_density_mask).
+DEFAULT_TREE_SLOPE_MIN_DEG = 5.0
+DEFAULT_TREE_SLOPE_MAX_DEG = 25.0
 
 
 # --- deterministic seeded RNG helpers (PYTHONHASHSEED-proof: no dict/set
@@ -101,45 +129,95 @@ def sha256_file(path: Path) -> str:
 
 
 # --- mask ingest (interface built for a future painted-PNG override) --------
-def load_density_mask(side: int, masks: dict, png_path: Path | None) -> np.ndarray:
+def load_density_mask(side: int, masks: dict, png_path: Path | None,
+                       channel: str = "rock") -> np.ndarray:
     """Return a [0,1] float density grid (side x side). v0: purely
     analyzer-derived (no painted override). If png_path is given (v1, NOT
     used yet per user ruling #1) it would be decoded + resized to `side` and
-    substituted here -- the call site below never needs to change."""
+    substituted here -- the call site below never needs to change.
+
+    channel="rock" (default): favors cliff/steep-but-not-too-steep terrain,
+    i.e. the shoulder around the cliff band, biased toward protected_soft
+    (flat_playable minus hard exclusions) at lower weight so rocks aren't
+    ONLY glued to cliff faces.
+
+    channel="tree": favors the moderate DEFAULT_TREE_SLOPE_MIN_DEG..
+    DEFAULT_TREE_SLOPE_MAX_DEG band (conifer-on-slope look, per
+    TERRAIN-TREE-SCATTER-ASSET-RECON-1) with a flat_playable bonus so trees
+    aren't ONLY glued to the slope band either -- density peaks inside the
+    band and falls off outside it (both flatter and steeper read as wrong for
+    a rooted tree)."""
     if png_path is not None:
         img = Image.open(png_path).convert("L").resize((side, side), Image.BILINEAR)
         return np.asarray(img, dtype=np.float64) / 255.0
-    # analyzer-derived v0: rock scatter favors cliff/steep-but-not-too-steep
-    # terrain, i.e. the shoulder around the cliff band, biased toward
-    # protected_soft (flat_playable minus hard exclusions) at lower weight so
-    # rocks aren't ONLY glued to cliff faces.
     slope = masks["slope_deg"]
-    cliff_band = np.clip((slope - 15.0) / (DEFAULT_SLOPE_MAX_DEG - 15.0), 0.0, 1.0)
     flat_bonus = masks["flat_playable"].astype(np.float64) * 0.25
+    if channel == "tree":
+        # Triangular density peaking mid-band: ramp up from MIN to the
+        # midpoint, ramp down from the midpoint to MAX. Zero outside the
+        # band (the exclusion mask below is the hard cutoff; this just
+        # shapes preference within the eligible band).
+        mid = (DEFAULT_TREE_SLOPE_MIN_DEG + DEFAULT_TREE_SLOPE_MAX_DEG) / 2.0
+        rising = np.clip((slope - DEFAULT_TREE_SLOPE_MIN_DEG) / (mid - DEFAULT_TREE_SLOPE_MIN_DEG), 0.0, 1.0)
+        falling = np.clip((DEFAULT_TREE_SLOPE_MAX_DEG - slope) / (DEFAULT_TREE_SLOPE_MAX_DEG - mid), 0.0, 1.0)
+        band = np.minimum(rising, falling)
+        density = np.clip(band + flat_bonus, 0.0, 1.0)
+        return density
+    cliff_band = np.clip((slope - 15.0) / (DEFAULT_SLOPE_MAX_DEG - 15.0), 0.0, 1.0)
     density = np.clip(cliff_band + flat_bonus, 0.0, 1.0)
     return density
 
 
-def compute_exclusion(layers: dict, masks: dict, foot: np.ndarray) -> dict:
+def compute_exclusion(layers: dict, masks: dict, foot: np.ndarray,
+                       channel: str = "rock") -> dict:
     """Per-cell hard-exclusion reasons (recon `protected_hard` = overlay |
     building_footprints | water), plus the slope gate as its own reason so
-    the rejection breakdown in the report is legible."""
+    the rejection breakdown in the report is legible.
+
+    channel="rock": excludes slope > DEFAULT_SLOPE_MAX_DEG (too steep for
+    single-point grounding).
+    channel="tree": excludes OUTSIDE [DEFAULT_TREE_SLOPE_MIN_DEG,
+    DEFAULT_TREE_SLOPE_MAX_DEG] -- the slope-gate "flip" from the recon:
+    rock/cliff dressing excludes steep terrain, trees on gaea_peaks-style
+    slopes instead favor (and are gated to) a moderate band, excluding both
+    too-flat and too-steep cells.
+
+    Water/shoreline/concrete(overlay)/building-footprint exclusion is
+    UNCHANGED across channels per the recon ("water/shore/concrete exclusion
+    stays") -- only the slope gate differs by channel."""
+    slope = masks["slope_deg"]
+    if channel == "tree":
+        slope_excl = (slope < DEFAULT_TREE_SLOPE_MIN_DEG) | (slope > DEFAULT_TREE_SLOPE_MAX_DEG)
+    else:
+        slope_excl = slope > DEFAULT_SLOPE_MAX_DEG
     return {
         "water": layers["water"],
         "overlay": layers["overlay"],
         "building_footprint": foot,
-        "slope": masks["slope_deg"] > DEFAULT_SLOPE_MAX_DEG,
+        "slope": slope_excl,
     }
 
 
 # --- blue-noise mask-weighted placement --------------------------------------
 def plan_placements(side: int, elev: np.ndarray, density: np.ndarray,
                      exclusion: dict, count: int, seed: int,
-                     min_dist_wu: float) -> dict:
+                     min_dist_wu: float, prop_pool: tuple[int, ...] | None = None) -> dict:
     """Deterministic seeded candidate walk in row-major cell order (NOT set/
     dict iteration) -> mask-weighted accept/reject -> greedy min-distance
     blue-noise thinning. Returns dict with accepted placements (row,col,x,y,
-    z,yaw) and a rejection reason tally."""
+    z,yaw[,objTypeNum]) and a rejection reason tally.
+
+    prop_pool: optional tuple of objTypeNums (e.g. PINE_SCATTER_OBJTYPENUMS).
+    When given, each ACCEPTED instance draws one objTypeNum uniformly at
+    random from the pool via the SAME per-cell RNG stream already used for
+    the density roll + yaw (so the pick is deterministic for a given seed,
+    same PYTHONHASHSEED-proof guarantee as the rest of the walk) -- this is
+    how "per-channel prop lists...random pick per instance for variety" is
+    implemented without a per-instance scale field (which the 40-byte record
+    doesn't have; variety comes from prop TYPE, not scale, per recon landmine
+    #2). When prop_pool is None (rock channel, single prop), no objTypeNum
+    key is added and the caller supplies one fixed objTypeNum at cook time,
+    matching the pre-existing single-prop behavior byte-for-byte."""
     hard_excl = np.zeros((side, side), dtype=bool)
     for m in exclusion.values():
         hard_excl |= m
@@ -192,7 +270,13 @@ def plan_placements(side: int, elev: np.ndarray, density: np.ndarray,
                 continue
             yaw = float(rng.random() * 2.0 * math.pi)
             z = float(elev[row, col])
-            accepted.append({"row": row, "col": col, "x": x, "y": y, "z": z, "yaw": yaw})
+            placement = {"row": row, "col": col, "x": x, "y": y, "z": z, "yaw": yaw}
+            if prop_pool:
+                # same rng stream, drawn AFTER yaw so single-prop channels
+                # (prop_pool=None) are byte-identical to pre-existing runs.
+                pick_idx = int(rng.integers(0, len(prop_pool)))
+                placement["objTypeNum"] = prop_pool[pick_idx]
+            accepted.append(placement)
             accepted_xy.append((x, y))
         if len(accepted) >= count:
             break
@@ -208,7 +292,8 @@ def plan_placements(side: int, elev: np.ndarray, density: np.ndarray,
 # --- manifest -----------------------------------------------------------------
 def write_manifest(out_dir: Path, mission: str, pak_path: Path, side: int,
                     seed: int, count_requested: int, objtypenum: int,
-                    result: dict, thresholds: dict) -> Path:
+                    result: dict, thresholds: dict,
+                    channel: str = "rock", prop_pool: tuple[int, ...] | None = None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
         "format": "mc2-scatter-manifest/1",
@@ -219,7 +304,14 @@ def write_manifest(out_dir: Path, mission: str, pak_path: Path, side: int,
         "seed": seed,
         "count_requested": count_requested,
         "count_final": len(result["accepted"]),
+        # objTypeNum: fixed prop for single-prop channels (rock); for a
+        # multi-prop channel (tree) this is the FALLBACK/primary value only --
+        # each placement's own "objTypeNum" key (set when prop_pool is used)
+        # is authoritative. Kept at manifest level for backward-compat with
+        # single-channel consumers/tests that only read this key.
         "objTypeNum": objtypenum,
+        "channel": channel,
+        "prop_pool": list(prop_pool) if prop_pool else None,
         "thresholds": thresholds,
         "rejects": result["rejects"],
         "candidates_visited": result["candidates_visited"],
@@ -291,9 +383,16 @@ def cook_scatter(pak_path: Path, manifest_path: Path, out_pak: Path,
     objtypenum = manifest["objTypeNum"]
     placements = manifest["placements"]
 
-    if objtypenum not in RESERVED_SCATTER_OBJTYPENUMS:
+    # Validate every objTypeNum that will actually be written: the
+    # manifest-level fallback (single-prop channels, e.g. rock) AND any
+    # per-placement override (multi-prop channels, e.g. tree's random pick
+    # across PineScatter1/2/3) -- both must be reserved scatter types so a
+    # re-cook's delete-by-type step stays exhaustive.
+    per_placement_types = {p.get("objTypeNum", objtypenum) for p in placements}
+    bad_types = per_placement_types - set(RESERVED_SCATTER_OBJTYPENUMS)
+    if bad_types:
         raise ValueError(
-            f"objTypeNum {objtypenum} is not in RESERVED_SCATTER_OBJTYPENUMS "
+            f"objTypeNum(s) {sorted(bad_types)} not in RESERVED_SCATTER_OBJTYPENUMS "
             f"{RESERVED_SCATTER_OBJTYPENUMS} -- refusing cook.")
     if len(placements) > HARD_CAP:
         raise ValueError(f"manifest has {len(placements)} placements > HARD_CAP={HARD_CAP} -- refusing cook.")
@@ -333,7 +432,7 @@ def cook_scatter(pak_path: Path, manifest_path: Path, out_pak: Path,
     removed = len(existing) - len(kept)
 
     new_records = [
-        (objtypenum, float(p["x"]), float(p["y"]), float(p["z"]), float(p["yaw"]),
+        (int(p.get("objTypeNum", objtypenum)), float(p["x"]), float(p["y"]), float(p["z"]), float(p["yaw"]),
          0, -1, -1, 0, 0)
         for p in placements
     ]
@@ -419,16 +518,30 @@ def cmd_plan(args) -> int:
         print(f"[scatter] WARNING requested count {args.count} > HARD_CAP {HARD_CAP}; clamping.",
               file=sys.stderr)
 
-    pak, side, layers, masks, foot = _load_common(args.mission, missions_dir)
-    exclusion = compute_exclusion(layers, masks, foot)
-    density = load_density_mask(side, masks, Path(args.density_png) if args.density_png else None)
+    channel = args.channel
+    prop_pool = PROP_CHANNELS.get(channel, (args.objtypenum,))
+    fallback_objtypenum = prop_pool[0]
 
-    thresholds = {"slope_max_deg": DEFAULT_SLOPE_MAX_DEG, "min_dist_wu": args.min_dist,
+    pak, side, layers, masks, foot = _load_common(args.mission, missions_dir)
+    exclusion = compute_exclusion(layers, masks, foot, channel=channel)
+    density = load_density_mask(side, masks, Path(args.density_png) if args.density_png else None,
+                                 channel=channel)
+
+    slope_max = DEFAULT_TREE_SLOPE_MAX_DEG if channel == "tree" else DEFAULT_SLOPE_MAX_DEG
+    thresholds = {"slope_max_deg": slope_max, "min_dist_wu": args.min_dist,
                   "hard_cap": HARD_CAP}
-    result = plan_placements(side, layers["elev"], density, exclusion, count, args.seed, args.min_dist)
+    if channel == "tree":
+        thresholds["slope_min_deg"] = DEFAULT_TREE_SLOPE_MIN_DEG
+    # single-prop channels (rock) pass prop_pool=None so plan_placements
+    # never adds a per-placement objTypeNum key -- byte-identical to the
+    # pre-multi-channel behavior for existing rock callers/tests.
+    walk_pool = prop_pool if len(prop_pool) > 1 else None
+    result = plan_placements(side, layers["elev"], density, exclusion, count, args.seed,
+                              args.min_dist, prop_pool=walk_pool)
 
     manifest_path = write_manifest(out_dir, args.mission, pak, side, args.seed, args.count,
-                                    args.objtypenum, result, thresholds)
+                                    fallback_objtypenum, result, thresholds,
+                                    channel=channel, prop_pool=prop_pool if walk_pool else None)
     preview_path = render_preview(out_dir, args.mission, layers["elev"], exclusion,
                                    result["accepted"], side)
 
@@ -473,7 +586,12 @@ def main(argv=None) -> int:
     p_plan.add_argument("--count", type=int, default=200)
     p_plan.add_argument("--seed", type=int, default=1)
     p_plan.add_argument("--min-dist", type=float, default=DEFAULT_MIN_DIST_WU)
-    p_plan.add_argument("--objtypenum", type=int, default=MARBLECLIFF_OBJTYPENUM)
+    p_plan.add_argument("--objtypenum", type=int, default=MARBLECLIFF_OBJTYPENUM,
+                         help="single-prop fallback objTypeNum; ignored for channels with a prop_pool (e.g. tree)")
+    p_plan.add_argument("--channel", choices=sorted(PROP_CHANNELS.keys()), default="rock",
+                         help="prop channel: rock (MarbleCliffScatter, slope>MAX excluded) or "
+                              "tree (PineScatter1/2/3 random pick per instance, slope band "
+                              f"[{DEFAULT_TREE_SLOPE_MIN_DEG},{DEFAULT_TREE_SLOPE_MAX_DEG}] favored/gated)")
     p_plan.add_argument("--density-png", default=None,
                          help="v1 override (NOT used in v0): a painted density PNG, resized to grid side")
     p_plan.set_defaults(func=cmd_plan)

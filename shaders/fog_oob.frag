@@ -18,6 +18,18 @@ uniform vec3      u_fogColor;
 uniform float     u_fogOpacity;
 uniform float     u_time;
 
+// SKYBOX-FOG-EXCLUDE-1 (gate MC2_SKYBOX_FOG_EXCLUDE, default OFF -> u_skyExcludeEnabled=0,
+// byte-identical to legacy). When enabled, true-sky pixels are tagged stencil=1 by
+// the HDRI skybox's stencil-tag pass (shaders/hdri_skybox_stencil_tag.frag, same
+// worldDir.z < -0.22 threshold as the fallback band below) and hard-excluded here,
+// instead of relying solely on the worldDir.z heuristic. The worldDir.z band stays
+// as the fallback for non-HDRI/no-skybox scenes (stencil never gets tagged then,
+// so stencilTex reads 0 everywhere and this branch is a no-op).
+// usampler2D: GL_DEPTH_STENCIL_TEXTURE_MODE=GL_STENCIL_INDEX views return raw
+// unsigned stencil index values (0..255), not normalized floats.
+uniform usampler2D stencilTex;
+uniform int        u_skyExcludeEnabled;
+
 // ---- 3D value noise ----
 // Sampling worldDir (unit sphere) in 3D eliminates all UV projection
 // artifacts: no seams, no directional tilt, no vertical streaks.
@@ -52,6 +64,15 @@ void main()
 {
     float rawDepth = texture(depthTex, TexCoord).r;
     if (rawDepth > 0.0001) { outFog = vec4(0.0); return; }
+
+    // SKYBOX-FOG-EXCLUDE-1: hard-exclude true sky (stencil==1) when the gate is
+    // on. Stencil is only ever tagged for depth-unwritten pixels (sky never
+    // writes depth), so this check is only reached for the same population the
+    // rawDepth test above already narrowed to.
+    if (u_skyExcludeEnabled != 0) {
+        uint stencilVal = texture(stencilTex, TexCoord).r;
+        if (stencilVal != 0u) { outFog = vec4(0.0); return; }
+    }
 
     vec2 ndc = TexCoord * 2.0 - 1.0;
     vec4 pNear = invViewProj * vec4(ndc, 1.0, 1.0);

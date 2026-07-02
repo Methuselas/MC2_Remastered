@@ -262,6 +262,17 @@ ALLOWLIST=(
     MC2_TERRAIN_LIGHTING_GPU    # feature -- promote-to-registry
     MC2_TERRAIN_LIGHTING_GPU_TRACE  # trace
     MC2_TERRAIN_LIGHTING_PARITY # parity
+    MC2_GROUND_CONTACT_BLOB     # feature -- GROUND-CONTACT-BLOB-1 contact-darkening disc under movers (default OFF)
+    MC2_SKYBOX_FOG_EXCLUDE      # feature -- SKYBOX-FOG-EXCLUDE-1 fog passes exclude stencil-tagged sky (default OFF)
+    MC2_TERRAIN_CONTROLMAP      # feature -- TERRAIN-CONTROLMAP-SAMPLE-1 authored material-weight override (default OFF)
+    MC2_TERRAIN_CONTROLMAP_ALBEDO_STRENGTH  # override -- TERRAIN-CONTROLMAP-ALBEDO-1 strength env override
+    MC2_TERRAIN_CONTROLMAP_FILE # override -- explicit control-map path override
+    MC2_TERRAIN_MATERIAL_LIB    # feature -- TERRAIN-MATERIAL-LIB-1 data-defined terrain material layers (default OFF)
+    MC2_TERRAIN_MATERIAL_LIB_FILE  # override -- explicit terrain_materials.json path override
+    MC2_TERRAIN_SHORELINE       # feature -- TERRAIN-SHORELINE-MASK-1 wetness/foam shoreline mask (default OFF)
+    MC2_TERRAIN_SHORELINE_FILE  # override -- explicit shoreline mask path override
+    MC2_TERRAIN_VISUAL_DISPLACE # feature -- TERRAIN-VISUAL-HEIGHT displacement from 4x bake (default OFF)
+    MC2_TERRAIN_VISUAL_DISPLACE_FAR  # override -- far-band displacement scale knob
     MC2_TERRAIN_MASK_DISPATCH   # feature -- promote-to-registry
     MC2_TERRAIN_MASK_DISPATCH_SOLID  # feature -- promote-to-registry
     MC2_TERRAIN_MASK_DISPATCH_TRACE  # trace
@@ -298,6 +309,8 @@ ALLOWLIST=(
     MC2_WATER_DEPTHPROBE        # trace
     MC2_WATER_MATERIAL_PROBE    # trace
     MC2_WATER_RENDERPROBE       # trace
+    MC2_WATER_HDRI_REFL_FULL    # override -- WATER-HDRI-REFL-PERF-1 restore full-rate LOD-1.0 HDRI reflection sampling
+    MC2_WATER_REFL_RT_PIXELPROOF # trace -- WATER-REFLECTION-CLIP-1 opt-in full pixel-coverage readback proof (sync stall)
     MC2_WATER_REFL_TRACE        # trace
     MC2_WATER_REFLECTION        # feature -- promote-to-registry; WATER-SKY-REFLECTION-1 gated SH-L2 sky reflection (default OFF)
     MC2_WATER_REFLECTION_RT     # feature -- promote-to-registry; WATER-TERRAIN-REFLECTION-1 mirrored terrain into reflection RT (default OFF)
