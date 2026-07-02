@@ -1215,6 +1215,10 @@ def main():
                             # OMT-1-OVERLAY-MISSING-TEXTURE-GUARD: overlay/decal
                             # resolve-fail counters + fallback-bind trace.
                             "MC2_OVERLAY_TEXTURE_TRACE",
+                            # OVERLAY-TILE-HIRES-1 -- hi-res overlay tile loader
+                            # (default OFF). Must be allowlisted or Popen drops it
+                            # and the gate-ON smoke runs the legacy 64px path.
+                            "MC2_OVERLAY_TILE_HIRES",
                             # FRAME-CURRENTNESS-GUARDS-1 gates
                             "MC2_REGFLUSH_GUARD2",
                             "MC2_TARGETING_GUARD",
