@@ -134,8 +134,24 @@ compression choice — measure with a harness before any format work.
    `_tga_slim_backup/` (34 MB), cruft suffixes + thumbs.db (~32 MB),
    `terrain_gen_out/genmap.burnin.tga` dup (3 MB); exclude dev dirs from the release
    payload. Gate: re-run census (0 identical shadows) + tier1 smoke.
-2. **SNOW-TGA-TRUTH-1** (bug, not size): `data/textures/snow.tga` is byte-identical
-   to `mat4_normal.tga` — recover the real snow albedo or confirm intent.
+2. **SNOW-TGA-TRUTH-1** (RESOLVED — dead file, not a rendering bug): `data/textures/snow.tga`
+   is byte-identical to `mat4_normal.tga` (sha256 `2a890ae2…`), but unlike the 0.4
+   cement-pad-albedo-was-normal-map bug, this file is **not live** — grepped the
+   whole tree (C++, shaders, JSON manifests, `.ini`/`.tgl`, `textures.fst` listing)
+   for the literal string `snow.tga`: zero hits. Terrain snow color comes from an
+   HSV-derived tint (`tintSnow` uniform, `shaders/gos_terrain.frag`/`terrain_lod_chunk.frag`,
+   `gos_SetTerrainTintSnow`), not a sampled albedo texture; the only file the loader
+   touches by name is `mat4_normal.tga` (`mclib/terrtxm2.cpp:2457`, `normalNames[4]`),
+   loaded into `matNormalArray` layer `MAT_LAYER_SNOW` — that IS correct and distinct
+   from mat0-3 (verified unique sha256 per slot). `snow.tga` is also absent from
+   `textures.fst` (loose-only, no FST override to worry about) and the modern PBR
+   cook already produced the real albedo at `data/terrain_layers/snow_albedo.ktx2`
+   (source `snow_field_aerial_col_2k.jpg` per `tools/mc2texcook/terrain_layer_manifest.json`),
+   which the tint path doesn't even need. **Verdict: delete-candidate, no engine/asset
+   change required.** Likely a leftover from the classic DirectX-era splat set
+   (`data/textures/64/snow 01.tga`, `snow 02.tga` — also unreferenced by any current
+   loader, not investigated further here). Safe to fold into DATA-SHIP-DEDUPE-1's
+   cruft-deletion pass; not a visual-correctness fix.
 3. **BURNIN-JPG-CONVERT-1** (~135 MB): cook the 4 remaining `.burnin.tga` to q90
    `.burnin.jpg`; keep `MC2_BURNIN_NO_JPG` escape hatch; per-map visual check.
 4. **TGL128-TGA-SLIM-1** (~85 MB): drop the 1,112 sidecarred `/128` .tga loose +
