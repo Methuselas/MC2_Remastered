@@ -575,6 +575,15 @@ namespace {
 		const char* v = getenv("MC2_GPU_GROUND_PICK_PARITY_TAG");
 		return (v && *v) ? v : "?";
 	}();
+	// Center-probe knob: unattended smoke parks the cursor at (0,0), so the
+	// primary cursor-driven oracle never samples real terrain (compared=0).
+	// MC2_GPU_GROUND_PICK_PARITY_CENTER=1 adds a screen-CENTER parity probe on
+	// camera-motion frames: CPU inverseProject at the center pixel vs GPU
+	// depth-unproject at the same center pixel. This measures the actual
+	// GPU-vs-CPU ground-pos delta over the terrain the camera is looking at
+	// (incl. displaced terrain), which the parked-cursor path cannot. Same
+	// throttle as the cursor path. Diagnostic-only; result never consumed.
+	static const bool s_gpCenter = (getenv("MC2_GPU_GROUND_PICK_PARITY_CENTER") != nullptr);
 	// Counters (process-lifetime; atexit summary).
 	static unsigned long long s_gpSites=0;          // eligible parity sites seen
 	static unsigned long long s_gpCompared=0;        // both CPU+GPU produced a point
@@ -593,6 +602,11 @@ namespace {
 	// Histogram buckets for the horizontal delta distribution (wu).
 	// [0]<=0.5  [1]<=1  [2]<=2  [3]<=5  [4]<=20  [5]>20
 	static unsigned long long s_gpHist[6]={0};
+	// Center-probe counters (screen-center CPU-vs-GPU parity over real terrain).
+	static unsigned long long s_gpcCompared=0, s_gpcInvalid=0, s_gpcBg=0;
+	static double s_gpcDeltaSum=0.0, s_gpcDeltaMax=0.0;
+	static double s_gpcDeltaZSum=0.0, s_gpcDeltaZMax=0.0;
+	static unsigned long long s_gpcHist[6]={0};
 	static bool s_gpAtexit=false;
 	static void gpEmit() {
 		if (!s_gpParityOn) return;
@@ -618,7 +632,61 @@ namespace {
 			"gpu_readback_avg:%.1f,gpu_readback_max:%.1f} cpu_samples=%llu gpu_samples=%llu\n",
 			cpuAvg, (double)s_gpCpuMaxNs/1000.0, gpuAvg, (double)s_gpGpuMaxNs/1000.0,
 			s_gpCpuSamples, s_gpGpuSamples);
+		if (s_gpCenter) {
+			const double cdAvg  = s_gpcCompared ? s_gpcDeltaSum/(double)s_gpcCompared : 0.0;
+			const double cdzAvg = s_gpcCompared ? s_gpcDeltaZSum/(double)s_gpcCompared : 0.0;
+			std::fprintf(stderr,
+				"[GPU_PICK_PARITY] center_probe mission=%s compared=%llu invalid=%llu background_px=%llu "
+				"delta_wu={xy_avg:%.3f,xy_max:%.3f,z_avg:%.3f,z_max:%.3f} "
+				"hist_xy_wu=[<=0.5:%llu,<=1:%llu,<=2:%llu,<=5:%llu,<=20:%llu,>20:%llu]\n",
+				s_gpMissionTag, s_gpcCompared, s_gpcInvalid, s_gpcBg,
+				cdAvg, s_gpcDeltaMax, cdzAvg, s_gpcDeltaZMax,
+				s_gpcHist[0], s_gpcHist[1], s_gpcHist[2], s_gpcHist[3], s_gpcHist[4], s_gpcHist[5]);
+		}
 		std::fflush(stderr);
+	}
+	// Center-screen parity probe. Caller (hover site) passes the CPU
+	// inverseProject result at the CENTER pixel (ccx/y/z) + the center pixel
+	// coords. Runs the GPU depth-unproject at the same center pixel and records
+	// the delta. Throttled by the same sample counter. Result never consumed.
+	static void gpCenterProbe(int cxPix, int cyPix, float ccx, float ccy, float ccz) {
+		if (!s_gpParityOn || !s_gpCenter) return;
+		if ((s_gpSites % (unsigned long long)s_gpSampleN) != 0) return;
+		if (!RenderWorld::IsObjectIdBufferEnabled()) return;
+		float vMulX, vMulY, vAddX, vAddY;
+		gos_GetViewport(&vMulX, &vMulY, &vAddX, &vAddY);
+		if (!(vMulX > 0.0f && vMulY > 0.0f)) return;
+		RenderWorld::ScreenPickContext ctx;
+		ctx.mouseX = cxPix; ctx.mouseY = cyPix;
+		ctx.vMulX  = vMulX;  ctx.vMulY  = vMulY;
+		ctx.vAddX  = vAddX;  ctx.vAddY  = vAddY;
+		ctx.drawableWidth  = Environment.drawableWidth;
+		ctx.drawableHeight = Environment.drawableHeight;
+		RenderWorld::screenPickCompute(&ctx);
+		RenderWorld::LookupResult res = RenderWorld::lookupAtPixel(ctx.glX, ctx.glY);
+		if (!res.worldPosValid) {
+			const char* r = res.lookupFailReason ? res.lookupFailReason : "";
+			if (std::strcmp(r, "BACKGROUND_PIXEL") == 0) ++s_gpcBg; else ++s_gpcInvalid;
+			return;
+		}
+		const float dx = res.worldX - ccx;
+		const float dy = res.worldY - ccy;
+		const float dz = res.worldZ - ccz;
+		const double dHoriz = std::sqrt((double)dx*dx + (double)dy*dy);
+		const double dVert  = std::fabs((double)dz);
+		++s_gpcCompared;
+		s_gpcDeltaSum += dHoriz; if (dHoriz > s_gpcDeltaMax) s_gpcDeltaMax = dHoriz;
+		s_gpcDeltaZSum += dVert; if (dVert  > s_gpcDeltaZMax) s_gpcDeltaZMax = dVert;
+		int b = dHoriz <= 0.5 ? 0 : dHoriz <= 1.0 ? 1 : dHoriz <= 2.0 ? 2
+		        : dHoriz <= 5.0 ? 3 : dHoriz <= 20.0 ? 4 : 5;
+		++s_gpcHist[b];
+		if (dHoriz > 2.0) {
+			std::fprintf(stderr,
+				"[GPU_PICK_PARITY] center_over_2wu mission=%s center_px=(%d,%d) gl=(%d,%d) "
+				"cpu=(%.1f,%.1f,%.1f) gpu=(%.1f,%.1f,%.1f) dxy=%.2f dz=%.2f\n",
+				s_gpMissionTag, cxPix, cyPix, ctx.glX, ctx.glY,
+				ccx, ccy, ccz, res.worldX, res.worldY, res.worldZ, dHoriz, dVert);
+		}
 	}
 	// Called at each ground-pick site. cpuNs = measured CPU inverseProject cost
 	// for this site; (cx,cy,cz) = the CPU wPos it produced. mouseX/Y = raw cursor.
@@ -1302,6 +1370,21 @@ void MissionInterfaceManager::update (void)
 				std::chrono::duration_cast<std::chrono::nanoseconds>(
 					std::chrono::steady_clock::now() - _cpuT0).count();
 			gpParitySite(mouseX, mouseY, _cpuNs, wPos.x, wPos.y, wPos.z, "hover");
+			// GPU-GROUND-PICK-PARITY-1 center probe: unattended smoke parks the
+			// cursor at (0,0) so the cursor path never samples real terrain
+			// (compared=0). When MC2_GPU_GROUND_PICK_PARITY_CENTER=1, run a
+			// screen-CENTER CPU-vs-GPU parity comparison over the terrain the
+			// camera is actually looking at (incl. displaced maps). CPU pick at
+			// center is a separate inverseProject; wPos above is NOT disturbed.
+			if (s_gpCenter) {
+				const int cxPix = Environment.screenWidth  / 2;
+				const int cyPix = Environment.screenHeight / 2;
+				Stuff::Vector2DOf<long> centerXY;
+				centerXY.x = cxPix; centerXY.y = cyPix;
+				Stuff::Vector3D centerW;
+				eye->inverseProject(centerXY, centerW);
+				gpCenterProbe(cxPix, cyPix, centerW.x, centerW.y, centerW.z);
+			}
 		}
 		prevMouseX = mouseX;
 		prevMouseY = mouseY;
