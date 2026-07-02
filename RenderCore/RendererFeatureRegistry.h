@@ -1141,6 +1141,154 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "of falling back to GLSL — used to surface artifact corruption in "
         "testing. Default-OFF = silent-but-logged GLSL fallback."
     },
+
+    // -------------------------------------------------------------------
+    // ENV-REGISTRY-LEGACY-SWEEP-1: promotions from the legacy-var registry
+    // sweep (scripts/check-env-registry.sh ALLOWLIST). These are genuinely
+    // active feature gates pulled out of the allowlist into the real
+    // registry; see scripts/check-env-registry.sh history for the other
+    // ~355 vars that stayed allowlisted (trace/override/infra/parity/legacy).
+    // -------------------------------------------------------------------
+    {
+        "MC2_FEATURE_ANIM_CADENCE_FIX",
+        "MC2_ANIM_CADENCE_FIX",
+        EnvVarKind::Feature,
+        true,
+        "ANIM-CADENCE-FIX: advance mech gait at most once per render frame; prevents a visible double-step when Mover::getLOSPosition() re-invokes appearance->update() the same frame. Default-ON (user-confirmed fix, mc2_17 Catapult/Bushwacker); =0 disables to A/B the double-step."
+    },
+    {
+        "MC2_FEATURE_ASSIMP_MECH_IMPORT",
+        "MC2_ASSIMP_MECH_IMPORT",
+        EnvVarKind::Feature,
+        false,
+        "BT2018 mech import 1A: route mech geometry through the Assimp GLTF/FBX importer instead of the legacy MSL loader. Default-OFF; =1 enables."
+    },
+    {
+        "MC2_FEATURE_BRAIN_RUNTIME",
+        "MC2_BRAIN_RUNTIME",
+        EnvVarKind::Feature,
+        false,
+        "TechBrain declarative-brain runtime master gate (warrior.cpp). Default-OFF; =1 enables. Companion MC2_BRAIN_RUNTIME_APPLY gates whether resolved intents are actually applied."
+    },
+    {
+        "MC2_FEATURE_BRAIN_RUNTIME_APPLY",
+        "MC2_BRAIN_RUNTIME_APPLY",
+        EnvVarKind::Feature,
+        false,
+        "TechBrain runtime apply gate (warrior.cpp). Default-OFF; requires MC2_BRAIN_RUNTIME=1. =1 applies resolved brain intents instead of only computing them."
+    },
+    {
+        "MC2_FEATURE_BRAIN_DISPATCH",
+        "MC2_BRAIN_DISPATCH",
+        EnvVarKind::Feature,
+        false,
+        "TechScript special-dispatch master gate (mission.cpp/brain_special_dispatch.cpp). Default-OFF; requires MC2_BRAIN_RUNTIME=1 + MC2_BRAIN_RUNTIME_APPLY=1."
+    },
+    {
+        "MC2_FEATURE_SMART_LOAD",
+        "MC2_SMART_LOAD",
+        EnvVarKind::Feature,
+        false,
+        "SMART-LOAD startup/mission-load perf path (logisticsdata.cpp). Default-OFF; =1 enables. MC2_SMART_LOAD_TRACE (allowlisted trace) logs the load-time breakdown."
+    },
+    {
+        "MC2_FEATURE_DYNAMIC_DECALS",
+        "MC2_DYNAMIC_DECALS",
+        EnvVarKind::Feature,
+        false,
+        "Dynamic decal ring (mclib/dynamic_decal_ring.cpp): spawn()/gatherToDecalBatch() are no-ops when off. Default-OFF; =1 (or any non-'0' value) enables."
+    },
+    {
+        "MC2_FEATURE_UNIT_PROFILE_DATA",
+        "MC2_UNIT_PROFILE_DATA",
+        EnvVarKind::Feature,
+        false,
+        "UNIT-PROFILE-ARC: data-driven unit+equipment definition source (code/unitprofile.cpp). Default LEGACY (var unset/'0' = legacy path); =1 (or any non-'0' value) switches to the generated UnitProfileData source."
+    },
+    {
+        "MC2_FEATURE_FRAMEGRAPH_EXECUTOR",
+        "MC2_FRAMEGRAPH_EXECUTOR",
+        EnvVarKind::Feature,
+        false,
+        "RENDER-FRAME-GRAPH arc: top-level frame-graph executor ownership of pass begin/end (mclib/render_contract.cpp, GameOS/gameos/gos_postprocess.cpp). Default-OFF = legacy direct call order, byte-identical; =1 routes through the executor. See docs/renderworld_arc_status.md."
+    },
+    {
+        "MC2_FEATURE_RENDER_PASS_ORDER",
+        "MC2_RENDER_PASS_ORDER",
+        EnvVarKind::Feature,
+        false,
+        "CONTRACT-3: per-frame resource-ordering audit (mclib/render_contract.cpp) — checks each pass's reads[] are satisfied by a prior write before beginPass. Default-OFF; =1 enables. MC2_RENDER_PASS_TELEMETRY (allowlisted trace) shares the endPass logging."
+    },
+    {
+        "MC2_FEATURE_TERRAIN_LOD_CHUNK",
+        "MC2_TERRAIN_LOD_CHUNK",
+        EnvVarKind::Feature,
+        true,
+        "LOD-chunk terrain renderer (mclib/terrain.cpp/terrain.h), the primary tessellation-free terrain path. Default-ON (reworked/stabilized); =0 opts out to the legacy path (increasingly vestigial per terrain.cpp:149 warning)."
+    },
+    {
+        "MC2_FEATURE_SHADOW_CSM",
+        "MC2_SHADOW_CSM",
+        EnvVarKind::Feature,
+        true,
+        "Cascaded shadow maps master gate (GameOS/gameos/gos_postprocess.cpp), reworked 2026-06-18 (commit 8ff13a36). Default-ON; =0 opts out to the legacy single dynamic shadow map path. See docs/tier1_env_vars.md \"Dynamic CSM\"."
+    },
+    {
+        "MC2_FEATURE_TERRAIN_VISUAL_HEIGHT",
+        "MC2_TERRAIN_VISUAL_HEIGHT",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-VISUAL-HEIGHT: loads the 4x-res VISUAL heightfield bake into an SSBO for corner-pinned interior displacement (mclib/terrain.cpp). Default-OFF = no load, no SSBO, byte-identical; =1 (or MC2_TERRAIN_VISUAL_DISPLACE=1, which implies load) enables. MC2_TERRAIN_VISUAL_HEIGHT_FILE (allowlisted override) picks an explicit bake path."
+    },
+    {
+        "MC2_FEATURE_MOVE_RECON",
+        "MC2_MOVE_RECON",
+        EnvVarKind::Feature,
+        false,
+        "Pathfinding cost instrumentation (mclib/move_recon.cpp). Default-OFF, zero behavior change when unset. MC2_MOVE_CHUNK_SHADOW / MC2_MOVE_PATH_CACHE_SHADOW (allowlisted) are alternate enables for the same instrumentation."
+    },
+    {
+        "MC2_FEATURE_STATIC_PROXY_RECON",
+        "MC2_STATIC_PROXY_RECON",
+        EnvVarKind::Feature,
+        false,
+        "StaticSceneProxy-arc recon instrumentation (mclib/bdactor.cpp) — counts touchSerialCommit calls for building/tree appearances ahead of the per-frame static-prop-walk meta-fix. Default-OFF; presence-gated."
+    },
+    {
+        "MC2_FEATURE_RENDER_BACKEND_IFACE",
+        "MC2_RENDER_BACKEND_IFACE",
+        EnvVarKind::Feature,
+        false,
+        "RENDER-BACKEND-SEAMS arc: routes select GL calls (e.g. scene FBO bind) through the GLBackend seam instead of direct GL. Default-OFF = direct GL, byte-identical; ON exercises the same GL call through the seam (same output, proves the seam routes). See GameOS/gameos/gos_postprocess.cpp."
+    },
+    {
+        "MC2_FEATURE_STATIC_UPDATE_SKIP",
+        "MC2_STATIC_UPDATE_SKIP",
+        EnvVarKind::Feature,
+        true,
+        "Skip the per-frame static building/tree update walk when nothing is dirty (GameOS/gameos/gameosmain.cpp, code/terrobj.cpp, code/bldng.cpp). Default-ON (perf); =0 restores the legacy always-walk behavior."
+    },
+    {
+        "MC2_FEATURE_VULKAN_EDGE_FOG_ISLAND",
+        "MC2_VULKAN_EDGE_FOG_ISLAND",
+        EnvVarKind::Feature,
+        false,
+        "VULKAN-CONTRACT-MANIFEST-ARC Layer 3: native Vulkan edge-fog island (GameOS/gameos/vulkan_edge_fog_island.cpp) — GL depth/color readback bridged into a Vulkan compute pass, pixel-parity-proven vs the GL path. Default-OFF, presence-gated (=1 enables); requires the Vulkan probe device to be viable (falls back to GL otherwise). See MEMORY handoff HANDOFF_2026_07_01_vulkan_lib_track."
+    },
+    {
+        "MC2_FEATURE_VULKAN_POSTPROCESS_SUBGRAPH",
+        "MC2_VULKAN_POSTPROCESS_SUBGRAPH",
+        EnvVarKind::Feature,
+        false,
+        "VULKAN-CONTRACT-MANIFEST-ARC Layer 4: native Vulkan postprocess subgraph (GameOS/gameos/vulkan_postprocess_subgraph.cpp) fusing fog passes into one render pass / two draws, Vulkan-owned intermediate target. Default-OFF, presence-gated (=1 enables). See MEMORY handoff HANDOFF_2026_07_01_vulkan_lib_track."
+    },
+    {
+        "MC2_FEATURE_VULKAN_SWAPCHAIN_PRESENT",
+        "MC2_VULKAN_SWAPCHAIN_PRESENT",
+        EnvVarKind::Feature,
+        false,
+        "VULKAN-CONTRACT-MANIFEST-ARC Layer 5: engine-owned Vulkan swapchain (create/present/resize) (GameOS/gameos/vulkan_backend_skeleton.cpp, vulkan_swapchain_present.cpp). Default-OFF, presence-gated (=1 enables); validation-clean core+sync per L5 proof. See MEMORY handoff HANDOFF_2026_07_01_vulkan_lib_track."
+    },
 };
 
 // ---------------------------------------------------------------------------

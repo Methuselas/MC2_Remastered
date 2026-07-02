@@ -60,6 +60,8 @@ Headless Vulkan probe / backend-skeleton exercise gates. All read via bare `gete
   - `best-practices` — core + `VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT`. May emit best-practice **warnings** (logged as `validation-warning:`, non-failing) — probe still passes.
   - `debug-printf` — core + `VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT`. May need extra plumbing; fails soft.
   Extra features chain into `VkInstanceCreateInfo.pNext` via `VkValidationFeaturesEXT`. Unknown value → falls back to `core` + warns. Resolved preset name is logged at startup. Only ERROR-severity validation messages fail a probe; WARNING-severity ones are visible but non-failing.
+- `MC2_VULKAN_EDGE_FOG_ISLAND=1` — Vulkan-native edge-fog island (`GameOS/gameos/vulkan_edge_fog_island.cpp`, VULKAN-CONTRACT-MANIFEST-ARC Layer 3): GL depth/color readback bridged into a Vulkan compute pass, pixel-parity-proven vs the GL path. Default **OFF**, presence-gated; falls back to GL if the probe device isn't viable. `MC2_VULKAN_ISLAND_FORCE_FALLBACK=1` forces the fallback for testing.
+- `MC2_VULKAN_SWAPCHAIN_PRESENT=1` — VULKAN-CONTRACT-MANIFEST-ARC Layer 5: engine-owned Vulkan swapchain create/present/resize (`vulkan_backend_skeleton.cpp`, `vulkan_swapchain_present.cpp`), validation-clean core+sync per the L5 proof. Default **OFF**, presence-gated. `MC2_VULKAN_SWAPCHAIN_PRESENT_HIDDEN=1` runs it against a hidden window for headless/CI use.
 
 ## Frame-graph executor + backend-iface seam (RENDER-FRAME-GRAPH ARC)
 
@@ -126,6 +128,8 @@ Headless Vulkan probe / backend-skeleton exercise gates. All read via bare `gete
 - `MC2_REVERSE_Z_TRACE=1` — reverse-Z lifecycle prints
 - `MC2_GL_DEBUG_FATAL=1` — abort on GL_DEBUG_SEVERITY_HIGH
 - `MC2_XFORM_PARITY_FATAL=1` — abort when F1-3C clip-space parity probe fails (ViewUniforms.worldToClipGL vs legacy terrain MVP, max_diff>1e-5). Default **OFF** = log-only. Host counterpart: `tests/unit/test_xform_convention.cpp` (XFORM-CONVENTION-HARNESS-1).
+- `MC2_ANIM_CADENCE_FIX` — advance mech gait at most once per render frame; prevents a second same-frame gait step when `Mover::getLOSPosition()` (mover.cpp:3528) re-invokes `appearance->update()` for a weapon-node LOS refresh (`mclib/mech3d.cpp`). **Default ON** (user-confirmed fix, mc2_17 Catapult/Bushwacker); `=0` disables to A/B the double-step.
+- `MC2_STATIC_UPDATE_SKIP` — skip the per-frame static building/tree update walk when nothing is dirty (`gameosmain.cpp`, `code/terrobj.cpp`, `code/bldng.cpp`). **Default ON**; `=0` restores the legacy always-walk behavior.
 
 ## RenderWorld arc
 
@@ -137,6 +141,17 @@ Headless Vulkan probe / backend-skeleton exercise gates. All read via bare `gete
 - `MC2_GAMEPLAY_PICK_SELFTEST=1` — M2-pre spine validator
 - `MC2_GPU_PICK_HOVER=1` — GPU hover pick for mechs/dynamic actors (GPU_PICK_HOVER_DYNAMIC-1). Requires `MC2_OBJECT_ID_BUFFER=1`. Only mech kind uses GPU result; static props fall through to CPU.
 - `MC2_GPU_PICK_HOVER_TRACE=1` — verbose hover-pick log (hit/miss/fallback per frame + session totals on exit).
+
+## Mech import, TechBrain, and misc arc gates
+
+- `MC2_ASSIMP_MECH_IMPORT=1` — BT2018 mech import 1A: route mech geometry through the Assimp GLTF/FBX importer (`mclib/mech3d.cpp`) instead of the legacy MSL loader. Default **OFF**.
+- `MC2_BRAIN_RUNTIME=1` — TechBrain declarative-brain runtime master gate (`code/warrior.cpp`). Default **OFF**. Companion `MC2_BRAIN_RUNTIME_APPLY` gates whether resolved intents are actually applied.
+- `MC2_BRAIN_RUNTIME_APPLY=1` — TechBrain runtime apply gate. Default **OFF**; requires `MC2_BRAIN_RUNTIME=1`.
+- `MC2_BRAIN_DISPATCH=1` — TechScript special-dispatch master gate (`code/mission.cpp`, `code/brain_special_dispatch.cpp`). Default **OFF**; requires `MC2_BRAIN_RUNTIME=1` + `MC2_BRAIN_RUNTIME_APPLY=1`.
+- `MC2_DYNAMIC_DECALS` — dynamic decal ring (`mclib/dynamic_decal_ring.cpp`); `spawn()`/`gatherToDecalBatch()` are no-ops when off. Default **OFF**; any non-`0` value enables.
+- `MC2_MOVE_RECON` — pathfinding cost instrumentation (`mclib/move_recon.cpp`). Default **OFF**, zero behavior change when unset. `MC2_MOVE_CHUNK_SHADOW` / `MC2_MOVE_PATH_CACHE_SHADOW` are alternate enables for the same instrumentation.
+- `MC2_SMART_LOAD=1` — SMART-LOAD startup/mission-load perf path (`code/logisticsdata.cpp`). Default **OFF**. `MC2_SMART_LOAD_TRACE=1` logs the load-time breakdown.
+- `MC2_UNIT_PROFILE_DATA` — UNIT-PROFILE-ARC data-driven unit+equipment definition source (`code/unitprofile.cpp`). Default **LEGACY** (unset/`0` = legacy path); any non-`0` value switches to the generated `UnitProfileData` source.
 
 ## EditorBridge
 
@@ -157,6 +172,7 @@ Headless Vulkan probe / backend-skeleton exercise gates. All read via bare `gete
 
 ## Material / static prop gates
 - `MC2_SKIP_STATIC_TREES` — pure static-natural update skip (R2b, ~4977→~145 terrain-object updates on dense maps). **Default ON** (opt-out: only `=0` disables; gameplay-critical gates/turrets/special-buildings are excluded from the skip set and still tick every frame).
+- `MC2_STATIC_PROXY_RECON` — StaticSceneProxy-arc recon instrumentation (`mclib/bdactor.cpp`); counts `touchSerialCommit` calls for building/tree appearances ahead of the per-frame static-prop-walk meta-fix. Default **OFF**, presence-gated.
 
 - `MC2_MATERIAL_KTX=1` — KTX2 sidecar loader for static-prop tex array. Default **OFF**.
 - `MC2_MATERIAL_GPU` — MaterialGpu table upload + SSBO bind. Default **ON**.
@@ -245,6 +261,7 @@ call from inside a draw-bind path.
 - `MC2_TERRAIN_SHORELINE_FOAM=F` — foam rim intensity multiplier, clamped [0,2]. Default 1.0.
 - `MC2_TERRAIN_SHORELINE_WET_HEIGHT=F` — V3 wet-lobe height above `u_waterElevation`, world units. Default 3.0 (locked design range 2-4).
 - `MC2_TERRAIN_SHORELINE_FOAM_HEIGHT=F` — V3 foam-rim height above `u_waterElevation`, world units. Default 1.2 (locked design range 0.8-1.5).
+- `MC2_TERRAIN_VISUAL_HEIGHT=1` — loads the 4x-res VISUAL heightfield bake into an SSBO (binding 26) for corner-pinned interior displacement (`mclib/terrain.cpp`). Default **OFF** = no load, no SSBO, byte-identical; also enabled implicitly by `MC2_TERRAIN_VISUAL_DISPLACE=1`. `MC2_TERRAIN_VISUAL_HEIGHT_FILE=<path>` overrides the bake file path.
 
 ## Water gates
 
