@@ -558,12 +558,18 @@ namespace {
 //   (c) buffer-unavailable frame count (pause/menu/ortho fallback -> R3 data).
 namespace {
 	static const bool s_gpParityOn = RenderWorld::IsGpuGroundPickParityEnabled();
-	// Sample knob: run the GPU pick every Nth eligible site (default 1 = every
-	// site). MC2_GPU_GROUND_PICK_PARITY_SAMPLE=N caps the readback stall cost.
+	// Sample knob: run the GPU pick every Nth eligible site. Default 30 (NOT 1):
+	// the synchronous single-pixel glReadPixels stalls the pipeline (measured
+	// avg ~1.2ms, max tens of ms, worst-case >1s when the prior-frame FBO write
+	// isn't yet visible), and firing it on EVERY camera-motion frame froze the
+	// mc2_24 fly-through (heartbeat_freeze) in the S1 soak. A conservative
+	// default sample rate keeps the oracle from freezing the game if someone
+	// enables the gate without tuning; set MC2_GPU_GROUND_PICK_PARITY_SAMPLE=1
+	// for a dense interactive parity capture (move the cursor by hand).
 	static int s_gpSampleN = []() {
 		const char* v = getenv("MC2_GPU_GROUND_PICK_PARITY_SAMPLE");
-		int n = (v && *v) ? atoi(v) : 1;
-		return n > 0 ? n : 1;
+		int n = (v && *v) ? atoi(v) : 30;
+		return n > 0 ? n : 30;
 	}();
 	static const char* s_gpMissionTag = []() {
 		const char* v = getenv("MC2_GPU_GROUND_PICK_PARITY_TAG");
@@ -573,6 +579,9 @@ namespace {
 	static unsigned long long s_gpSites=0;          // eligible parity sites seen
 	static unsigned long long s_gpCompared=0;        // both CPU+GPU produced a point
 	static unsigned long long s_gpGpuInvalid=0;      // GPU had no world pos (fallback)
+	static unsigned long long s_gpStaleGen=0;        // GENERATION_MISMATCH (recycled-slot pixel)
+	static unsigned long long s_gpSlotDead=0;        // SLOT_DEAD / INDEX_OUT_OF_RANGE / TERRAIN_RESERVED
+	static unsigned long long s_gpNoDepth=0;         // isValid record but depth==0 (no worldPos)
 	static unsigned long long s_gpFbUnavail=0;       // buffer unavailable (R3)
 	static unsigned long long s_gpBg=0;              // background/sky pixel (no depth)
 	static unsigned long long s_gpOver2wu=0;         // delta > 2 wu
@@ -596,6 +605,9 @@ namespace {
 			"gpu_invalid=%llu buffer_unavailable=%llu background_px=%llu over_2wu=%llu\n",
 			s_gpMissionTag, s_gpSites, s_gpCompared, s_gpGpuInvalid,
 			s_gpFbUnavail, s_gpBg, s_gpOver2wu);
+		std::fprintf(stderr,
+			"[GPU_PICK_PARITY] invalid_reasons={stale_gen:%llu,slot_dead:%llu,no_depth:%llu}\n",
+			s_gpStaleGen, s_gpSlotDead, s_gpNoDepth);
 		std::fprintf(stderr,
 			"[GPU_PICK_PARITY] delta_wu={xy_avg:%.3f,xy_max:%.3f,z_avg:%.3f,z_max:%.3f} "
 			"hist_xy_wu=[<=0.5:%llu,<=1:%llu,<=2:%llu,<=5:%llu,<=20:%llu,>20:%llu]\n",
@@ -654,8 +666,19 @@ namespace {
 				++s_gpFbUnavail;
 			} else if (std::strcmp(r, "BACKGROUND_PIXEL") == 0) {
 				++s_gpBg;           // sky / far plane under cursor (depth==0)
+			} else if (std::strcmp(r, "GENERATION_MISMATCH") == 0) {
+				++s_gpStaleGen;     // recycled-slot pixel: last-write-wins stale objectID
+				++s_gpGpuInvalid;
+			} else if (std::strcmp(r, "SLOT_DEAD") == 0 ||
+			           std::strcmp(r, "INDEX_OUT_OF_RANGE") == 0 ||
+			           std::strcmp(r, "TERRAIN_RESERVED") == 0) {
+				++s_gpSlotDead;
+				++s_gpGpuInvalid;
 			} else {
-				++s_gpGpuInvalid;   // index/gen/dead -> object w/o depth; rare
+				// isValid record parsed but depth==0 -> object pixel without a
+				// resolvable world pos (rare); or an unclassified reason string.
+				++s_gpNoDepth;
+				++s_gpGpuInvalid;
 			}
 			return;
 		}
