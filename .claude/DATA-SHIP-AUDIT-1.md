@@ -170,6 +170,55 @@ prefs/options cfg, `mods/` trees — plus (until the loader seam ships) all `.kt
 `.wav`, `.bik`, `.glb`.
 
 ---
+
+## 6. Post-dedupe regression re-check (2026-07-01, DEDUPE-BYPASS-RECHECK-1)
+
+A "world looks low-res" report on 0.5-testing triggered a full audit of the
+DATA-SHIP-DEDUPE-1 deletions (`.claude/dedupe-manifest-2026-07-01.json`,
+commit 08a4cc04) against the bypass-loader hazard. **Verdict: the dedupe is
+clean — zero files need restoring.** Evidence:
+
+- Manifest = 2,472 deletions: 1,977 FST shadows (.tga 1,260 / .ini 716 / .fx 1),
+  455 `_tga_slim_backup/` .tga, 40 cruft (.orig/.old/.bak/.db). **Zero
+  bypass-loader extensions** (.ktx2/.wav/.bik/.glb/.fbx/.json) in any category.
+- Lane populations of bypass types match this audit's pre-dedupe census
+  exactly: .ktx2 5,035 / 966 MB · .wav 286 / 153 MB · .bik 215 / 165 MB ·
+  .glb 4. Nothing outside the manifest was deleted (burnin colormaps intact:
+  116 `.burnin.jpg` + 4 `.burnin.tga`; dev dirs untouched; all 8 FSTs present
+  and registered in `system.cfg`).
+- All 1,977 deleted shadow keys re-extracted from their FSTs and sha256+size
+  verified against the manifest: **1,977/1,977 match** — every deleted file is
+  byte-identically FST-servable.
+- Reachability proven, not assumed: `LINUX_BUILD` is defined globally
+  (CMakeLists.txt:221) so `PATH_SEPARATOR` is `/` and `FullPathFileName`
+  lowercases — probe strings hash-match FST keys in both `File::open`
+  (normalizes at file.cpp:986) and `fileExists` (no normalization of its own;
+  works only because inputs are already normalized). Strip-layer hazard
+  (file.cpp:1029 probes the parent dir BEFORE the fastfile) checked for all
+  612 deleted keys with a numeric size subdir: zero parent-dir twins exist,
+  so the FST is always reached. Loose-only probes audited: `msl.cpp:467`
+  (`FILE_ON_DISK`, .glb/.fbx — none deleted) and `msl.cpp:849` (`== 1`,
+  cache-warm touch only — benign).
+- `.burnin.ktx2` specifically: the lane contains **zero** such files (before
+  and after dedupe); the COLORMAP-BC7-KTX2-1 probe (terrtxm2.cpp:1677, raw
+  `std::fopen`, **no FST fallback**) has never fired on this lane, and its
+  absence costs VRAM only (silent same-resolution RGBA8 fallback) — it cannot
+  cause a low-res world.
+- Post-dedupe census gate GREEN: 0 identical shadows remain, all 316 genuine
+  overrides preserved.
+
+The low-res report is therefore **not** explained by DATA-SHIP-DEDUPE-1;
+investigate elsewhere (options.cfg texture-detail drift, `MC2_TEXMGR_KTX_PRIMARY`
+env, or the other commits on the lane).
+
+**Permanent hardening:** `tools/data_ship_census.py` now classifies identical
+shadows of bypass-loader types into a separate `identical_bypass_loader`
+do-not-delete bucket (`BYPASS_LOADER_EXTS = {.ktx2, .wav, .bik, .glb, .fbx,
+.json}`), so a manifest-driven dedupe can never delete a loose file whose
+loader cannot read the FST. Any future loader that bypasses `File::open` must
+add its extension to that set.
+
+---
 *Census tool: `tools/data_ship_census.py`. Raw JSON snapshots (v0.5.0 + v0.4 + drift)
 were written to the session scratchpad; re-generate any time with:*
 `py -3 tools/data_ship_census.py "<install>" [second_install] --json out.json`

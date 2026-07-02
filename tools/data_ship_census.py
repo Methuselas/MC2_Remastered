@@ -11,7 +11,10 @@ A:/Games/mc2-opengl/releases/0.5 testing/mc2-win64-v0.5.0):
                    with the same normalized key (File::open resolves loose FIRST,
                    mclib/file.cpp: mod > base-loose > base-strip > fastfile > cd).
                    Size prefilter + LZW/zlib decompress + sha256 confirms
-                   identical-vs-override.  Identical shadows are redundant bytes.
+                   identical-vs-override.  Identical shadows are redundant bytes,
+                   EXCEPT bypass-loader types (BYPASS_LOADER_EXTS below): those
+                   loaders never consult the FST, so their loose copies are
+                   load-bearing and are reported separately as do-not-delete.
   3. DUPES       — same-content loose files at different paths (size-bucketed
                    sha256), ranked by reclaimable MB.
   4. STALE-GEN   — heuristic generations: .tga with a same-stem .ktx2 sidecar
@@ -52,6 +55,26 @@ import zlib
 from collections import defaultdict
 
 MB = 1024.0 * 1024.0
+
+# ---------------------------------------------------------------------------
+# Extensions whose loaders BYPASS File::open (raw fopen / SDL / ffmpeg / Assimp /
+# std::ifstream) and therefore CANNOT be served from an FST archive.  An
+# "identical FST shadow" of one of these types is NOT safe to delete: the FST
+# copy is unreachable at runtime and deletion silently degrades the engine.
+# Shadow analysis routes them to "identical_bypass_loader" (do-not-delete)
+# instead of "identical" so a manifest-driven dedupe can never remove them.
+# (Hardening added after the DATA-SHIP-DEDUPE-1 regression re-check, 2026-07-01;
+#  that dedupe was verified clean — this is belt-and-suspenders for next time.)
+#   .ktx2        RenderCore/KtxLoader.cpp std::fopen; also the .burnin.ktx2
+#                colormap probe (mclib/terrtxm2.cpp ~1677) — raw fopen, silent
+#                low-capability fallback when absent
+#   .wav         SDL_LoadWAV / Mix_LoadWAV by path (gameos_sound.cpp)
+#   .bik         ffmpeg avformat by path
+#   .glb / .fbx  Assimp by path; probe is fileExists(FILE_ON_DISK) — loose-only
+#                by design (mclib/msl.cpp LoadFromFile)
+#   .json        modern config readers use std::ifstream (terrain_materials.json,
+#                visual_tuning.json, model_overrides manifests)
+BYPASS_LOADER_EXTS = {".ktx2", ".wav", ".bik", ".glb", ".fbx", ".json"}
 
 # ---------------------------------------------------------------------------
 # FST parsing (format: mclib/ffile.h, 266-byte packed entries)
@@ -244,8 +267,8 @@ def census_tree(root: str, files):
 # ---------------------------------------------------------------------------
 def shadow_analysis(root: str, loose_index: dict, fst_infos: list, deep_mb: float):
     """loose_index: key -> (abspath, size). fst_infos: [(fst_path, is_lz, entries)]."""
-    res = {"identical": [], "override_size": [], "override_content": [],
-           "size_match_unverified": [], "decomp_errors": []}
+    res = {"identical": [], "identical_bypass_loader": [], "override_size": [],
+           "override_content": [], "size_match_unverified": [], "decomp_errors": []}
     deep_bytes = deep_mb * MB
     for fst_path, is_lz, entries in fst_infos:
         fst_name = os.path.basename(fst_path)
@@ -270,7 +293,13 @@ def shadow_analysis(root: str, loose_index: dict, fst_infos: list, deep_mb: floa
                 res["decomp_errors"].append(rec)
                 continue
             if hashlib.sha256(content).hexdigest() == sha256_file(ap):
-                res["identical"].append(rec)
+                if ext_of(e["key"]) in BYPASS_LOADER_EXTS:
+                    rec["do_not_delete"] = ("bypass-loader extension: engine loads "
+                                            "this type outside File::open; the FST "
+                                            "copy is unreachable at runtime")
+                    res["identical_bypass_loader"].append(rec)
+                else:
+                    res["identical"].append(rec)
             else:
                 res["override_content"].append(rec)
     return res
@@ -440,8 +469,14 @@ def main(argv=None):
             n_match = sum(1 for k in loose_index if k in fst_keys)
             print(f"\n-- SHADOW (loose vs FST) --")
             print(f"loose files whose key exists in an FST: {n_match}")
+            n_bypass = len(sh["identical_bypass_loader"])
             print(f"  identical content (redundant shadow): {n_ident}"
                   f"  ({fmt_mb(ident_bytes).strip()} MB loose)")
+            if n_bypass:
+                print(f"  identical but BYPASS-LOADER type — DO NOT DELETE: {n_bypass}"
+                      f"  (loader reads loose only; FST copy unreachable)")
+                for r in sh["identical_bypass_loader"][:10]:
+                    print(f"    keep-loose: {r['key']}")
             print(f"  overrides (differ by size/content):   {n_over}")
             print(f"  size-match unverified (> deep-mb):    {n_unv}")
             if sh["decomp_errors"]:
