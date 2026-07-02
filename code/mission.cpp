@@ -1494,19 +1494,24 @@ float applyDifficultyWeapon (float dmg, bool isPlayer)
 void InitDifficultySettings (FitIniFile *gameSystemFile)
 {
 	long result = gameSystemFile->seekBlock("DifficultySettings");
-	gosASSERT(result == NO_ERR);
-	
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "InitDifficultySettings: gamesys.fit missing [DifficultySettings] block");
+
 	result = gameSystemFile->readIdLongArray("PlayerSkills", globalPlayerSkills,4);
-	gosASSERT(result == NO_ERR);
-	
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "InitDifficultySettings: [DifficultySettings] missing PlayerSkills");
+
 	result = gameSystemFile->readIdLongArray("EnemySkills",globalEnemySkills,4);
-	gosASSERT(result == NO_ERR);
-	
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "InitDifficultySettings: [DifficultySettings] missing EnemySkills");
+
 	result = gameSystemFile->readIdLongArray("PlayerWeapons",globalPlayerWeapons,4);
-	gosASSERT(result == NO_ERR);
-	
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "InitDifficultySettings: [DifficultySettings] missing PlayerWeapons");
+
 	result = gameSystemFile->readIdLongArray("EnemyWeapons",globalEnemyWeapons,4);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "InitDifficultySettings: [DifficultySettings] missing EnemyWeapons");
 }	
 
 //--------------------------------------------------
@@ -2371,29 +2376,40 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	gosASSERT(gameSystemFile != NULL);
 		
 	long result = gameSystemFile->open(fullGameSystemName);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1):
+	// gamesys.fit is a required per-mission data file; if it fails to open every
+	// subsequent readId below reads uninitialized WeaponRanges/ranges/mine/smoke
+	// values used unconditionally. fatal mode STOPs at the contract violation;
+	// log mode logs and preserves the legacy (garbage-read) path bit-for-bit.
+	MC2_VERIFY(result == NO_ERR, "Mission::init: gamesys.fit open failed (%ld): %s",
+		result, (const char*)fullGameSystemName);
 
 	result = gameSystemFile->seekBlock("WeaponRanges");
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: gamesys.fit missing [WeaponRanges] block");
 
 	float span[2];
 	result = gameSystemFile->readIdFloatArray("Short", span, 2);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [WeaponRanges] missing Short");
 	WeaponRanges[WEAPON_RANGE_SHORT][0] = span[0];
 	WeaponRanges[WEAPON_RANGE_SHORT][1] = span[1];
 
 	result = gameSystemFile->readIdFloatArray("Medium", span, 2);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [WeaponRanges] missing Medium");
 	WeaponRanges[WEAPON_RANGE_MEDIUM][0] = span[0];
 	WeaponRanges[WEAPON_RANGE_MEDIUM][1] = span[1];
 
 	result = gameSystemFile->readIdFloatArray("Long", span, 2);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [WeaponRanges] missing Long");
 	WeaponRanges[WEAPON_RANGE_LONG][0] = span[0];
 	WeaponRanges[WEAPON_RANGE_LONG][1] = span[1];
 
 	result = gameSystemFile->readIdFloatArray("OptimalRangePoints", OptimalRangePoints, 5);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [WeaponRanges] missing OptimalRangePoints");
 
 	for (long i = 0; i < 5; i++)
 		for (long j = 0; j < 3; j++) {
@@ -2404,31 +2420,37 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		}
 
 	result = gameSystemFile->seekBlock("General");
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: gamesys.fit missing [General] block");
 
 	result = gameSystemFile->readIdFloat("MaxVisualRange",maxVisualRange);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [General] missing MaxVisualRange");
 	MaxVisualRadius = maxVisualRange * 1.4142;
 
 	result = gameSystemFile->readIdFloat("FireVisualRange",fireVisualRange);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [General] missing FireVisualRange");
 
 	result = gameSystemFile->readIdULong("MaxTreeLOSBlock",MaxTreeLOSCellBlock);
 	if (result != NO_ERR)
 		MaxTreeLOSCellBlock = 5;
 
 	result = gameSystemFile->readIdFloatArray("WeaponRange", WeaponRange, NUM_FIRERANGES);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [General] missing WeaponRange");
 
 	result = gameSystemFile->readIdFloat("DefaultAttackRange", DefaultAttackRange);
 	if (result != NO_ERR)
 		DefaultAttackRange = 75.0;
 
 	result = gameSystemFile->readIdFloat("BaseSensorRange",baseSensorRange);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [General] missing BaseSensorRange");
 
 	result = gameSystemFile->readIdLongArray("VisualRangeTable",visualRangeTable,256);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [General] missing VisualRangeTable");
 
 	result = gameSystemFile->readIdFloat("BaseHeadShotElevation",BaseHeadShotElevation);
 	if (result != NO_ERR)
@@ -2436,7 +2458,8 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 
 	long forestMoveCost;
 	result = gameSystemFile->readIdLong("ForestMoveCost", forestMoveCost);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [General] missing ForestMoveCost");
 
 	result = gameSystemFile->readIdFloat("MaxUnitExtractDistance",MaxExtractUnitDistance);
 	if (result != NO_ERR)
@@ -2468,10 +2491,12 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		footPrints = 1;
 
 	result = gameSystemFile->readIdLong("BonusTonnageDivisor",tonnageDivisor);
-	gosASSERT(result == NO_ERR);
-	
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [General] missing BonusTonnageDivisor");
+
 	result = gameSystemFile->readIdLong("BonusPointsPerTon",resourcesPerTonDivided);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [General] missing BonusPointsPerTon");
 	
 #ifndef FINAL
  	result = gameSystemFile->readIdFloat("CheatHitDamage",CheatHitDamage);
@@ -2484,17 +2509,20 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	InitDifficultySettings(gameSystemFile);
 
 	result = Mover::loadGameSystem(gameSystemFile, maxVisualRange);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: Mover::loadGameSystem failed (%ld)", result);
 
 	//result = loadMultiplayerGameSystem(gameSystemFile);
 	//gosASSERT(result == NO_ERR);
 
 	result = BattleMech::loadGameSystem(gameSystemFile);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: BattleMech::loadGameSystem failed (%ld)", result);
 
 	//--------------------------------------------------------------------
 	result = GroundVehicle::loadGameSystem(gameSystemFile);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: GroundVehicle::loadGameSystem failed (%ld)", result);
 
 #ifdef USE_ELEMENTALS
 	result = loadElementalGameSystem(gameSystemFile);
@@ -2502,19 +2530,24 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 #endif
 
 	result = gameSystemFile->seekBlock("Mine");
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: gamesys.fit missing [Mine] block");
 
 	result = gameSystemFile->readIdFloat("BaseDamage", MineDamage);
-	gosASSERT(result == NO_ERR);
-		
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Mine] missing BaseDamage");
+
 	result = gameSystemFile->readIdFloat("SplashDamage", MineSplashDamage);
-	gosASSERT(result == NO_ERR);
-		
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Mine] missing SplashDamage");
+
 	result = gameSystemFile->readIdFloat("SplashRange", MineSplashRange);
-	gosASSERT(result == NO_ERR);
-		
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Mine] missing SplashRange");
+
 	result = gameSystemFile->readIdLong("Explosion", MineExplosion);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Mine] missing Explosion");
 
 	result = gameSystemFile->readIdLong("MineLayThrottle", MineLayThrottle);
 	if (result != NO_ERR)
@@ -2525,31 +2558,40 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		MineSweepThrottle = 50;
 
 	result = gameSystemFile->readIdFloat("MineWaitTime", MineWaitTime);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Mine] missing MineWaitTime");
 
 	result = gameSystemFile->readIdFloat("StrikeWaitTime", StrikeWaitTime);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Mine] missing StrikeWaitTime");
 
 	result = gameSystemFile->readIdFloat("StrikeTimeToImpact", StrikeTimeToImpact);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Mine] missing StrikeTimeToImpact");
 
 	result = gameSystemFile->seekBlock("Smoke");
-	gosASSERT(result == NO_ERR);
-	
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: gamesys.fit missing [Smoke] block");
+
 	result = gameSystemFile->readIdLong("MaxSmokeSpheres",totalSmokeSpheres);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Smoke] missing MaxSmokeSpheres");
 
 	result = gameSystemFile->readIdLong("TotalSmokeShapeSize",totalSmokeShapeSize);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Smoke] missing TotalSmokeShapeSize");
 
 	result = gameSystemFile->seekBlock("Fire");
-	gosASSERT(result == NO_ERR);
-	
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: gamesys.fit missing [Fire] block");
+
 	result = gameSystemFile->readIdLong("MaxFiresBurning", maxFiresBurning);
-	gosASSERT(result == NO_ERR);
-	
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Fire] missing MaxFiresBurning");
+
 	result = gameSystemFile->readIdFloat("MaxFireBurnTime", maxFireBurnTime);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Fire] missing MaxFireBurnTime");
 
 	memset(missionFileName,0,80);
 	strncpy(missionFileName,missionName,79);
