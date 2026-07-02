@@ -1754,9 +1754,14 @@ long Mission::addMover (MoverInitData* moverSpec) {
 	gosASSERT(pilotFile != NULL);
 		
 	long result = pilotFile->open(pilotFullFileName);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1):
+	// the pilot .fit is required external data; a failed open feeds a not-open
+	// FitIniFile into pilot->init() below.
+	MC2_VERIFY(result == NO_ERR, "Mission::addMover: pilot .fit open failed (%ld): %s",
+		result, moverSpec ? moverSpec->pilotFileName : "(null)");
 	result = pilot->init(pilotFile);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::addMover: pilot init failed (%ld)", result);
 
 	pilotFile->close();
 	delete pilotFile;
@@ -1789,7 +1794,9 @@ long Mission::addMover (MoverInitData* moverSpec) {
 	}
 		
 	long moduleHandle = ABLi_preProcess(brainFullFileName, &numErrors, &numLinesProcessed);
-	gosASSERT(moduleHandle >= 0);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1):
+	// a negative handle from a bad/missing .abl brain is then handed to setBrain().
+	MC2_VERIFY(moduleHandle >= 0, "Mission::addMover: ABL brain preprocess failed (handle %ld)", moduleHandle);
 	pilot->setBrain(moduleHandle);
 
 /*
@@ -2884,10 +2891,12 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// Load the names of the scenario tunes.
 	//result = missionFile->seekBlock("Music");
 	result = missionFile->seekBlock("MissionSettings");
-	gosASSERT(result == NO_ERR);
-		
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: mission .fit missing [MissionSettings] block");
+
 	result = missionFile->readIdUChar("scenarioTuneNum",missionTuneNum);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [MissionSettings] missing scenarioTuneNum");
 
 	long numRPoints;
 	result = missionFile->readIdLong("ResourcePoints",numRPoints);
@@ -2934,7 +2943,11 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 
 	PacketFile pakFile;
 	result = pakFile.open( terrainFileName );
-	gosASSERT( result == NO_ERR );
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1):
+	// the terrain .pak is a required per-mission data file; a failed open feeds a
+	// closed PacketFile into terrain load below (garbage/empty terrain).
+	MC2_VERIFY( result == NO_ERR, "Mission::init: terrain .pak open failed (%ld): %s",
+		result, (const char*)terrainFileName );
 
 	land = new Terrain;
 
@@ -3085,10 +3098,15 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	//-----------------------------------------------------------------
 	// We now read in the mission Script File Name
 	result = missionFile->seekBlock("Script");
-	gosASSERT(result == NO_ERR);
-	
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: mission .fit missing [Script] block");
+
 	result = missionFile->readIdString("ScenarioScript",missionScriptName,79);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1):
+	// missionScriptName drives ABLi_preProcess of the scenario .abl below; a failed
+	// read leaves it uninitialized (the MC2_BRAIN_INLINE_EMPTY_SKIP fallback below
+	// only triggers on an *empty*, not garbage, name).
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Script] missing ScenarioScript");
 
 	// FULL-CAMPAIGN-1: TechScript/Enhanced-converted missions (carver_v_enhanced) leave
 	// ScenarioScript empty — the per-warrior brains move to inline Brain{} blocks and mission
