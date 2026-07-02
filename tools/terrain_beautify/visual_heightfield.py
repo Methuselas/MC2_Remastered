@@ -62,12 +62,25 @@ staircase (every terrace edge is a coarse extremum). Fixes, all render-only:
     downhill direction, then ridged) — erosion runs DOWN the face instead of
     isotropic bumps. Modest amplitude, still drift-bounded + water-excluded.
 
+SHORE-CONTOUR-1 extends --reauth for the BLOCKY WATERLINE (mc2_17 river): the
+visible water edge is polygons where the coarse mesh crosses the water plane.
+The waterline contour is extracted (marching squares at waterElev on the fine
+grid), smoothed (arc-length Gaussian, --shore-smooth-radius coarse cells), and
+the shore band (+/- --shore-band-cells) is reshaped so terrain crosses
+waterElev exactly on the smoothed curve (below on the water side, above on the
+land side, tanh-bounded by --shore-max-adjust). Mountainify detail is excluded
+in the band; non-regional shore extrema are relaxed (true peaks pinned);
+cook_shoreline masks re-cooked from the new bake follow the new intersection
+automatically. Render-only, gameplay height untouched.
+
 Run:
   python visual_heightfield.py <mission> [--missions-dir DIR] [--out DIR] [--factor 4]
   python visual_heightfield.py mc2_17 --reauth [--shape-tolerance 0.10]
          [--max-drift 24] [--reauth-passes 150] [--objfade-radius-wu 256]
          [--mountainify] [--mountainify-amp 14] [--seed 1337]
          [--cliff-drift 112] [--cliff-slope-deg 30] [--cliff-melt-passes 300]
+         [--shore-smooth-radius 3.5] [--shore-band-cells 1.5]
+         [--shore-max-adjust 64]
 """
 from __future__ import annotations
 
@@ -368,6 +381,355 @@ def striation_field(surface: np.ndarray, seed: int, iters: int = 24,
     return (r - r.mean()) * 2.0
 
 
+# --- SHORE-CONTOUR-1: smooth-waterline bank reshape ---------------------------
+#
+# USER SPEC (mc2_17 river screenshot, hand-drawn blue lines): the visible water
+# edge is blocky polygons where the coarse terrain crosses the water plane; the
+# wanted waterline is a smooth continuous curve following the river course. The
+# waterline IS the terrain/water-plane intersection, so the bake reshapes
+# shore-band heights until that intersection follows a smoothed contour:
+#   1) marching squares on the fine grid at z=waterElev -> the blocky contour;
+#   2) arc-length-parameterized Gaussian smoothing of each polyline
+#      (--shore-smooth-radius, coarse cells; open contours keep endpoints);
+#   3) signed distance to the smoothed curve (nearest dense sample + its
+#      oriented normal; scipy EDT supplies the nearest-sample index) drives a
+#      band-limited reshape: new = work + w * (T - work), T = waterElev +
+#      bankSlope * d, so terrain crosses waterElev EXACTLY on the curve --
+#      below on the water side, above on the land side; w falls off smoothstep
+#      inside +/- --shore-band-cells coarse cells; adjustment tanh-bounded by
+#      --shore-max-adjust (cliff-drift class). Render-only: gameplay height is
+#      never touched (units stand on gameplay height; objfade handles props;
+#      the water plane is flat so no gameplay interaction changes).
+
+def _polyline_arclen(pts: np.ndarray, closed: bool) -> float:
+    if len(pts) < 2:
+        return 0.0
+    p = np.vstack([pts, pts[:1]]) if closed else pts
+    d = np.diff(p, axis=0)
+    return float(np.hypot(d[:, 0], d[:, 1]).sum())
+
+
+def extract_waterline_contours(surface: np.ndarray, level: float,
+                               eps: float = 1e-9) -> list:
+    """Marching squares at `level` on a (V,V) grid. Returns a deterministic
+    list of {"pts": (M,2) float64 array of (row, col) grid coords, "closed":
+    bool} polylines. Exact-level samples are biased to the land (+) side so
+    every cell case is well-defined (authored shores often sit exactly at the
+    water elevation)."""
+    phi = surface.astype(np.float64) - float(level)
+    phi = np.where(np.abs(phi) < eps, eps, phi)
+    neg = phi < 0.0                                    # water side
+    H, W = phi.shape
+    a = neg[:-1, :-1]; b = neg[:-1, 1:]; c = neg[1:, 1:]; d = neg[1:, :-1]
+    case = ((a.astype(np.int8) << 3) | (b.astype(np.int8) << 2)
+            | (c.astype(np.int8) << 1) | d.astype(np.int8))
+    ai, aj = np.nonzero((case != 0) & (case != 15))
+    if ai.size == 0:
+        return []
+    with np.errstate(divide="ignore", invalid="ignore"):
+        th = phi[:, :-1] / (phi[:, :-1] - phi[:, 1:])  # horizontal edges (H, W-1)
+        tv = phi[:-1, :] / (phi[:-1, :] - phi[1:, :])  # vertical edges (H-1, W)
+    # edge ids: H edge (i,j) -> 2*(i*W+j); V edge (i,j) -> 2*(i*W+j)+1
+    def he(i, j): return 2 * (i * W + j)
+    def ve(i, j): return 2 * (i * W + j) + 1
+    # non-saddle case -> ordered pair(s) of cell edges (T/R/B/L)
+    TABLE = {1: [("L", "B")], 2: [("B", "R")], 3: [("L", "R")],
+             4: [("T", "R")], 6: [("T", "B")], 7: [("T", "L")],
+             8: [("T", "L")], 9: [("T", "B")], 11: [("T", "R")],
+             12: [("L", "R")], 13: [("B", "R")], 14: [("L", "B")]}
+    adj: dict[int, list[int]] = {}
+    def _edge_id(name, i, j):
+        if name == "T":
+            return he(i, j)
+        if name == "B":
+            return he(i + 1, j)
+        if name == "L":
+            return ve(i, j)
+        return ve(i, j + 1)                            # "R"
+    for i, j in zip(ai.tolist(), aj.tolist()):
+        cs = int(case[i, j])
+        if cs in TABLE:
+            pairs = TABLE[cs]
+        else:                                          # saddle 5 / 10
+            center_water = (phi[i, j] + phi[i, j + 1]
+                            + phi[i + 1, j] + phi[i + 1, j + 1]) < 0.0
+            if cs == 5:                                # TR + BL water
+                pairs = [("T", "L"), ("R", "B")] if center_water \
+                    else [("T", "R"), ("L", "B")]
+            else:                                      # 10: TL + BR water
+                pairs = [("T", "R"), ("L", "B")] if center_water \
+                    else [("T", "L"), ("R", "B")]
+        for e0, e1 in pairs:
+            u, v = _edge_id(e0, i, j), _edge_id(e1, i, j)
+            adj.setdefault(u, []).append(v)
+            adj.setdefault(v, []).append(u)
+
+    def _pt(eid: int) -> tuple:
+        i, j = divmod(eid >> 1, W)
+        if eid & 1:                                    # vertical edge
+            return (i + float(tv[i, j]), float(j))
+        return (float(i), j + float(th[i, j]))
+
+    visited: set = set()
+    contours = []
+
+    def _walk(start: int, closed: bool):
+        path = [start]
+        visited.add(start)
+        prev, cur = None, start
+        while True:
+            nxt = None
+            for cand in adj[cur]:
+                if cand != prev and (cand not in visited or
+                                     (closed and cand == start and len(path) > 2)):
+                    nxt = cand
+                    break
+            if nxt is None or (closed and nxt == start):
+                break
+            path.append(nxt)
+            visited.add(nxt)
+            prev, cur = cur, nxt
+        return path
+
+    ends = sorted(e for e, ns in adj.items() if len(ns) == 1)
+    for e in ends:
+        if e in visited:
+            continue
+        path = _walk(e, closed=False)
+        contours.append({"pts": np.array([_pt(p) for p in path]), "closed": False})
+    for e in sorted(adj):
+        if e in visited:
+            continue
+        path = _walk(e, closed=True)
+        contours.append({"pts": np.array([_pt(p) for p in path]), "closed": True})
+    return contours
+
+
+def _resample_polyline(pts: np.ndarray, ds: float, closed: bool) -> np.ndarray:
+    """Uniform arc-length resampling (grid units). Closed contours return n
+    samples with implicit wrap (no duplicated endpoint)."""
+    p = np.vstack([pts, pts[:1]]) if closed else pts
+    seg = np.diff(p, axis=0)
+    ln = np.hypot(seg[:, 0], seg[:, 1])
+    s = np.concatenate([[0.0], np.cumsum(ln)])
+    total = float(s[-1])
+    if total <= 0.0:
+        return pts.copy()
+    if closed:
+        n = max(8, int(round(total / ds)))
+        si = np.arange(n) * (total / n)
+    else:
+        n = max(4, int(round(total / ds)))
+        si = np.linspace(0.0, total, n + 1)
+    return np.stack([np.interp(si, s, p[:, 0]), np.interp(si, s, p[:, 1])], axis=1)
+
+
+def smooth_contour(pts: np.ndarray, closed: bool, sigma: float,
+                   ds: float) -> np.ndarray:
+    """Arc-length-parameterized Gaussian smoothing of a polyline (grid units).
+    Closed contours use wrap-around convolution (sigma capped at len/8 so small
+    ponds don't collapse toward their centroid); open contours (map-edge
+    terminated) keep their endpoints (smooth blend back over ~3 sigma)."""
+    rs = _resample_polyline(pts, ds, closed)
+    n = len(rs)
+    if n < 5 or sigma <= 0.0:
+        return rs
+    total = n * ds if closed else (n - 1) * ds
+    if closed:
+        sigma = min(sigma, total / 8.0)
+    half = max(1, int(np.ceil(3.0 * sigma / ds)))
+    x = np.arange(-half, half + 1) * ds
+    k = np.exp(-0.5 * (x / sigma) ** 2)
+    k /= k.sum()
+    if closed:
+        padded = rs[np.arange(-half, n + half) % n]    # wrap-around
+        sm = np.stack([np.convolve(padded[:, 0], k, mode="valid"),
+                       np.convolve(padded[:, 1], k, mode="valid")], axis=1)
+    else:
+        padded = np.vstack([np.repeat(rs[:1], half, axis=0), rs,
+                            np.repeat(rs[-1:], half, axis=0)])
+        sm = np.stack([np.convolve(padded[:, 0], k, mode="valid"),
+                       np.convolve(padded[:, 1], k, mode="valid")], axis=1)
+        # pin endpoints (attachment at the map boundary must not drift)
+        t = np.minimum(np.arange(n), np.arange(n)[::-1]) / float(max(1, half))
+        t = np.clip(t, 0.0, 1.0)
+        t = t * t * (3.0 - 2.0 * t)
+        sm = t[:, None] * sm + (1.0 - t)[:, None] * rs
+    return sm
+
+
+def contour_facet_stats(contours: list, cell_wu: float,
+                        sample_wu: float = 64.0,
+                        angle_deg: float = 20.0) -> dict:
+    """Facet census of a waterline contour set. Resamples each polyline at
+    `sample_wu` arc length, counts CORNERS (direction change > angle_deg) and
+    measures facet lengths (arc runs between corners). The blocky coarse
+    waterline is corners every cell; the smoothed target has corner spacing >>
+    a coarse cell."""
+    ds = sample_wu / cell_wu                           # grid units
+    corner_count = 0
+    total_len_wu = 0.0
+    facet_lens: list = []
+    turn_all: list = []
+    for c in contours:
+        rs = _resample_polyline(c["pts"], ds, c["closed"])
+        n = len(rs)
+        total_len_wu += _polyline_arclen(rs, c["closed"]) * cell_wu
+        if n < 3:
+            facet_lens.append(_polyline_arclen(rs, c["closed"]) * cell_wu)
+            continue
+        if c["closed"]:
+            d0 = rs - np.roll(rs, 1, axis=0)
+            d1 = np.roll(rs, -1, axis=0) - rs
+        else:
+            d0 = rs[1:-1] - rs[:-2]
+            d1 = rs[2:] - rs[1:-1]
+        cross = d0[:, 0] * d1[:, 1] - d0[:, 1] * d1[:, 0]
+        dot = (d0 * d1).sum(axis=1)
+        ang = np.degrees(np.abs(np.arctan2(cross, dot)))
+        turn_all.append(ang)
+        corners = np.nonzero(ang > angle_deg)[0]
+        corner_count += int(corners.size)
+        if corners.size >= 2:
+            facet_lens.extend((np.diff(corners) * ds * cell_wu).tolist())
+        else:
+            facet_lens.append(_polyline_arclen(rs, c["closed"]) * cell_wu)
+    turns = np.concatenate(turn_all) if turn_all else np.zeros(1)
+    return {"contours": len(contours),
+            "total_len_wu": total_len_wu,
+            "corner_count": corner_count,
+            "corners_per_1000wu": (1000.0 * corner_count / total_len_wu
+                                   if total_len_wu > 0 else 0.0),
+            "median_facet_wu": float(np.median(facet_lens)) if facet_lens else 0.0,
+            "p95_turn_deg": float(np.percentile(turns, 95)),
+            "sample_wu": sample_wu, "corner_angle_deg": angle_deg}
+
+
+def shore_contour_reshape(work: np.ndarray, factor: int, water_elev: float,
+                          smooth_radius_cells: float = 3.5,
+                          band_cells: float = 1.5,
+                          max_adjust: float = 64.0,
+                          min_bank_slope: float = 0.08,
+                          max_bank_slope: float = 0.8,
+                          min_contour_len_cells: float = 3.0):
+    """SHORE-CONTOUR-1 core: reshape the shore band so the terrain/water-plane
+    intersection follows the smoothed waterline. Returns (work', shore_w,
+    info); (work, None, None) when there is nothing to do. Deterministic
+    (no RNG). scipy required (existing beautify dep, cook_shoreline pattern)."""
+    try:
+        from scipy.ndimage import distance_transform_edt
+    except ImportError as e:  # pragma: no cover - scipy is an existing dep
+        raise RuntimeError("scipy is required for SHORE-CONTOUR-1 "
+                           "(distance_transform_edt)") from e
+    V = work.shape[0]
+    cell_wu = WORLD_UNITS_PER_VERTEX / factor
+    contours = extract_waterline_contours(work, water_elev)
+    min_len = min_contour_len_cells * factor           # grid units
+    keep = [c for c in contours if _polyline_arclen(c["pts"], c["closed"]) >= min_len]
+    if not keep:
+        return work, None, None
+    before = contour_facet_stats(keep, cell_wu)
+
+    sigma = smooth_radius_cells * factor               # grid units
+    ds = 0.5                                           # dense sample spacing
+    pts_all: list = []
+    nrm_all: list = []
+    for c in keep:
+        sm = smooth_contour(c["pts"], c["closed"], sigma, ds)
+        n = len(sm)
+        if c["closed"]:
+            tan = np.roll(sm, -1, axis=0) - np.roll(sm, 1, axis=0)
+        else:
+            tan = np.gradient(sm, axis=0)
+        mag = np.hypot(tan[:, 0], tan[:, 1]) + 1e-12
+        nr = np.stack([-tan[:, 1] / mag, tan[:, 0] / mag], axis=1)
+        # orient normals toward LAND (phi > 0): majority vote across samples
+        off = 2.0
+        phi_p = _bilinear_sample(work, sm[:, 0] + off * nr[:, 0],
+                                 sm[:, 1] + off * nr[:, 1]) - water_elev
+        phi_m = _bilinear_sample(work, sm[:, 0] - off * nr[:, 0],
+                                 sm[:, 1] - off * nr[:, 1]) - water_elev
+        if float((phi_p - phi_m).sum()) < 0.0:
+            nr = -nr
+        pts_all.append(sm)
+        nrm_all.append(nr)
+    P = np.vstack(pts_all)
+    N = np.vstack(nrm_all)
+
+    occ = np.zeros((V, V), dtype=bool)
+    idx = np.zeros((V, V), dtype=np.int64)
+    rr = np.clip(np.round(P[:, 0]).astype(np.int64), 0, V - 1)
+    cc = np.clip(np.round(P[:, 1]).astype(np.int64), 0, V - 1)
+    occ[rr, cc] = True
+    idx[rr, cc] = np.arange(len(P))                    # last write wins (deterministic)
+    _dist, (ir, ic) = distance_transform_edt(~occ, return_indices=True)
+    k = idx[ir, ic]
+    pn = P[k]                                          # nearest curve sample (V,V,2)
+    nn = N[k]
+    gr, gc = np.mgrid[0:V, 0:V].astype(np.float64)
+    dr = gr - pn[..., 0]
+    dc = gc - pn[..., 1]
+    side = np.where(dr * nn[..., 0] + dc * nn[..., 1] >= 0.0, 1.0, -1.0)
+    d_wu = side * np.hypot(dr, dc) * cell_wu           # +land / -water
+
+    band_wu = band_cells * WORLD_UNITS_PER_VERTEX
+    w = 1.0 - _smoothstep(0.0, band_wu, np.abs(d_wu))
+    sm_surf = work
+    for _ in range(factor):
+        sm_surf = _box3(sm_surf)
+    gy, gx = np.gradient(sm_surf)
+    s_local = np.clip(np.hypot(gx, gy) / cell_wu, min_bank_slope, max_bank_slope)
+    target = water_elev + s_local * d_wu
+    adjust = max_adjust * np.tanh((w * (target - work)) / max(1e-9, max_adjust))
+    out = work + adjust
+
+    # SHORE-CONTOUR-1 fragment suppression: the band blend can nudge an isolated
+    # cell a hair below the water plane where the smoothed curve pulls away from
+    # the blocky original, spawning sub-coarse-cell micro-puddles that read as
+    # new tiny blocky shores. Lift any water component (out < waterElev) that is
+    # BOTH small (< ~1 coarse cell of area) AND born inside the reshaped band
+    # back just above the plane. Large water bodies (river/lake) are 4-connected
+    # and far above the threshold, so they are untouched. Deterministic.
+    from mission_terrain_analyzer import label_components
+    frag_cells = 0
+    water_mask = out < water_elev
+    if water_mask.any():
+        min_area = max(4, int(round((factor + 1) ** 2)))   # ~1 coarse cell
+        labels, ncomp = label_components(water_mask)
+        band_core = w > 0.05
+        lift = np.zeros_like(out, dtype=bool)
+        for lb in range(1, ncomp + 1):
+            comp = labels == lb
+            area = int(comp.sum())
+            # only puddles that are small AND overlap the reshaped band (a real
+            # river/lake spans thousands of cells and never trips this).
+            if area < min_area and (comp & band_core).any():
+                lift |= comp
+        if lift.any():
+            frag_cells = int(lift.sum())
+            out = np.where(lift, np.maximum(out, water_elev + 1e-3), out)
+
+    on_band = w > 0.05
+    info = {
+        "smooth_radius_cells": smooth_radius_cells,
+        "band_cells": band_cells,
+        "max_adjust_wu": max_adjust,
+        "water_elev": float(water_elev),
+        "contours_total": len(contours),
+        "contours_processed": len(keep),
+        "contours_skipped_short": len(contours) - len(keep),
+        "curve_samples": int(len(P)),
+        "bank_adjust_wu": {
+            "max": float(np.abs(adjust).max()),
+            "mean_on_band": (float(np.abs(adjust[on_band]).mean())
+                             if on_band.any() else 0.0)},
+        "micro_puddle_cells_lifted": frag_cells,
+        "before": before,
+    }
+    info["_target_curve"] = P                           # for after-stats distance
+    return out, w, info
+
+
 def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
                   shape_tolerance: float = 0.10, max_drift: float = 24.0,
                   passes: int = 60, lam: float = 0.5, mu: float = -0.52,
@@ -375,7 +737,10 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
                   mountainify_amp: float = 0.0, seed: int = 1337,
                   water_coarse=None,
                   cliff_drift: float = 0.0, cliff_slope_deg: float = 30.0,
-                  cliff_melt_passes: int = 300):
+                  cliff_melt_passes: int = 300,
+                  water_elev=None, shore_smooth_radius: float = 0.0,
+                  shore_band_cells: float = 1.5,
+                  shore_max_adjust: float = 64.0):
     """Corner-UNpinned, landform-preserving re-authoring of the visual surface.
 
     1) Taubin lambda|mu smoothing on the fine grid: a volume-preserving BAND-PASS
@@ -406,6 +771,14 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
     drift FIELD in (2)/(2b), non-regional extrema on the cliff mask exempted
     from re-injection in (3), and gradient-aligned striation blended into the
     mountainify detail on the cliff weight.
+
+    SHORE-CONTOUR-1 (shore_smooth_radius > 0 and water_elev given): smooth-
+    waterline bank reshape between (2) and (2b) — see shore_contour_reshape.
+    Compose order: reauth smoothing -> shore-contour reshape -> mountainify
+    (rock channel excluded in the shore band) -> extrema re-injection (non-
+    regional extrema in the shore-band core relaxed, same pattern as the
+    cliff relaxation; true peaks/pits stay pinned) -> structural pin (roads/
+    bridges still win — they ride the bilinear baseline by contract).
 
     Returns (work, info) — info carries the shape-fidelity metrics."""
     base = upsample_corner_pinned(elev, factor)
@@ -449,14 +822,34 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
 
     # facet-flattening proof point: crease energy of the SMOOTHED surface,
     # before any feature-ADDING detail (ridges are legitimate new curvature and
-    # would pollute this metric).
+    # would pollute this metric; the shore-band bank reshape below is likewise
+    # legitimate new curvature, so it is measured before that stage too).
     crease_smooth = _crease_energy(work)
+
+    # 2s) SHORE-CONTOUR-1: reshape the shore band so the terrain/water-plane
+    #     intersection follows the smoothed waterline contour. The adjustment
+    #     has its own bound (shore_max_adjust, cliff-drift class) — fold it
+    #     into the effective drift the PASS gates read.
+    shore_w = None
+    shore_info = None
+    if shore_smooth_radius > 0.0 and water_elev is not None:
+        work, shore_w, shore_info = shore_contour_reshape(
+            work, factor, float(water_elev),
+            smooth_radius_cells=shore_smooth_radius,
+            band_cells=shore_band_cells, max_adjust=shore_max_adjust)
+        if shore_info is not None:
+            eff_drift = max(eff_drift, shore_max_adjust)
 
     # 2b) MOUNTAINIFY: synthesize mountain character where the terrain is
     #     steep/high, then re-apply the drift bound to the composite.
     minfo = None
     if mountainify_amp > 0.0:
         rock = mountain_rock_mask(work, elev, factor, water_coarse=water_coarse)
+        if shore_w is not None:
+            # SHORE-CONTOUR-1: no ridged detail inside the shore band — the
+            # bank must cross the water plane on the smoothed curve, not on
+            # curve + noise.
+            rock = rock * (1.0 - shore_w)
         detail = (_ridged_fbm(V, max(6, V // 16), seed) - 0.5) * 2.0  # [-1,1]
         stria_rms_on_cliff = None
         if cliff_w is not None:
@@ -469,6 +862,11 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
         work += add
         if max_drift > 0:
             cap = drift_cap if drift_cap is not None else max_drift
+            if shore_w is not None:
+                # SHORE-CONTOUR-1: the composite re-limit must not crush the
+                # shore-band bank reshape — widen the cap by the shore
+                # allowance inside the band (0 outside).
+                cap = cap + shore_max_adjust * shore_w
             work = base + cap * np.tanh((work - base) / cap)
         rock_cells = rock > 0.35
         if cliff_w is not None:
@@ -493,11 +891,25 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
     #    exempted; true peaks/pits (is_regional) stay pinned everywhere.
     all_extrema = detect_coarse_extrema(elev, min_prominence=min_prominence)
     relaxed = []
-    if cliff_mask is not None and cliff_mask.any():
+    relaxed_shore = []
+    have_cliff = cliff_mask is not None and cliff_mask.any()
+    if have_cliff or shore_w is not None:
         extrema = []
         for e in all_extrema:
-            if cliff_mask[e["r"], e["c"]] and not e["is_regional"]:
+            on_cliff = have_cliff and cliff_mask[e["r"], e["c"]]
+            # SHORE-CONTOUR-1: a non-regional extremum anywhere the shore band
+            # has weight is a bank facet edge — re-injecting it would rebuild
+            # the blocky crossing the reshape removed. The threshold matches the
+            # (1 - shore_w) field attenuation below (> 0.05): an enforced
+            # extremum must never sit in attenuated territory, or its correction
+            # is weakened and it trips the tolerance gate. Regional summits/pits
+            # stay pinned everywhere (same contract as the cliff relaxation).
+            on_shore = (shore_w is not None
+                        and shore_w[e["r"] * factor, e["c"] * factor] > 0.05)
+            if not e["is_regional"] and on_cliff:
                 relaxed.append(e)
+            elif not e["is_regional"] and on_shore:
+                relaxed_shore.append(e)
             else:
                 extrema.append(e)
     else:
@@ -508,6 +920,7 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
         kern = np.exp(-(xx * xx + yy * yy) / (2.0 * sigma * sigma))
         fld = np.zeros_like(work)
         any_fix = False
+        guard_pts = []                                 # SHORE-CONTOUR-1
         for e in extrema:
             fr, fc = e["r"] * factor, e["c"] * factor
             tol = max(0.5, shape_tolerance * e["relief"]) * 0.75  # keep margin
@@ -520,8 +933,25 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
             c0, c1 = max(0, fc - win), min(V, fc + win + 1)
             fld[r0:r1, c0:c1] += excess * kern[r0 - fr + win:r1 - fr + win,
                                                c0 - fc + win:c1 - fc + win]
+            guard_pts.append((fr, fc))
         if not any_fix:
             break
+        if shore_w is not None:
+            # SHORE-CONTOUR-1: the extrema kernel (up to ~3*1.25*factor cells
+            # wide) is far wider than the shore band, so a LAND guard point just
+            # outside the band splats a Gaussian TAIL into the reshaped band and
+            # drags the crossing back toward the blocky bilinear base. Inside the
+            # band the reshape is the authority, so the tail is attenuated by
+            # (1 - shore_w) (0 outside the band → land enforcement untouched).
+            # But an enforced guard point must keep its FULL correction or it
+            # trips the extrema-preservation gate; the un-attenuated field is
+            # restored at each guard cell (a single cell, negligible band
+            # contamination). Non-regional extrema actually IN the band are
+            # already relaxed above, so this only pins true land guards near it.
+            fld_att = fld * (1.0 - shore_w)
+            for fr, fc in guard_pts:
+                fld_att[fr, fc] = fld[fr, fc]
+            fld = fld_att
         work += fld
 
     # 4) feathered structural pin.
@@ -533,11 +963,56 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
         pf[_fine_mask(protect_coarse, factor)] = 1.0
         work = pf * base + (1.0 - pf) * work
 
+    # SHORE-CONTOUR-1 after-stats: facet census of the FINAL surface's
+    # waterline (post extrema re-injection + structural pin — the contour that
+    # actually ships), same 3-coarse-cell keep filter as the reshape's before
+    # census. The band reshape can nudge isolated cells a hair across the water
+    # plane, spawning sub-coarse-cell micro-puddle fragments; those are counted
+    # (fragments_below_keep) and honestly EXCLUDED from the facet metric — they
+    # are below the smallest feature the spec asks to survive (~1-2 cells) and
+    # would otherwise mask the real shoreline smoothing.
+    if shore_info is not None:
+        keep_len = 3.0 * factor
+        after_c = extract_waterline_contours(work, float(water_elev))
+        after_keep = [c for c in after_c
+                      if _polyline_arclen(c["pts"], c["closed"]) >= keep_len]
+        shore_info["fragments_below_keep"] = len(after_c) - len(after_keep)
+        shore_info["after"] = (contour_facet_stats(
+            after_keep, WORLD_UNITS_PER_VERTEX / factor) if after_keep else None)
+        # HONEST deliverable metric: how close the SHIPPED waterline sits to the
+        # smoothed target curve. Corner-count of the re-extracted contour is a
+        # poor proxy (micro-puddle fragments count as corners); the mean signed
+        # distance from every final-waterline vertex to the nearest smoothed-
+        # target sample is what "the waterline follows the blue line" means.
+        Pt = shore_info.pop("_target_curve", None)
+        if Pt is not None and after_keep:
+            occ = np.zeros((V, V), dtype=bool)
+            occ[np.clip(np.round(Pt[:, 0]).astype(np.int64), 0, V - 1),
+                np.clip(np.round(Pt[:, 1]).astype(np.int64), 0, V - 1)] = True
+            from scipy.ndimage import distance_transform_edt as _edt
+            dfield = _edt(~occ)
+            wl = np.vstack([c["pts"] for c in after_keep])
+            dd = dfield[np.clip(np.round(wl[:, 0]).astype(np.int64), 0, V - 1),
+                        np.clip(np.round(wl[:, 1]).astype(np.int64), 0, V - 1)]
+            dd = dd * (WORLD_UNITS_PER_VERTEX / factor)
+            shore_info["waterline_to_target_wu"] = {
+                "mean": float(dd.mean()), "p95": float(np.percentile(dd, 95))}
+        else:
+            shore_info.pop("_target_curve", None)
+
     # --- honest post-everything metrics (the PASS-gate inputs) ---
     corners = work[::factor, ::factor]
     corner_move = np.abs(corners - elev)
     ev, cv = elev.ravel(), corners.ravel()
     corr = float(np.corrcoef(ev, cv)[0, 1]) if ev.std() > 1e-9 else 1.0
+    # SHORE-CONTOUR-1: banks are SUPPOSED to move (that is the deliverable);
+    # shape fidelity gates off-shore, same pattern as the cliff relaxation.
+    corr_off_shore = corr
+    if shore_w is not None:
+        off = shore_w[::factor, ::factor] <= 0.25
+        if off.any() and elev[off].std() > 1e-9:
+            corr_off_shore = float(np.corrcoef(elev[off].ravel(),
+                                               corners[off].ravel())[0, 1])
     viol = 0
     worst_frac = 0.0
     max_move = 0.0
@@ -579,11 +1054,14 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
         "taubin_mu": mu,
         "min_prominence_wu": min_prominence,
         "landform_correlation": corr,
+        "landform_correlation_off_shore": corr_off_shore,
         "extrema": {"count": len(all_extrema), "enforced": len(extrema),
-                    "relaxed_on_cliff": len(relaxed), "violations": viol,
+                    "relaxed_on_cliff": len(relaxed),
+                    "relaxed_on_shore": len(relaxed_shore), "violations": viol,
                     "worst_move_frac_of_relief": worst_frac,
                     "max_move_wu": max_move},
         "cliff": cliff_info,
+        "shore": shore_info,
         "corner_move_wu": {"max": float(corner_move.max()),
                            "mean": float(corner_move.mean())},
         "facet_crease_energy": {"bilinear_base": _crease_energy(base),
@@ -692,7 +1170,9 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
          mountainify_amp: float = 0.0, seed: int = 1337,
          mips: bool = True,
          cliff_drift: float = 0.0, cliff_slope_deg: float = 30.0,
-         cliff_melt_passes: int = 300) -> dict:
+         cliff_melt_passes: int = 300,
+         shore_smooth_radius: float = 0.0, shore_band_cells: float = 1.5,
+         shore_max_adjust: float = 64.0) -> dict:
     pak = missions_dir / f"{mission}.pak"
     if not pak.is_file():
         return {"mission": mission, "error": f"not found: {pak}"}
@@ -720,7 +1200,12 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
             mountainify_amp=mountainify_amp, seed=seed,
             water_coarse=layers["water"],
             cliff_drift=cliff_drift, cliff_slope_deg=cliff_slope_deg,
-            cliff_melt_passes=cliff_melt_passes)
+            cliff_melt_passes=cliff_melt_passes,
+            # SHORE-CONTOUR-1: only meaningful when the mission has water.
+            water_elev=(water_elev if layers["water"].any() else None),
+            shore_smooth_radius=shore_smooth_radius,
+            shore_band_cells=shore_band_cells,
+            shore_max_adjust=shore_max_adjust)
         # pyramid score before/after on the coarse-sampled landform (same metric
         # the reshape path reports; reauth should LOWER it a bit -- rounded facets
         # weaken the radial-monotonic pyramid signature -- while corr stays high).
@@ -795,6 +1280,12 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
                      "allows cliff_drift), terrace melt diffusion, non-regional "
                      "cliff extrema relaxed (true peaks pinned), gradient-aligned "
                      "striation under mountainify.")
+        if reauth_info.get("shore"):
+            note += (" SHORE-CONTOUR-1: waterline contour extracted (marching "
+                     "squares at waterElev), arc-length Gaussian smoothed, and "
+                     "the shore band reshaped so the terrain/water intersection "
+                     "follows the smoothed curve; bank adjust tanh-bounded; "
+                     "mountainify excluded in the band; render-only.")
     elif reshape:
         note = ("reshaped (de-pyramid) visual height; coarse corners clamped to "
                 "corner_clamp; protected pinned; render-only.")
@@ -858,6 +1349,14 @@ def main() -> int:
                     help="one-sided coarse slope threshold for the cliff mask")
     ap.add_argument("--cliff-melt-passes", type=int, default=300,
                     help="cliff-weighted diffusion passes (terrace melt)")
+    # SHORE-CONTOUR-1 knobs (active with --reauth on water missions; 0 disables)
+    ap.add_argument("--shore-smooth-radius", type=float, default=3.5,
+                    help="waterline contour Gaussian smoothing radius in COARSE "
+                         "cells (default 3.5; 0 disables SHORE-CONTOUR-1)")
+    ap.add_argument("--shore-band-cells", type=float, default=1.5,
+                    help="shore reshape band half-width in coarse cells")
+    ap.add_argument("--shore-max-adjust", type=float, default=64.0,
+                    help="soft bound on shore-band bank adjustment (wu, tanh)")
     # TERRAIN-LOD-GEOMORPH-1 knob
     ap.add_argument("--no-mips", action="store_true",
                     help="skip TERRAIN-LOD-GEOMORPH-1 max-mip sidecar emission")
@@ -880,7 +1379,10 @@ def main() -> int:
                    seed=args.seed, mips=not args.no_mips,
                    cliff_drift=args.cliff_drift,
                    cliff_slope_deg=args.cliff_slope_deg,
-                   cliff_melt_passes=args.cliff_melt_passes)
+                   cliff_melt_passes=args.cliff_melt_passes,
+                   shore_smooth_radius=args.shore_smooth_radius,
+                   shore_band_cells=args.shore_band_cells,
+                   shore_max_adjust=args.shore_max_adjust)
         if rep.get("error"):
             print(f"[visual-bake] {m}: ERROR {rep['error']}", file=sys.stderr); rc = 1; continue
         extra = ""
@@ -893,8 +1395,12 @@ def main() -> int:
             # allow 25% headroom over the EFFECTIVE drift (CLIFF-SMOOTH-1: the
             # cliff mask allows cliff_drift; flats keep max_drift).
             eff = float(ra.get("effective_max_drift_wu", args.max_drift))
+            # SHORE-CONTOUR-1: gate on the off-shore correlation when the
+            # shore stage ran (== global when it didn't).
+            corr_gate = float(ra.get("landform_correlation_off_shore",
+                                     ra["landform_correlation"]))
             ok = (ra["extrema"]["violations"] == 0
-                  and ra["landform_correlation"] >= 0.99
+                  and corr_gate >= 0.99
                   and rep["max_corner_error_wu"] <= eff * 1.25
                   and rep["max_corner_error_wu"] > 0.05)
             ce = ra["facet_crease_energy"]
@@ -911,6 +1417,17 @@ def main() -> int:
                 extra += (f" cliff[{100*ci['coarse_cliff_frac']:.1f}%"
                           f" relaxed={ci['relaxed_extrema']}"
                           f" drift_p99={dcl.get('p99', 0.0):.1f}wu]")
+            if ra.get("shore"):
+                si = ra["shore"]
+                sb, sa = si["before"], si.get("after")
+                wt = si.get("waterline_to_target_wu")
+                extra += (f" shore[{si['contours_processed']}c"
+                          f" to_smoothline mean={wt['mean']:.1f}wu"
+                          if wt else f" shore[{si['contours_processed']}c")
+                extra += (f" facet_med {sb['median_facet_wu']:.0f}->"
+                          f"{(sa['median_facet_wu'] if sa else 0):.0f}wu"
+                          f" frags={si.get('fragments_below_keep', 0)}"
+                          f" adj_max={si['bank_adjust_wu']['max']:.1f}wu]")
             if ra.get("mountainify"):
                 mi = ra["mountainify"]
                 extra += (f" mtn[seed={mi['seed']} rock={100*mi['rock_area_frac']:.0f}%"
