@@ -788,6 +788,46 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "TERRAIN-RESAMPLE-1: CPU bilinear resample factor for the per-mission terrain height texture used by TERRAIN-NORMALS-FROM-HEIGHT-1. Accepted values 1, 2, 4 (anything else clamps to 1). Default 1 (byte-equivalent to pre-slice). Render texture side becomes (sourceSide-1)*factor + 1, with source samples preserved EXACTLY at corner positions (factor multiples). Bilinear interpolation between source taps fills intermediate render samples. Resample is read at every gos_uploadTerrainHeightTex() call (i.e. per mission load); toggling mid-mission does not re-upload. Only affects the height-derived normal path: gameplay height (Terrain::getTerrainElevation) is unchanged; no displacement, no geometry move. Memory: 4× factor on a 120² source = ~890 KB; bounded by source-grid * 16. Inspector shows source/render/factor."
     },
+    // TERRAIN-CHUNK-POM-1: real view-vector parallax occlusion mapping on the
+    // LIVE LOD-chunk terrain path (gos_terrain_lod_chunk.cpp uploads,
+    // terrain_lod_chunk.frag chunkParallaxView). Gate OFF preserves the legacy
+    // faux-view-vector chunkParallax output VERBATIM (supervisor ruling:
+    // byte-identity INCLUDES the faux shear — pomParams is NOT zeroed when OFF).
+    {
+        "MC2_FEATURE_TERRAIN_POM",
+        "MC2_TERRAIN_POM",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-CHUNK-POM-1: real per-fragment tangent-space view-vector POM on the LOD-chunk terrain (rock/grass detail layers). Default-OFF = legacy faux constant viewDirTS(0.15,0.85,0.15) march runs VERBATIM (byte-identical incl. the faux shear; pomParams upload unchanged). =1 swaps in the real camera vector (gos_GetTerrainCameraPos, Stuff/MLR frame -> MC2 world (-x,z,y)) with a world-distance fade (MC2_TERRAIN_POM_NEAR/_FAR), triplanar-cliff slope exclusion (|Nz| 0.85->0.55 band), cement/concrete exclusion (w.w), and LOD0/1-only belt. Shading-only parallax: NEVER writes gl_FragDepth (AMD early-Z landmine); shadows sample the true surface point. Read once per process (static). Debug viz: MC2_TERRAIN_LOD_CHUNK_DIAG bit 4096 = |pomOff| heat, bit 8192 = view-vector swizzle oracle (RGB = MC2-world frag->camera dir)."
+    },
+    {
+        "MC2_TUNE_TERRAIN_POM_SCALE",
+        "MC2_TERRAIN_POM_SCALE",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CHUNK-POM-1 knob: POM march scale override (float > 0). Default unset = gos_GetTerrainPOMScale() (0.02). Only consumed when MC2_TERRAIN_POM=1; gate-OFF upload is the stock line regardless. Expect retune vs legacy: the faux up=0.85 divided the effective offset, a real grazing view yields larger P."
+    },
+    {
+        "MC2_TUNE_TERRAIN_POM_STEPS",
+        "MC2_TERRAIN_POM_STEPS",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CHUNK-POM-1 knob: max POM march layers, accepted 4..16 (else default 16; hard compile-constant cap 16). min layers = min(value,8). More layers at grazing view (oracle orientation, mix(max,min,up)). Only consumed when MC2_TERRAIN_POM=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_POM_NEAR",
+        "MC2_TERRAIN_POM_NEAR",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CHUNK-POM-1 knob: POM distance-fade band start in world units (default 1500; 1 tile = 384 wu). Camera ground distance + 0.7*altitude boost (dead-frag LOD semantics); full POM strength inside NEAR. NaN/negative -> default. Only consumed when MC2_TERRAIN_POM=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_POM_FAR",
+        "MC2_TERRAIN_POM_FAR",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CHUNK-POM-1 knob: POM distance-fade band end in world units (default 3500). Beyond FAR the march is skipped entirely (strength 0 early-out). Clamped to > NEAR (NEAR+1 floor). NaN/non-positive -> default. Only consumed when MC2_TERRAIN_POM=1."
+    },
     {
         "MC2_DIAG_VFX_DEBUG_MODE",
         "MC2_VFX_DEBUG_MODE",

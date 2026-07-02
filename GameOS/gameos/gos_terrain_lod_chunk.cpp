@@ -227,6 +227,10 @@ extern float gos_GetTerrainLightingV1Strength();
 extern float gos_GetTerrainLightingV2Floor();
 extern float gos_GetTerrainNormalsFromHeightStrength();
 extern float gos_GetTerrainPOMScale();
+// TERRAIN-CHUNK-POM-1: Stuff/MLR eye position (the SAME vec4 the legacy terrain
+// frag consumes as "cameraPos"); local-extern per the established accessor
+// pattern in this file (ruling R5).
+extern void  gos_GetTerrainCameraPos(float*, float*, float*);
 extern int   g_terrainMaterialProfile;   // global; 0 = legacy
 static GLint s_locLightingV1     = -1;
 static GLint s_locLightingV2     = -1;
@@ -242,6 +246,8 @@ static GLint s_locVisualDisplace     = -1; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1
 static GLint s_locVisualSide         = -1;
 static GLint s_locVisualDisplaceFar  = -1; // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD
 static GLint s_locPomParams      = -1;
+static GLint s_locCameraPos      = -1; // TERRAIN-CHUNK-POM-1: "cameraPos" (Stuff/MLR eye, legacy name)
+static GLint s_locPomView        = -1; // TERRAIN-CHUNK-POM-1: u_pomView (.x=gate, .y=near, .z=far)
 static GLint s_locMatProfile     = -1;
 static GLint s_locControlMap     = -1;  // TERRAIN-CONTROLMAP-SAMPLE-1: u_controlMap sampler
 static GLint s_locUseControlMap  = -1;  // u_useControlMap gate uniform
@@ -661,6 +667,8 @@ void gos_TerrainLodChunk_Init()
             s_locVisualSide        = glGetUniformLocation(s_terrainProgram, "u_visualSide");
             s_locVisualDisplaceFar = glGetUniformLocation(s_terrainProgram, "u_visualDisplaceFar");
             s_locPomParams   = glGetUniformLocation(s_terrainProgram, "pomParams");
+            s_locCameraPos   = glGetUniformLocation(s_terrainProgram, "cameraPos");  // TERRAIN-CHUNK-POM-1
+            s_locPomView     = glGetUniformLocation(s_terrainProgram, "u_pomView");  // TERRAIN-CHUNK-POM-1
             s_locMatProfile  = glGetUniformLocation(s_terrainProgram, "g_terrainMaterialProfile");
             s_locCementAtlas    = glGetUniformLocation(s_terrainProgram, "u_cementAtlas");
             s_locUseCement      = glGetUniformLocation(s_terrainProgram, "u_useCement");
@@ -1513,7 +1521,67 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                 glUniform1f(s_locEdgeFeatherStr, efStr);
             }
         }
-        if (s_locPomParams   >= 0) glUniform4f(s_locPomParams,   gos_GetTerrainPOMScale(), 8.0f, 32.0f, 0.0f);
+        // TERRAIN-CHUNK-POM-1: gate MC2_TERRAIN_POM (default OFF). Gate OFF ->
+        // u_pomView.x=0 -> the frag takes the legacy faux-view-vector
+        // chunkParallax() path VERBATIM, and pomParams keeps the stock upload
+        // below unchanged (supervisor ruling: gate-OFF byte-identity INCLUDES
+        // the faux shear — do NOT zero pomParams when OFF). Gate ON swaps in
+        // the REAL per-fragment view vector with a world-distance fade. Knobs:
+        //   MC2_TERRAIN_POM_SCALE  float march scale (default gos_GetTerrainPOMScale()=0.02)
+        //   MC2_TERRAIN_POM_STEPS  int   max march layers, clamp 4..16 (default 16)
+        //   MC2_TERRAIN_POM_NEAR / MC2_TERRAIN_POM_FAR  fade band in world units
+        //                          (default 1500..3500; 1 tile = 384 wu)
+        {
+            static const bool s_pomGate = []() {
+                const char* v = getenv("MC2_TERRAIN_POM");
+                return v && v[0] && v[0] != '0';
+            }();
+            static const float s_pomScale = []() {
+                const char* v = getenv("MC2_TERRAIN_POM_SCALE");
+                if (v && v[0]) { float f = (float)atof(v); if (f > 0.0f) return f; }
+                return -1.0f;   // <0 = no override -> gos_GetTerrainPOMScale()
+            }();
+            static const float s_pomSteps = []() {
+                const char* v = getenv("MC2_TERRAIN_POM_STEPS");
+                if (v && v[0]) {
+                    float f = (float)atof(v);
+                    if (f >= 4.0f && f <= 16.0f) return f;
+                }
+                return 16.0f;
+            }();
+            static const float s_pomNear = []() {
+                const char* v = getenv("MC2_TERRAIN_POM_NEAR");
+                float f = (v && v[0]) ? (float)atof(v) : 1500.0f;
+                if (!(f == f) || f < 0.0f) f = 1500.0f;  // NaN/negative guard
+                return f;
+            }();
+            static const float s_pomFar = []() {
+                const char* v = getenv("MC2_TERRAIN_POM_FAR");
+                float f = (v && v[0]) ? (float)atof(v) : 3500.0f;
+                if (!(f == f) || f <= 0.0f) f = 3500.0f;
+                return f;
+            }();
+            if (s_locPomParams >= 0) {
+                if (s_pomGate) {
+                    const float scale    = (s_pomScale > 0.0f) ? s_pomScale : gos_GetTerrainPOMScale();
+                    const float minSteps = (s_pomSteps < 8.0f) ? s_pomSteps : 8.0f;
+                    glUniform4f(s_locPomParams, scale, minSteps, s_pomSteps, 0.0f);
+                } else {
+                    // Stock upload — byte-for-byte the pre-slice line.
+                    glUniform4f(s_locPomParams, gos_GetTerrainPOMScale(), 8.0f, 32.0f, 0.0f);
+                }
+            }
+            if (s_locPomView >= 0)
+                glUniform4f(s_locPomView, s_pomGate ? 1.0f : 0.0f,
+                            s_pomNear, (s_pomFar > s_pomNear) ? s_pomFar : s_pomNear + 1.0f, 0.0f);
+            // cameraPos uploads every submit regardless of the gate (the frag
+            // only reads it on the gate-ON branch and the 8192 oracle viz).
+            if (s_locCameraPos >= 0) {
+                float cx = 0.0f, cy = 0.0f, cz = 0.0f;
+                gos_GetTerrainCameraPos(&cx, &cy, &cz);
+                glUniform4f(s_locCameraPos, cx, cy, cz, 1.0f);
+            }
+        }
         if (s_locMatProfile  >= 0) glUniform1i(s_locMatProfile,  g_terrainMaterialProfile);
     }
 

@@ -121,6 +121,11 @@ uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_
                                           //        after selection): TERRAIN-CONTROLMAP-SAMPLE-1
                                           // 2048 = viz shoreline mask channels (R=dist,G=wet,
                                           //        B=foam as RGB): TERRAIN-SHORELINE-MASK-1
+                                          // 4096 = viz POM UV-offset heat (blue=0 .. red=scale):
+                                          //        TERRAIN-CHUNK-POM-1
+                                          // 8192 = viz frag->camera dir in MC2 world (R=east,
+                                          //        G=north remapped *0.5+0.5, B=up): POM view-
+                                          //        vector swizzle oracle (ruling R1)
 
 // LIGHTING-DEBUG-VIEWS-1A-CHUNK: unified lighting debug channel, SAME enum as
 // static_prop / gos_terrain.frag. Separate from u_diag (bitmask) to avoid
@@ -241,6 +246,17 @@ uniform float rockSlopeBiasStrength;            // rock-weight bias on steep slo
 uniform int   useTriplanarCliff;                // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1: 0=off (byte-identical)
 uniform float cliffTriplanarStrength;           // triplanar rock normal/relief strength (default 1.0)
 uniform vec4  pomParams;                        // .x=scale(0=off), .y=minLayers, .z=maxLayers
+// TERRAIN-CHUNK-POM-1: real view-vector POM (gate MC2_TERRAIN_POM, default OFF).
+// u_pomView.x=1 -> the POM march in chunkDetailNormal uses the REAL per-fragment
+// tangent-space view vector (distance-faded over .y=NEAR .. .z=FAR world units)
+// instead of the legacy faux constant vec3(0.15,0.85,0.15). x=0 -> the legacy
+// faux path runs VERBATIM (supervisor ruling: gate-OFF byte-identity INCLUDES
+// the faux shear; pomParams is NOT zeroed when the gate is off).
+// cameraPos: SAME uniform name + frame as legacy gos_terrain.frag — the
+// Stuff/MLR eye (.x=left, .y=elevation, .z=forward). MC2 world = (-x, z, y);
+// second live witness: the water reflection frame fix in gameos_graphics.cpp.
+uniform vec4  cameraPos;
+uniform vec4  u_pomView;                        // .x=gate(0/1), .y=fadeNear(wu), .z=fadeFar(wu), .w=unused
 uniform int   g_terrainMaterialProfile;         // 0=legacy, 1=sand(mc2_24 dirt-gate widen)
 uniform float macroVariationStrength;           // TERRAIN-MACRO-VARIATION-1: 0=off (byte-identical)
 uniform int   u_edgeFeather;                    // TERRAIN-EDGE-FEATHER-1: 0=off (byte-identical)
@@ -338,6 +354,41 @@ vec2 chunkParallax(vec2 uv, float scale, vec4 w) {
     return mix(curUV, prevUV, after / (after - before));
 }
 
+// TERRAIN-CHUNK-POM-1: POM march with a REAL view vector (gate-ON path only).
+// Deliberately a SEPARATE function from chunkParallax() above: the gate-OFF
+// path must stay byte-identical INCLUDING the compiler's const-folding of the
+// faux vector, so the legacy body is left untouched. Two gate-ON improvements,
+// both matching the dead-frag oracle (gos_terrain.frag parallaxMapping):
+//   - numLayers orientation: MORE layers at grazing view — mix(max,min,up) —
+//     the legacy chunk mix is inverted (moot under the faux up=0.85 constant).
+//   - epsilon denominator guard (AMD yields inf/nan silently, NVIDIA may trap).
+// UB2-01: chunkSampleDisplacement uses textureLod(...,0) — valid in the
+// data-dependent loop below and in the non-uniform caller branch.
+vec2 chunkParallaxView(vec2 uv, float scale, vec4 w, vec3 viewDirTS) {
+    float numLayers = mix(pomParams.z, pomParams.y, max(viewDirTS.y, 0.0));
+    numLayers = clamp(numLayers, 4.0, 16.0);
+    float layerDepth = 1.0 / numLayers;
+    float curLayer = 0.0;
+    vec2 P = viewDirTS.xz / max(viewDirTS.y, 0.001) * scale;
+    vec2 dUV = P / numLayers;
+    vec2 curUV = uv;
+    float curD = chunkSampleDisplacement(curUV, w);
+    for (int i = 0; i < 16; ++i) {   // hard compile-constant cap (recon §3)
+        if (curLayer >= curD) break;
+        curUV -= dUV;
+        curD = chunkSampleDisplacement(curUV, w);
+        curLayer += layerDepth;
+    }
+    vec2 prevUV = curUV + dUV;
+    float after  = curD - curLayer;
+    float before = chunkSampleDisplacement(prevUV, w) - curLayer + layerDepth;
+    return mix(curUV, prevUV, after / max(abs(after - before), 1.0e-6));
+}
+
+// TERRAIN-CHUNK-POM-1 debug: |pomOff| of this fragment, written by
+// chunkDetailNormal, consumed by the u_diag&4096 heat viz in main().
+vec2 g_pomOffDbg = vec2(0.0);
+
 // Material weights + snow from the colormap colour (computed once, shared by the
 // detail normal AND the colour tint). w = rock/grass/dirt/concrete (sums to 1).
 void chunkWeights(vec3 colAvg, out vec4 w, out float snowWeight) {
@@ -351,7 +402,11 @@ void chunkWeights(vec3 colAvg, out vec4 w, out float snowWeight) {
 }
 
 // Accumulated tangent-space (Z-up) detail normal from precomputed weights.
-vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
+// TERRAIN-CHUNK-POM-1: macroNz = un-perturbed macro slope Z from the caller
+// (ruling R2: POM fades out over the same band the cliff/triplanar blend fades
+// in, so near-vertical walls stay triplanar-owned). Only the gate-ON path
+// reads it; gate-OFF is byte-identical to the pre-slice 3-arg behavior.
+vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY, float macroNz) {
     vec2 uv = worldXY * (detailNormalTiling.x / MAT_WORLD_UNITS_PER_TILE);  // per-tile, GL_REPEAT
     // Screen-space derivative AA (legacy fwRock/fwGrass/...): fade a layer to 0
     // as its tiling goes sub-pixel. WITHOUT this, far/zoomed-out detail collapses
@@ -370,12 +425,49 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
 
     // POM: parallax-offset the material UVs (legacy pomParams.x>0). fwidth-gated
     // (near only) -> bounded cost on a default-on renderer. Off when scale<=0.
+    // TERRAIN-CHUNK-POM-1: u_pomView.x>0.5 (MC2_TERRAIN_POM) switches the march
+    // to the REAL per-fragment tangent-space view vector with a world-distance
+    // fade + slope/cement exclusions. Gate OFF keeps the legacy chunkParallax()
+    // call VERBATIM (supervisor ruling: byte-identity includes the faux shear).
     if (pomParams.x > 0.0 && fwRock > 0.4) {
         const vec4 pomScaleMat = vec4(1.0, 1.0, 2.5, 1.0);
         float pomScale = pomParams.x * dot(pomScaleMat, w) * fwRock;
         vec2  pomUV    = uv * dot(matTiling, w);
-        vec2  pomOff   = (chunkParallax(pomUV, pomScale, w) - pomUV) * fwRock;
+        vec2  pomOff   = vec2(0.0);
+        if (u_pomView.x > 0.5) {
+            // cameraPos is the Stuff/MLR eye; MC2 world = (-x, z, y). Same
+            // conversion as the live water reflection fix (gameos_graphics.cpp)
+            // and the dead-frag oracle comment (gos_terrain.frag:319-325).
+            vec3  camW     = vec3(-cameraPos.x, cameraPos.z, cameraPos.y);
+            // World-distance fade (the real cost governor, recon §3): camera
+            // ground distance + altitude boost, matching the dead frag's LOD
+            // distance semantics. Beyond FAR the march is skipped entirely.
+            float altBoost = max(camW.z - v_worldPos.z, 0.0) * 0.7;
+            float camDist  = distance(v_worldPos.xy, camW.xy) + altBoost;
+            float distFade = 1.0 - smoothstep(u_pomView.y, u_pomView.z, camDist);
+            // R2: cliffs stay triplanar-owned — fade POM out over the SAME
+            // slope band the cliff/triplanar blend fades in (|Nz| 0.85->0.55).
+            float slopeFade = 1.0 - smoothstep(0.85, 0.55, abs(macroNz));
+            // Cement/concrete excluded (runway slabs + decals must not tear):
+            // w is post-cement-mix, so pure cement has w.w=1 -> strength 0.
+            float pomStrength = distFade * slopeFade * (1.0 - w.w);
+            // LOD belt-and-suspenders: near bands only (LOD0/1), matching the
+            // detail-normal LOD fade tiers.
+            if (pomStrength > 0.001 && u_lodStep <= 2) {
+                vec3 Vw = normalize(camW - v_worldPos);   // fragment -> eye, MC2 world
+                // Detail UVs are top-down planar with NO y-flip (uv = worldXY*k,
+                // unlike the atlas/cement UVs), so tangent(u)=+east,
+                // bitangent(v)=+north, normal=+up. chunkParallaxView expects
+                // .xz = UV plane (x->u, z->v) and .y = up:
+                vec3 viewDirTS = vec3(Vw.x, Vw.z, Vw.y);
+                pomOff = (chunkParallaxView(pomUV, pomScale, w, viewDirTS) - pomUV)
+                       * fwRock * pomStrength;
+            }
+        } else {
+            pomOff = (chunkParallax(pomUV, pomScale, w) - pomUV) * fwRock;
+        }
         uvRock += pomOff; uvGrass += pomOff; uvDirt += pomOff; uvConcrete += pomOff;
+        g_pomOffDbg = pomOff;
     }
 
     // UB2-01: screen-space gradients of the FINAL (post-POM) per-layer UVs,
@@ -766,7 +858,7 @@ void main() {
         if ((u_diag & 32) != 0) {
             N = baseN;  // detail disabled (A/B)
         } else {
-            vec3 dN   = chunkDetailNormal(matWeights, snowWeight, v_worldPos.xy)
+            vec3 dN   = chunkDetailNormal(matWeights, snowWeight, v_worldPos.xy, macroNz)
                       * (1.0 - pureConcrete);  // suppress regular detail on cement
             // Cement normal: apply painted-concrete normal (MAT_LAYER_PAINTED_CONC) in the
             // cement-masked region so runways get real surface relief instead of flat shading.
@@ -800,6 +892,27 @@ void main() {
                              + dN.xy * detailNormalStrength.x * lodDetailMul, 1.0);
             N = normalize(pert);
         }
+    }
+
+    // TERRAIN-CHUNK-POM-1 debug viz (early-return like the other diag blocks).
+    // 4096 = POM UV-offset heat: |pomOff| relative to pomParams.x (blue=0 ..
+    //        red=full scale). Skirts / non-POM fragments read solid blue.
+    if ((u_diag & 4096) != 0) {
+        float h = clamp(length(g_pomOffDbg) / max(pomParams.x, 1e-5), 0.0, 1.0);
+        fragColor = vec4(h, h * 0.25, 1.0 - h, 1.0);
+        if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
+    }
+    // 8192 = view-vector swizzle oracle (ruling R1): RGB = MC2-world fragment->
+    //        camera direction, R=east*0.5+0.5, G=north*0.5+0.5, B=up. Decoded
+    //        pixels must point back toward the camera azimuth (screen gradient
+    //        tracks camera orbit) — numeric check on captures, not eyeballs.
+    if ((u_diag & 8192) != 0) {
+        vec3 camW = vec3(-cameraPos.x, cameraPos.z, cameraPos.y);
+        vec3 Vw = normalize(camW - v_worldPos);
+        fragColor = vec4(Vw.x * 0.5 + 0.5, Vw.y * 0.5 + 0.5, clamp(Vw.z, 0.0, 1.0), 1.0);
+        if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
     }
 
     // --- Colour mapping: mix the colormap toward per-material tints (legacy

@@ -1285,6 +1285,15 @@ def main():
                             # smoke does nothing.
                             "MC2_TERRAIN_CONTROLMAP_ALBEDO",
                             "MC2_TERRAIN_CONTROLMAP_ALBEDO_STRENGTH",
+                            # TERRAIN-CHUNK-POM-1 -- real view-vector POM on the
+                            # LOD-chunk terrain (default OFF) + tuning knobs.
+                            # Must be allowlisted or Popen drops them and the
+                            # gate-ON smoke does nothing.
+                            "MC2_TERRAIN_POM",
+                            "MC2_TERRAIN_POM_SCALE",
+                            "MC2_TERRAIN_POM_STEPS",
+                            "MC2_TERRAIN_POM_NEAR",
+                            "MC2_TERRAIN_POM_FAR",
                             # GROUND-CONTACT-BLOB-1 -- per-mover contact-darkening
                             # disc under mechs/vehicles (default OFF). Must be
                             # allowlisted or Popen drops it and the gate-ON smoke
