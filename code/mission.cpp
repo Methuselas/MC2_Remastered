@@ -2707,6 +2707,61 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// below at :2808/:2833.
 	Mission::resetTeamsAndCommanders();
 
+	// MC2_MISSION_CYCLE_TEST fixture (default OFF -> stock byte-identical): the
+	// real in-process proof for the class this slice retires. run_smoke launches
+	// a fresh process per mission and kills it mid-play, so it never exercises an
+	// in-process teardown+reload -- the exact path where the old duplicated free
+	// loops used to double-free / leave home dangling. This runs a miniature
+	// mission cycle of the static arrays in isolation, on EVERY mission load
+	// (so it is observable inside the 30s smoke window):
+	//   populate (mimics init's create loop, bumps the static counts + home) ->
+	//   resetTeamsAndCommanders() (mimics destroy's free) ->
+	//   resetTeamsAndCommanders() AGAIN (the ex-double-free init-then-destroy path).
+	// A non-idempotent / non-null-safe helper AVs on the second free or trips the
+	// verify; a helper that forgot the home aliases leaves them dangling. The
+	// statics are left empty (as at entry), so the real init below is untouched.
+	{
+		static const bool s_missionCycleTest = (getenv("MC2_MISSION_CYCLE_TEST") != nullptr);
+		if (s_missionCycleTest) {
+			// State must be quiescent here (the reset above just ran).
+			MC2_VERIFY(Team::numTeams == 0 && Commander::numCommanders == 0,
+				"MC2_MISSION_CYCLE_TEST: entry state not clean (teams=%ld commanders=%ld)",
+				Team::numTeams, Commander::numCommanders);
+
+			// Populate a couple of slots exactly like the real create loop:
+			// new Team + init(i) bumps Team::numTeams; new Commander bumps
+			// Commander::numCommanders (see team.cpp:134 / comndr.cpp init()).
+			for (long i = 0; i < 2 && i < MAX_TEAMS; i++) {
+				Team::teams[i] = new Team;
+				Team::teams[i]->init(i);
+			}
+			for (long i = 0; i < 2 && i < MAX_COMMANDERS; i++) {
+				Commander::commanders[i] = new Commander;
+				Commander::commanders[i]->setId(i);
+			}
+			Team::home = Team::teams[0];
+			Commander::home = Commander::commanders[0];
+			MC2_VERIFY(Team::numTeams == 2 && Commander::numCommanders == 2 &&
+					Team::home != NULL && Commander::home != NULL,
+				"MC2_MISSION_CYCLE_TEST: synthetic populate wrong "
+				"(teams=%ld commanders=%ld)", Team::numTeams, Commander::numCommanders);
+
+			// First reset = the "destroy frees" leg.
+			Mission::resetTeamsAndCommanders();
+			// Second reset back-to-back = the ex-double-free (init frees, then
+			// destroy frees again). MUST be a clean no-op with home NULL.
+			Mission::resetTeamsAndCommanders();
+			MC2_VERIFY(Team::numTeams == 0 && Commander::numCommanders == 0 &&
+					Team::home == NULL && Commander::home == NULL &&
+					Team::teams[0] == NULL && Commander::commanders[0] == NULL,
+				"MC2_MISSION_CYCLE_TEST: reset not idempotent / home not nulled "
+				"(teams=%ld commanders=%ld home=%p/%p slot0=%p/%p)",
+				Team::numTeams, Commander::numCommanders,
+				(void*)Team::home, (void*)Commander::home,
+				(void*)Team::teams[0], (void*)Commander::commanders[0]);
+		}
+	}
+
 	//------------------------------------------------------------
 	// First, let's see how many teams and commanders there are...
 	long maxTeamID = -1;
@@ -4842,27 +4897,6 @@ void Mission::destroy (bool initLogistics)
 	// inline free loop; see resetTeamsAndCommanders()). Also nulls the
 	// Team::home/Commander::home aliases.
 	Mission::resetTeamsAndCommanders();
-
-	// MC2_MISSION_CYCLE_TEST fixture: prove the class this slice retires -- the
-	// dual-free / dangling-home hazard -- can no longer bite. resetTeams...()
-	// just ran on a fully populated set (the real teardown); calling it a SECOND
-	// time here is exactly the "init frees, then destroy frees again" double-free
-	// that used to live in two divergent copies. If the helper is not idempotent
-	// this either AVs on a stale slot or trips the count verify. It must be a
-	// clean no-op with home left NULL. Gated off by default (zero cost / zero
-	// behavior change unless MC2_MISSION_CYCLE_TEST is set for a soak run).
-	{
-		static const bool s_missionCycleTest = (getenv("MC2_MISSION_CYCLE_TEST") != nullptr);
-		if (s_missionCycleTest) {
-			Mission::resetTeamsAndCommanders();   // idempotent re-free (the ex-double-free)
-			MC2_VERIFY(Team::numTeams == 0 && Commander::numCommanders == 0 &&
-					Team::home == NULL && Commander::home == NULL,
-				"MC2_MISSION_CYCLE_TEST: reset not idempotent / home not nulled "
-				"(teams=%ld commanders=%ld home=%p/%p)",
-				Team::numTeams, Commander::numCommanders,
-				(void*)Team::home, (void*)Commander::home);
-		}
-	}
 
 	if (Mover::triggerAreaMgr) {
 		delete Mover::triggerAreaMgr;
