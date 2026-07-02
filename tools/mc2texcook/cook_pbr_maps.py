@@ -18,7 +18,11 @@ Usage:
 External tools required:
     ktx.exe  -- A:\\Games\\mc2-tools\\ktx\\ktx.exe  (default)
 
-Stdlib + Pillow only. No other pip deps.
+Stdlib + Pillow only for the original AmbientCG single-pack CLI below.
+The TERRAIN-MATERIAL-TEXTURE-REMAP-1-prep additions further down (normalize_to_png,
+pack_height_into_normal_alpha, cook_source_to_bc7) additionally use cv2/numpy to
+ingest PolyHaven-style EXR/JPG source maps -- see cook_terrain_layers.py, the
+batch driver that calls them.
 """
 
 import argparse
@@ -185,6 +189,109 @@ def pack_orm(ao_path, roughness_path, metalness_path, out_png):
     orm = _Image.merge('RGBA', (ao, rou, met, alpha))
     orm.save(out_png, format='PNG')
     print(f'  Packed ORM ({w}x{h}): R=AO G=Roughness B=Metalness A=255')
+
+
+# ---------------------------------------------------------------------------
+# TERRAIN-MATERIAL-TEXTURE-REMAP-1 prep: PolyHaven/EXR-aware source normalization
+# ---------------------------------------------------------------------------
+#
+# The AmbientCG packs above are already _Color.png/_NormalGL.png (8-bit PNG) --
+# cook_png_to_bc7() handles those directly. The PolyHaven-format terrain packs
+# (rocks_ground_*, dirt_aerial_03, snow_field_aerial, ...) ship normal/roughness
+# maps as EXR (often DWAA-compressed, which ktx.exe's own EXR reader rejects)
+# and albedo as JPG. normalize_to_png() ingests any of PNG/JPG/EXR via cv2
+# (already a repo dependency; handles DWAA-compressed EXR where ktx.exe's own
+# reader fails) and re-encodes to a plain 8-bit PNG so the existing
+# cook_png_to_bc7() two-step (ktx create --encode uastc -> ktx transcode bc7)
+# never has to see anything but PNG.
+
+def normalize_to_png(src_path, out_png, srgb):
+    """
+    Load src_path (PNG/JPG/EXR) via cv2 and re-save as an 8-bit PNG at out_png.
+
+    srgb=True:  source is assumed already display-referred (color/albedo) --
+                clamp to [0,1] and quantize to 8-bit as-is (no OETF applied;
+                JPG/PNG albedo sources are already sRGB-encoded bytes).
+    srgb=False: source is linear data (normal/roughness/height) -- clamp to
+                [0,1] and quantize to 8-bit directly (no linear->sRGB curve;
+                this matches the UNORM/linear treatment cook_png_to_bc7()
+                already gives normal/orm maps).
+
+    Returns out_png (str) on success. Raises RuntimeError on load failure.
+    """
+    # opencv-python(-headless) ships OpenEXR support disabled by default
+    # (CVE-2021-XXXX mitigation upstream); must opt in before cv2 touches any
+    # EXR codec path. Must be set before the *first* cv2 import in the process.
+    os.environ.setdefault('OPENCV_IO_ENABLE_OPENEXR', '1')
+    import numpy as np
+    import cv2
+
+    img = cv2.imread(src_path, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        raise RuntimeError(f'cv2 failed to load {src_path}')
+
+    # cv2 loads EXR/float sources as float32 in [0, inf); 8-bit PNG/JPG as uint8.
+    if img.dtype != np.uint8:
+        img = np.clip(img, 0.0, 1.0)
+        img = (img * 255.0 + 0.5).astype(np.uint8)
+
+    # cv2 is BGR(A); convert to RGB(A) for PIL-consistent channel order.
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    elif img.shape[2] == 4:
+        img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+    elif img.shape[2] == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    from PIL import Image
+    mode = 'RGBA' if img.shape[2] == 4 else 'RGB'
+    Image.fromarray(img, mode=mode).save(out_png, format='PNG')
+    return out_png
+
+
+def pack_height_into_normal_alpha(normal_path, height_path, out_png, size):
+    """
+    Build an RGBA PNG: rgb = normal_path's RGB (tangent-space normal,
+    NormalGL/_nor_gl convention), a = height_path's grayscale (displacement).
+
+    Matches the engine's matNormalArray convention where .rgb is the tangent
+    normal and .a is displacement/height (terrain_lod_chunk.frag:274-276,827;
+    terrtxm2.cpp:2566-2571 cpuDispAlphaSize retention).
+
+    height_path may be None -- alpha is filled with 255 (flat/no displacement)
+    in that case (e.g. marble_cliff_01 ships no height map; cliff path uses
+    triplanar sampling, not POM).
+
+    Both inputs are resized to `size` x `size` (engine requires one square
+    arrayWidth shared by every layer, terrtxm2.cpp:2491-2492).
+    """
+    from PIL import Image
+
+    normal_img = Image.open(normal_path).convert('RGB').resize((size, size), Image.LANCZOS)
+    r, g, b = normal_img.split()
+
+    if height_path:
+        height_img = Image.open(height_path).convert('L').resize((size, size), Image.LANCZOS)
+        a = height_img
+    else:
+        a = Image.new('L', (size, size), 255)
+
+    Image.merge('RGBA', (r, g, b, a)).save(out_png, format='PNG')
+    return out_png
+
+
+def resize_to_square(src_path, out_png, size):
+    """Load src_path (any PIL-supported mode) and resize/save to size x size PNG."""
+    from PIL import Image
+
+    img = Image.open(src_path).convert('RGBA').resize((size, size), Image.LANCZOS)
+    img.save(out_png, format='PNG')
+    return out_png
+
+
+def cook_source_to_bc7(ktx_exe, src_png, out_ktx2, vk_format, oetf, tmpdir):
+    """Thin re-export of cook_png_to_bc7 for callers that only have a plain PNG."""
+    return cook_png_to_bc7(ktx_exe, src_png, out_ktx2, vk_format, oetf, tmpdir)
 
 
 # ---------------------------------------------------------------------------
