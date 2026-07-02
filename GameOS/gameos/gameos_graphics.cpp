@@ -2940,16 +2940,9 @@ unsigned int gos_GetTerrainNormalArrayTex() {
 // Defined here because the full gosRenderer type is visible in this TU.
 // Declarations live in gos_terrain_bridge.h.
 
-gosRenderMaterial* gos_terrain_bridge_getMaterial() {
-    return g_gos_renderer ? g_gos_renderer->getTerrainMaterial() : nullptr;
-}
-
-unsigned int gos_terrain_bridge_getShaderProgram() {
-    if (!g_gos_renderer) return 0;
-    gosRenderMaterial* mat = g_gos_renderer->getTerrainMaterial();
-    if (!mat || !mat->getShader()) return 0;
-    return (unsigned int)mat->getShader()->shp_;
-}
+// gos_terrain_bridge_getMaterial and gos_terrain_bridge_getShaderProgram deleted by
+// DEAD-BRIDGE-DELETE-1: zero external callers tree-wide (whole-repo grep incl. editor/
+// tools/shaders/scripts). Provably-dead public wrappers around live gosRenderer members.
 
 void gos_terrain_bridge_bindUniforms(gosRenderMaterial* material) {
     if (g_gos_renderer && material)
@@ -2996,19 +2989,15 @@ unsigned int gos_terrain_bridge_getThinShaderProgram() {
     return (p && p->shp_) ? (unsigned int)p->shp_ : 0u;
 }
 
-int gos_terrain_bridge_bindThinUniforms() {
-    if (!g_gos_renderer) return -1;
-    return g_gos_renderer->terrainBindThinUniformsForPatchStream();
-}
+// gos_terrain_bridge_bindThinUniforms deleted by DEAD-BRIDGE-DELETE-1: zero external
+// callers (the internal terrainBindThinUniformsForPatchStream IS live; this standalone
+// wrapper is not). Whole-repo grep clean.
 
 // gos_terrain_bridge_drawSingleBucketTriangles deleted by TERRAIN-BRIDGE-BODY-DELETE-2:
 // callerless after TerrainPatchStream::flush() retired (TERRAIN-BRIDGE-BODY-DELETE-1).
 
-unsigned int gos_terrain_bridge_getWaterFastShaderProgram() {
-    if (!g_gos_renderer) return 0u;
-    glsl_program* p = g_gos_renderer->getWaterFastProgram();
-    return (p && p->shp_) ? (unsigned int)p->shp_ : 0u;
-}
+// gos_terrain_bridge_getWaterFastShaderProgram deleted by DEAD-BRIDGE-DELETE-1:
+// zero external callers tree-wide. Wrapper around live getWaterFastProgram().
 
 // WaterPerCmd — per-draw data for glMultiDrawArraysIndirect, indexed by gl_DrawID.
 // 32 B std430-aligned; lockstep with gos_terrain_water_fast_mdi.vert binding 7.
