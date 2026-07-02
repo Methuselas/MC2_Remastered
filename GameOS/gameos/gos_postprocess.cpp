@@ -193,6 +193,20 @@ float mc2ShadowMechSoft()
     return s_s;
 }
 
+// PROP-SHADOW-RECEIVE-1: static props RECEIVE the dynamic CSM cascade shadow
+// (building self-shadow + prop-on-prop) in shadow_screen.frag instead of the
+// static map only. MC2_PROP_SHADOW_RECEIVE, DEFAULT OFF; =1 enables. OFF =
+// legacy: the GBuffer1.a=0.25 prop class skips sampleDynamicShadow entirely
+// (uniform uploads 0 -> shader branch unreachable -> pixel-identical).
+int mc2PropShadowReceive()
+{
+    static const int s_v = []() {
+        const char* v = getenv("MC2_PROP_SHADOW_RECEIVE");
+        return (v && v[0]) ? atoi(v) : 0;   // DEFAULT 0 (off)
+    }();
+    return s_v;
+}
+
 // Cloud-shadow master gate. MC2_CLOUD_SHADOW, DEFAULT ON (preserves the legacy
 // inline-cloud behavior that this fullscreen pass replaces). =0 disables the
 // whole pass (and the C++ early-return skips it entirely).
@@ -2300,6 +2314,8 @@ void gosPostProcess::runScreenShadow()
     screenShadowProg_->setFloat("shadowSoftness", mc2ShadowCsmSoftness());  // match terrain default
     screenShadowProg_->setFloat("objNormalBiasScale", mc2ShadowObjNormalBias());
     screenShadowProg_->setFloat("mechSoft", mc2ShadowMechSoft());
+    // PROP-SHADOW-RECEIVE-1: default 0 (gate OFF) -> shader prop branch inert.
+    screenShadowProg_->setInt("propShadowReceive", mc2PropShadowReceive());
     {
         // SCREEN-SHADOW-LIGHTDIR-FRAME-FIX: the back-face guard + normal-offset
         // dot objN against lightDir. objN in shadow_screen.frag is the SAME
