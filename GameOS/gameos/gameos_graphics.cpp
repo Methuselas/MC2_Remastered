@@ -9145,6 +9145,11 @@ void __stdcall gos_LightDataSsbo_UploadSplit(const void* data, size_t prefixByte
 	// implicitly since the whole buffer is now fresh).
 	if (s_lightDataSsbo == 0 || (GLsizeiptr)totalBytes > s_lightDataSsboBytes) {
 		gos_LightDataSsbo_Upload(data, totalBytes);  // reuses create/grow + binding
+		// LIGHT-PREFIX-GPU-COPY-1: the caller CONSUMED prefixDirty before this
+		// early return. If a re-bake (S unchanged) landed on the same frame as a
+		// buffer grow, the stash would silently keep the stale prefix. Force a
+		// refresh on the next gated frame (cheap; grow frames are rare).
+		s_lightPrefixStashLive = 0;
 		if (s_lightSsboTrace) {
 			std::fprintf(stderr, "[LIGHTSSBO v2] event=full_on_grow total=%zu prefix=%zu\n",
 			             totalBytes, prefixBytes);
