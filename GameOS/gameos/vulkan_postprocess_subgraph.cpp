@@ -176,6 +176,19 @@ bool resolve_validation_preset(std::vector<VkValidationFeatureEnableEXT>& feats,
     return true;
 }
 
+// SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1: independent read of the SAME env var the GL path
+// gates on (GameOS/gameos/gos_postprocess.cpp's skyboxFogExcludeEnabled() has internal
+// linkage and isn't reachable from this TU; every MC2_VULKAN_* gate in this file
+// already reads its own env var this way, so this follows the established pattern
+// rather than threading state cross-TU). Cached once, same semantics: "1" => on.
+bool skyboxFogExcludeEnabledVk() {
+    static const bool s_on = []() {
+        const char* v = std::getenv("MC2_SKYBOX_FOG_EXCLUDE");
+        return v && v[0] == '1';
+    }();
+    return s_on;
+}
+
 VKAPI_ATTR VkBool32 VKAPI_CALL subgraph_debug_cb(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT /*types*/,
@@ -246,6 +259,8 @@ VkShaderModule load_spv(VkDevice device, const std::string& path) {
 
 // std140 layouts -- IDENTICAL to the two islands' PODs (must match the SAME shaders
 // shaders/vulkan/edge_fog.frag + fog_oob.frag as-is).
+// SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1 appends skyExcludeEnabled (int) to both PODs,
+// matching the GLSL structs' new trailing u_skyExcludeEnabled member.
 struct EdgeFogParams {
     float invViewProj[16]; // @0  (same 16 floats the GL path uploads, row-major)
     float fogColor[3];     // @64
@@ -255,19 +270,30 @@ struct EdgeFogParams {
     float fogHeight;       // @88
     float fogMax;          // @92
     float waterElevation;  // @96
+    int32_t skyExcludeEnabled; // @100 (SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1)
 };
-static_assert(sizeof(EdgeFogParams) == 100, "EdgeFogParams std140 offsets drifted");
+static_assert(sizeof(EdgeFogParams) == 104, "EdgeFogParams std140 offsets drifted");
 
 struct FogOobParams {
     float invViewProj[16]; // @0  (same 16 floats the GL path uses, row-major)
     float fogColor[3];     // @64
     float fogOpacity;      // @76
     float time;            // @80
+    int32_t skyExcludeEnabled; // @84 (SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1)
 };
-static_assert(sizeof(FogOobParams) == 84, "FogOobParams std140 offsets drifted");
+static_assert(sizeof(FogOobParams) == 88, "FogOobParams std140 offsets drifted");
 
-const VkFormat kDepthFmt = VK_FORMAT_D32_SFLOAT;          // PostprocessSubgraphDepth
-const VkFormat kColorFmt = VK_FORMAT_R16G16B16A16_SFLOAT; // PostprocessSubgraphColor
+const VkFormat kDepthFmt   = VK_FORMAT_D32_SFLOAT;          // PostprocessSubgraphDepth
+const VkFormat kColorFmt   = VK_FORMAT_R16G16B16A16_SFLOAT; // PostprocessSubgraphColor
+// SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1: stencil-tag bridge image. R8_UINT (not
+// VK_FORMAT_S8_UINT/D24_UNORM_S8_UINT) because R8_UINT sampled-image support is a
+// core Vulkan 1.0 guarantee (VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT), whereas S8_UINT
+// has NO universal support guarantee for ANY usage including sampling. The subgraph
+// already bridges depth/color via CPU glGetTexImage + vkCmdCopyBufferToImage (see
+// runPostprocessSubgraph()); the stencil-tag value is bridged the same way from the
+// GL sceneStencilViewTex_ (GL_STENCIL_INDEX texture view), so no native D24S8 image
+// or VK_IMAGE_ASPECT_STENCIL_BIT view is needed on the Vulkan side.
+const VkFormat kStencilFmt = VK_FORMAT_R8_UINT;             // PostprocessSubgraphStencil
 
 } // namespace
 
@@ -295,20 +321,28 @@ struct gosPostProcess::VulkanPostprocessSubgraph {
     VkImage       colorImage = VK_NULL_HANDLE;  VmaAllocation colorAlloc = VK_NULL_HANDLE;
     VkImageView   colorView   = VK_NULL_HANDLE;
     VkSampler     depthSampler = VK_NULL_HANDLE; // shared by both descriptor sets
+    // SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1: stencil-tag bridge image (R8_UINT). Only
+    // allocated/uploaded/bound when the GL side has sceneStencilViewTex_ != 0 (i.e.
+    // MC2_SKYBOX_FOG_EXCLUDE=1); otherwise stencilImage stays VK_NULL_HANDLE and the
+    // descriptor still needs a valid dummy binding (see stencilDummyImage below).
+    VkImage       stencilImage = VK_NULL_HANDLE; VmaAllocation stencilAlloc = VK_NULL_HANDLE;
+    VkImageView   stencilView   = VK_NULL_HANDLE;
+    VkSampler     stencilSampler = VK_NULL_HANDLE; // nearest, shared by both sets
 
-    // Host-visible staging: depth-in, color-in, color-out + the two param UBOs.
+    // Host-visible staging: depth-in, color-in, color-out, stencil-in + the two param UBOs.
     VkBuffer      depthStaging  = VK_NULL_HANDLE; VmaAllocation depthStagingAlloc  = VK_NULL_HANDLE;
     VkBuffer      colorStaging  = VK_NULL_HANDLE; VmaAllocation colorStagingAlloc  = VK_NULL_HANDLE; // color-in
     VkBuffer      colorReadback = VK_NULL_HANDLE; VmaAllocation colorReadbackAlloc = VK_NULL_HANDLE; // color-out
+    VkBuffer      stencilStaging = VK_NULL_HANDLE; VmaAllocation stencilStagingAlloc = VK_NULL_HANDLE; // stencil-in
     VkBuffer      edgeUbo       = VK_NULL_HANDLE; VmaAllocation edgeUboAlloc       = VK_NULL_HANDLE;
     VkBuffer      oobUbo        = VK_NULL_HANDLE; VmaAllocation oobUboAlloc        = VK_NULL_HANDLE;
 
     VkRenderPass      rpass  = VK_NULL_HANDLE;   // 1 color attachment LOAD/STORE
     VkFramebuffer     fb     = VK_NULL_HANDLE;
-    VkDescriptorSetLayout dsl = VK_NULL_HANDLE;  // binding0 sampler, binding1 UBO
+    VkDescriptorSetLayout dsl = VK_NULL_HANDLE;  // binding0 depth sampler, binding1 UBO, binding2 stencil sampler
     VkDescriptorPool  pool   = VK_NULL_HANDLE;
-    VkDescriptorSet   edgeSet = VK_NULL_HANDLE;  // depth sampler + EdgeFog UBO
-    VkDescriptorSet   oobSet  = VK_NULL_HANDLE;  // depth sampler + FogOob  UBO
+    VkDescriptorSet   edgeSet = VK_NULL_HANDLE;  // depth sampler + EdgeFog UBO + stencil sampler
+    VkDescriptorSet   oobSet  = VK_NULL_HANDLE;  // depth sampler + FogOob  UBO + stencil sampler
     VkPipelineLayout  playout = VK_NULL_HANDLE;
     VkPipeline        edgePipe = VK_NULL_HANDLE;
     VkPipeline        oobPipe  = VK_NULL_HANDLE;
@@ -324,6 +358,7 @@ struct gosPostProcess::VulkanPostprocessSubgraph {
     // CPU scratch for the GL<->staging bridge.
     std::vector<float>    depthScratch;  // width*height floats
     std::vector<uint16_t> colorScratch;  // width*height*4 halfs
+    std::vector<uint8_t>  stencilScratch; // width*height bytes (SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1)
 };
 
 namespace {
@@ -346,15 +381,19 @@ void destroy_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s) {
     if (s->oobVert)  vkDestroyShaderModule(d, s->oobVert, nullptr);
     if (s->fb)     vkDestroyFramebuffer(d, s->fb, nullptr);
     if (s->rpass)  vkDestroyRenderPass(d, s->rpass, nullptr);
+    if (s->stencilSampler) vkDestroySampler(d, s->stencilSampler, nullptr);
     if (s->depthSampler) vkDestroySampler(d, s->depthSampler, nullptr);
+    if (s->stencilView) vkDestroyImageView(d, s->stencilView, nullptr);
     if (s->colorView) vkDestroyImageView(d, s->colorView, nullptr);
     if (s->depthView) vkDestroyImageView(d, s->depthView, nullptr);
     if (s->allocator) {
         if (s->oobUbo)        vmaDestroyBuffer(s->allocator, s->oobUbo, s->oobUboAlloc);
         if (s->edgeUbo)       vmaDestroyBuffer(s->allocator, s->edgeUbo, s->edgeUboAlloc);
+        if (s->stencilStaging) vmaDestroyBuffer(s->allocator, s->stencilStaging, s->stencilStagingAlloc);
         if (s->colorReadback) vmaDestroyBuffer(s->allocator, s->colorReadback, s->colorReadbackAlloc);
         if (s->colorStaging)  vmaDestroyBuffer(s->allocator, s->colorStaging, s->colorStagingAlloc);
         if (s->depthStaging)  vmaDestroyBuffer(s->allocator, s->depthStaging, s->depthStagingAlloc);
+        if (s->stencilImage)  vmaDestroyImage(s->allocator, s->stencilImage, s->stencilAlloc);
         if (s->colorImage)    vmaDestroyImage(s->allocator, s->colorImage, s->colorAlloc);
         if (s->depthImage)    vmaDestroyImage(s->allocator, s->depthImage, s->depthAlloc);
         vmaDestroyAllocator(s->allocator);
@@ -542,6 +581,14 @@ bool build_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s, int W, int H) 
                     &s->depthImage, &s->depthAlloc)) return false;
     if (!make_image(kColorFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT, &s->colorImage, &s->colorAlloc)) return false;
+    // SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1: stencil-tag bridge image (R8_UINT, sampled +
+    // transfer-dst, same shape as depthImage). Always allocated (fixed descriptor
+    // layout regardless of gate state); left all-zero when the gate is off or GL has
+    // no sceneStencilViewTex_ this frame, so the shader's u_skyExcludeEnabled==0 path
+    // never samples it anyway (byte-identical-OFF is enforced by the uniform, not by
+    // skipping allocation).
+    if (!make_image(kStencilFmt, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    &s->stencilImage, &s->stencilAlloc)) return false;
 
     auto make_view = [&](VkImage img, VkFormat fmt, VkImageAspectFlags aspect, VkImageView* view) -> bool {
         VkImageViewCreateInfo vi{};
@@ -556,6 +603,7 @@ bool build_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s, int W, int H) 
     };
     if (!make_view(s->depthImage, kDepthFmt, VK_IMAGE_ASPECT_DEPTH_BIT, &s->depthView)) return false;
     if (!make_view(s->colorImage, kColorFmt, VK_IMAGE_ASPECT_COLOR_BIT, &s->colorView)) return false;
+    if (!make_view(s->stencilImage, kStencilFmt, VK_IMAGE_ASPECT_COLOR_BIT, &s->stencilView)) return false;
 
     {
         VkSamplerCreateInfo si{};
@@ -567,6 +615,10 @@ bool build_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s, int W, int H) 
         si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         r = vkCreateSampler(s->device, &si, nullptr, &s->depthSampler);
+        if (r != VK_SUCCESS) { vlog("vkCreateSampler failed (%d).", (int)r); return false; }
+        // SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1: same nearest/clamp sampler shape, separate
+        // handle since it samples a different (integer-format) image.
+        r = vkCreateSampler(s->device, &si, nullptr, &s->stencilSampler);
         if (r != VK_SUCCESS) { vlog("vkCreateSampler failed (%d).", (int)r); return false; }
     }
 
@@ -582,11 +634,13 @@ bool build_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s, int W, int H) 
         if (rr != VK_SUCCESS) { vlog("vmaCreateBuffer failed (%d).", (int)rr); return false; }
         return true;
     };
-    const VkDeviceSize depthBytes = (VkDeviceSize)W * H * 4;      // R32 float
-    const VkDeviceSize colorBytes = (VkDeviceSize)W * H * 4 * 2;  // RGBA16F
+    const VkDeviceSize depthBytes   = (VkDeviceSize)W * H * 4;      // R32 float
+    const VkDeviceSize colorBytes   = (VkDeviceSize)W * H * 4 * 2;  // RGBA16F
+    const VkDeviceSize stencilBytes = (VkDeviceSize)W * H * 1;      // R8_UINT (SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1)
     if (!make_buffer(depthBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &s->depthStaging, &s->depthStagingAlloc)) return false;
     if (!make_buffer(colorBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &s->colorStaging, &s->colorStagingAlloc)) return false;
     if (!make_buffer(colorBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &s->colorReadback, &s->colorReadbackAlloc)) return false;
+    if (!make_buffer(stencilBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &s->stencilStaging, &s->stencilStagingAlloc)) return false;
     if (!make_buffer(sizeof(EdgeFogParams), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &s->edgeUbo, &s->edgeUboAlloc)) return false;
     if (!make_buffer(sizeof(FogOobParams),  VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &s->oobUbo,  &s->oobUboAlloc))  return false;
 
@@ -641,10 +695,12 @@ bool build_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s, int W, int H) 
         if (r != VK_SUCCESS) { vlog("vkCreateFramebuffer failed (%d).", (int)r); return false; }
     }
 
-    // ---- Descriptor set layout: binding0 = combined image sampler, binding1 = UBO.
-    // TWO sets allocated: edge + oob (shared binding0 depth sampler, per-pass binding1 UBO).
+    // ---- Descriptor set layout: binding0 = depth sampler, binding1 = UBO, binding2 =
+    // stencil-tag sampler (SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1). TWO sets allocated: edge
+    // + oob (shared binding0 depth sampler + binding2 stencil sampler, per-pass
+    // binding1 UBO).
     {
-        VkDescriptorSetLayoutBinding binds[2]{};
+        VkDescriptorSetLayoutBinding binds[3]{};
         binds[0].binding = 0;
         binds[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         binds[0].descriptorCount = 1;
@@ -653,15 +709,19 @@ bool build_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s, int W, int H) 
         binds[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         binds[1].descriptorCount = 1;
         binds[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        binds[2].binding = 2;
+        binds[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        binds[2].descriptorCount = 1;
+        binds[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         VkDescriptorSetLayoutCreateInfo lci{};
         lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        lci.bindingCount = 2;
+        lci.bindingCount = 3;
         lci.pBindings = binds;
         r = vkCreateDescriptorSetLayout(s->device, &lci, nullptr, &s->dsl);
         if (r != VK_SUCCESS) { vlog("vkCreateDescriptorSetLayout failed (%d).", (int)r); return false; }
 
         VkDescriptorPoolSize sizes[2]{};
-        sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; sizes[0].descriptorCount = 2;
+        sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; sizes[0].descriptorCount = 4; // depth+stencil x2 sets
         sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;         sizes[1].descriptorCount = 2;
         VkDescriptorPoolCreateInfo pci{};
         pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -683,15 +743,20 @@ bool build_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s, int W, int H) 
         s->edgeSet = setsOut[0];
         s->oobSet  = setsOut[1];
 
-        // Bind the shared depth image (binding0) + per-set UBO (binding1) once.
+        // Bind the shared depth image (binding0) + per-set UBO (binding1) + shared
+        // stencil-tag image (binding2) once.
         VkDescriptorImageInfo imgInfo{};
         imgInfo.sampler = s->depthSampler;
         imgInfo.imageView = s->depthView;
         imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorImageInfo stencilInfo{};
+        stencilInfo.sampler = s->stencilSampler;
+        stencilInfo.imageView = s->stencilView;
+        stencilInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         VkDescriptorBufferInfo edgeUboInfo{ s->edgeUbo, 0, VK_WHOLE_SIZE };
         VkDescriptorBufferInfo oobUboInfo { s->oobUbo,  0, VK_WHOLE_SIZE };
-        VkWriteDescriptorSet writes[4]{};
-        // edge set: sampler + edge UBO
+        VkWriteDescriptorSet writes[6]{};
+        // edge set: depth sampler + edge UBO + stencil sampler
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = s->edgeSet; writes[0].dstBinding = 0; writes[0].descriptorCount = 1;
         writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -700,16 +765,24 @@ bool build_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s, int W, int H) 
         writes[1].dstSet = s->edgeSet; writes[1].dstBinding = 1; writes[1].descriptorCount = 1;
         writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         writes[1].pBufferInfo = &edgeUboInfo;
-        // oob set: sampler + oob UBO
         writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet = s->oobSet; writes[2].dstBinding = 0; writes[2].descriptorCount = 1;
+        writes[2].dstSet = s->edgeSet; writes[2].dstBinding = 2; writes[2].descriptorCount = 1;
         writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[2].pImageInfo = &imgInfo;
+        writes[2].pImageInfo = &stencilInfo;
+        // oob set: depth sampler + oob UBO + stencil sampler
         writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[3].dstSet = s->oobSet; writes[3].dstBinding = 1; writes[3].descriptorCount = 1;
-        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[3].pBufferInfo = &oobUboInfo;
-        vkUpdateDescriptorSets(s->device, 4, writes, 0, nullptr);
+        writes[3].dstSet = s->oobSet; writes[3].dstBinding = 0; writes[3].descriptorCount = 1;
+        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[3].pImageInfo = &imgInfo;
+        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet = s->oobSet; writes[4].dstBinding = 1; writes[4].descriptorCount = 1;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[4].pBufferInfo = &oobUboInfo;
+        writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[5].dstSet = s->oobSet; writes[5].dstBinding = 2; writes[5].descriptorCount = 1;
+        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[5].pImageInfo = &stencilInfo;
+        vkUpdateDescriptorSets(s->device, 6, writes, 0, nullptr);
     }
 
     // ---- Two pipelines (fullscreen tri; AlphaBlend; depth off; cull none). Shared
@@ -812,10 +885,12 @@ bool build_subgraph(gosPostProcess::VulkanPostprocessSubgraph* s, int W, int H) 
 
     s->depthScratch.resize((size_t)W * H);
     s->colorScratch.resize((size_t)W * H * 4);
+    s->stencilScratch.assign((size_t)W * H, 0); // SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1: zero-init (gate-OFF-safe default)
     s->inited = true;
     setFallback("");
     vlog("subgraph initialized: %dx%d device ready (depth D32_SFLOAT, color RGBA16F, "
-         "2 pipelines edge_fog+fog_oob, ONE render pass, TWO draws, NO internal readback).", W, H);
+         "stencil-tag bridge R8_UINT, 2 pipelines edge_fog+fog_oob, ONE render pass, "
+         "TWO draws, NO internal readback).", W, H);
     return true;
 }
 
@@ -895,6 +970,19 @@ void gosPostProcess::runPostprocessSubgraph()
     glBindTexture(GL_TEXTURE_2D, 0);
     g_sub.copyColorInUs = usSince(tColor0);
 
+    // SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1: bridge the GL stencil-tag view (sceneStencilViewTex_,
+    // GL_STENCIL_INDEX texture-view mode) the same way depth/color are bridged above.
+    // Only sampled when the gate is on AND the GL side actually created the view (mirrors
+    // the GL runEdgeFog()/runFogOob() `skyExclude` condition exactly); otherwise the
+    // scratch buffer stays whatever it was last set to (zero-initialized at build time)
+    // and the shader's u_skyExcludeEnabled==0 uniform means it's never sampled anyway.
+    const bool skyExclude = skyboxFogExcludeEnabledVk() && sceneStencilViewTex_ != 0;
+    if (skyExclude) {
+        glBindTexture(GL_TEXTURE_2D, sceneStencilViewTex_);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, s->stencilScratch.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
     {
         void* p = nullptr;
         if (vmaMapMemory(s->allocator, s->depthStagingAlloc, &p) == VK_SUCCESS) {
@@ -904,6 +992,10 @@ void gosPostProcess::runPostprocessSubgraph()
         if (vmaMapMemory(s->allocator, s->colorStagingAlloc, &p) == VK_SUCCESS) {
             std::memcpy(p, s->colorScratch.data(), (size_t)W * H * 4 * 2);
             vmaUnmapMemory(s->allocator, s->colorStagingAlloc);
+        }
+        if (skyExclude && vmaMapMemory(s->allocator, s->stencilStagingAlloc, &p) == VK_SUCCESS) {
+            std::memcpy(p, s->stencilScratch.data(), (size_t)W * H);
+            vmaUnmapMemory(s->allocator, s->stencilStagingAlloc);
         }
     }
 
@@ -921,6 +1013,7 @@ void gosPostProcess::runPostprocessSubgraph()
         params.fogHeight = edgeFogHeight_;
         params.fogMax = edgeFogMax_;
         params.waterElevation = waterElevation_;
+        params.skyExcludeEnabled = skyExclude ? 1 : 0; // SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1
         void* p = nullptr;
         if (vmaMapMemory(s->allocator, s->edgeUboAlloc, &p) == VK_SUCCESS) {
             std::memcpy(p, &params, sizeof(params));
@@ -937,6 +1030,7 @@ void gosPostProcess::runPostprocessSubgraph()
         params.time = SmokeMode::fixedTimestepEnabled()
                           ? (float)SmokeMode::fixedClockSeconds()
                           : (float)SDL_GetTicks() / 1000.0f;
+        params.skyExcludeEnabled = skyExclude ? 1 : 0; // SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1
         void* p = nullptr;
         if (vmaMapMemory(s->allocator, s->oobUboAlloc, &p) == VK_SUCCESS) {
             std::memcpy(p, &params, sizeof(params));
@@ -971,12 +1065,24 @@ void gosPostProcess::runPostprocessSubgraph()
     VkBufferImageCopy colorRegion{};
     colorRegion.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     colorRegion.imageExtent = {(uint32_t)W, (uint32_t)H, 1};
+    VkBufferImageCopy stencilRegion{}; // SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1
+    stencilRegion.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; // R8_UINT color-aspect image
+    stencilRegion.imageExtent = {(uint32_t)W, (uint32_t)H, 1};
 
     // depth: UNDEFINED -> TRANSFER_DST, copy, -> SHADER_READ_ONLY (sampled by both draws)
     barrier(s->depthImage, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
     vkCmdCopyBufferToImage(s->cbuf, s->depthStaging, s->depthImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &depthRegion);
     barrier(s->depthImage, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+    // stencil-tag bridge: UNDEFINED -> TRANSFER_DST, copy (every frame, so gate-OFF ->
+    // gate-ON transitions never sample stale data from a previous frame's residency),
+    // -> SHADER_READ_ONLY (sampled by both draws, mirrors depthImage exactly).
+    barrier(s->stencilImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    vkCmdCopyBufferToImage(s->cbuf, s->stencilStaging, s->stencilImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &stencilRegion);
+    barrier(s->stencilImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 
     // color: UNDEFINED -> TRANSFER_DST, preload scene color, -> COLOR_ATTACHMENT

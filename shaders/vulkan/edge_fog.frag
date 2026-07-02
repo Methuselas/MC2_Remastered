@@ -31,15 +31,25 @@ layout(location = 0) out vec4 outFog;
 
 layout(set = 0, binding = 0) uniform sampler2D depthTex;
 
+// SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1 (mirrors GL shaders/edge_fog.frag, gate
+// MC2_SKYBOX_FOG_EXCLUDE, default OFF -> u_skyExcludeEnabled=0, byte-identical to
+// legacy). stencilTex is an R8_UINT view fed by a CPU glGetTexImage(GL_STENCIL_INDEX)
+// bridge of the GL stencil-tag pass' output (same bridge shape as depthTex/colorTex --
+// see vulkan_postprocess_subgraph.cpp), NOT a native VK_FORMAT_S8_UINT sampled view
+// (no universal Vulkan sampled-image guarantee for that format). Raw unsigned index
+// values (0..255), not normalized floats -- matches the GL usampler2D contract.
+layout(set = 0, binding = 2) uniform usampler2D stencilTex;
+
 // std140. Offsets (bytes) chosen to match the CPU-side POD in
 // vulkan_edge_fog_island.cpp:
-//   invViewProj      @  0  (mat4, 64B)
-//   u_fogColor       @ 64  (vec3, 12B) + pad float @ 76
-//   u_halfExtent     @ 80
-//   u_fogStart       @ 84
-//   u_fogHeight      @ 88
-//   u_fogMax         @ 92
-//   u_waterElevation @ 96
+//   invViewProj          @  0  (mat4, 64B)
+//   u_fogColor            @ 64  (vec3, 12B) + pad float @ 76
+//   u_halfExtent          @ 80
+//   u_fogStart            @ 84
+//   u_fogHeight           @ 88
+//   u_fogMax              @ 92
+//   u_waterElevation      @ 96
+//   u_skyExcludeEnabled   @100  (int; SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1)
 // row_major: the CPU packs invViewProj as the SAME 16 floats the GL path uploads
 // (row-major direct upload, glUniformMatrix4fv GL_FALSE). std140 mat4 defaults to
 // column-major, which would transpose the matrix and break the unprojection
@@ -53,11 +63,21 @@ layout(set = 0, binding = 1, std140, row_major) uniform EdgeFogParams {
     float u_fogHeight;
     float u_fogMax;
     float u_waterElevation;
+    int   u_skyExcludeEnabled;
 };
 
 void main()
 {
     float rawDepth = texture(depthTex, TexCoord).r;
+
+    // SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1: hard-exclude true sky (stencil==1) when the
+    // gate is on. Mirrors GL edge_fog.frag exactly -- gate this on the same
+    // rawDepth<0.0001 population the void-height-plane branch below already targets.
+    if (u_skyExcludeEnabled != 0 && rawDepth < 0.0001) {
+        uint stencilVal = texture(stencilTex, TexCoord).r;
+        if (stencilVal != 0u) { outFog = vec4(0.0); return; }
+    }
+
     vec2 ndc = TexCoord * 2.0 - 1.0;
 
     vec4 pNear = invViewProj * vec4(ndc, 1.0, 1.0);

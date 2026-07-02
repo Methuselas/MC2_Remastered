@@ -37,11 +37,21 @@ layout(location = 0) out vec4 outFog;
 
 layout(set = 0, binding = 0) uniform sampler2D depthTex;
 
+// SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1 (mirrors GL shaders/fog_oob.frag, gate
+// MC2_SKYBOX_FOG_EXCLUDE, default OFF -> u_skyExcludeEnabled=0, byte-identical to
+// legacy). stencilTex is an R8_UINT view fed by a CPU glGetTexImage(GL_STENCIL_INDEX)
+// bridge of the GL stencil-tag pass' output (same bridge shape as depthTex/colorTex --
+// see vulkan_postprocess_subgraph.cpp), NOT a native VK_FORMAT_S8_UINT sampled view
+// (no universal Vulkan sampled-image guarantee for that format). Raw unsigned index
+// values (0..255), not normalized floats -- matches the GL usampler2D contract.
+layout(set = 0, binding = 2) uniform usampler2D stencilTex;
+
 // std140. Offsets (bytes) match the CPU-side POD in vulkan_oob_fog_island.cpp:
-//   invViewProj  @  0  (mat4, 64B)
-//   u_fogColor   @ 64  (vec3, 12B)
-//   u_fogOpacity @ 76  (float; packs into the vec3's trailing slot in std140)
-//   u_time       @ 80  (float)
+//   invViewProj         @  0  (mat4, 64B)
+//   u_fogColor           @ 64  (vec3, 12B)
+//   u_fogOpacity          @ 76  (float; packs into the vec3's trailing slot in std140)
+//   u_time                @ 80  (float)
+//   u_skyExcludeEnabled   @ 84  (int; SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1)
 // row_major: the CPU packs invViewProj as the SAME 16 floats the GL path uploads.
 // std140 mat4 defaults to column-major, which would transpose the matrix and break
 // the unprojection (the VULKAN-EDGE-FOG-ISLAND-2b matrix bug) -- hence row_major.
@@ -50,6 +60,7 @@ layout(set = 0, binding = 1, std140, row_major) uniform FogOobParams {
     vec3  u_fogColor;
     float u_fogOpacity;
     float u_time;
+    int   u_skyExcludeEnabled;
 };
 
 // ---- 3D value noise (IDENTICAL to the GL fog_oob.frag) ----
@@ -83,6 +94,15 @@ void main()
 {
     float rawDepth = texture(depthTex, TexCoord).r;
     if (rawDepth > 0.0001) { outFog = vec4(0.0); return; }
+
+    // SKYBOX-FOG-EXCLUDE-VULKAN-PORT-1: hard-exclude true sky (stencil==1) when the
+    // gate is on. Mirrors GL fog_oob.frag exactly -- stencil is only ever tagged for
+    // depth-unwritten pixels (sky never writes depth), so this check is only reached
+    // for the same population the rawDepth test above already narrowed to.
+    if (u_skyExcludeEnabled != 0) {
+        uint stencilVal = texture(stencilTex, TexCoord).r;
+        if (stencilVal != 0u) { outFog = vec4(0.0); return; }
+    }
 
     vec2 ndc = TexCoord * 2.0 - 1.0;
     vec4 pNear = invViewProj * vec4(ndc, 1.0, 1.0);
