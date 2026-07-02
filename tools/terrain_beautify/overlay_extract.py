@@ -100,22 +100,48 @@ def classify_concrete(terrtype: np.ndarray) -> np.ndarray:
     return mask
 
 
-def read_bridge_gate_overlay_cells(side: int, blocks: bytes) -> np.ndarray:
-    """Cells carrying a runtime-mutable overlay (bridge/gate) MUST be excluded
+_BRIDGE_DILATE = 2  # cells of water-adjacency treated as bridge/gate-likely
+
+
+def read_bridge_gate_overlay_cells(side: int, blocks: bytes, water_elev: float) -> np.ndarray:
+    """Returns a bool mask of cells that are BRIDGE/GATE-LIKELY (water-adjacent),
+    for the caller to intersect with its own overlay/concrete tag mask.
+
+    Cells carrying a runtime-mutable overlay (bridge/gate) MUST be excluded
     from the static bake (recon landmine #7 / #2 -- bridges mutate overlay at
-    runtime, bldng.cpp:861-876). overlay_hi (hi-16 of textureData) nonzero and
-    not the 0xFFFF sentinel marks an overlay-system cell (roads/runway/bridge);
-    concrete TERRAIN-TYPE cells are unaffected by this (they're a different
-    system per recon), but this is here so any future road/bridge scope
-    extension inherits the exclusion for free."""
-    import struct as _struct  # local import keeps top-level deps minimal
-    n = side * side
-    PCV_SIZE = 32
-    OFF_TEXDATA = 16
-    arr = np.frombuffer(blocks, dtype=np.uint8, count=n * PCV_SIZE).reshape(n, PCV_SIZE)
-    texdata = arr[:, OFF_TEXDATA:OFF_TEXDATA + 4].copy().view(np.uint32).reshape(side, side)
-    overlay_hi = (texdata >> 16) & 0xFFFF
-    return (overlay_hi != 0) & (overlay_hi != 0xFFFF)
+    runtime, bldng.cpp:861-876).
+
+    ROOT-BUG FIX (found by WHOLESALE-VECTORIZE-1, previously worked around
+    locally in cook_markings.py): the original body returned
+    `(overlay_hi != 0) & (overlay_hi != 0xFFFF)` -- i.e. "is this cell
+    overlay-tagged AT ALL" -- which is not a bridge/gate discriminator, it is
+    the exact same predicate used to detect ANY overlay cell (roads, runway
+    paint, bridges, gates alike). Applied as an exclusion mask in cmd_extract,
+    it wrongly dropped every overlay-tagged concrete cell from the sidecar
+    bake, bridge or not (measured: 449/1170 concrete cells wrongly excluded on
+    mc2_24, none of them within 2 cells of water).
+
+    The real per-family tile decode (bridge#### vs road#### vs runway####)
+    needs `TerrainTextures::baseTXMIndex`, a runtime texture-manager-assigned
+    index that is not content-derivable offline (recon). So this uses the
+    same WATER-ADJACENCY heuristic cook_markings.py adopted: bridges
+    physically cross water, so a cell within `_BRIDGE_DILATE` cells of a
+    water cell is treated as bridge/gate-likely; everything else (including
+    plain overlay-tagged concrete on dry land) is kept by the caller.
+    Conservative (errs toward excluding, never toward baking a runtime-
+    mutable cell)."""
+    water_elev_arr = np.float32(water_elev)
+    layers = extract_layers(side, blocks, water_elev_arr)
+    water = layers["water"]
+    dilated = water.copy()
+    for _ in range(_BRIDGE_DILATE):
+        nxt = dilated.copy()
+        nxt[1:, :] |= dilated[:-1, :]
+        nxt[:-1, :] |= dilated[1:, :]
+        nxt[:, 1:] |= dilated[:, :-1]
+        nxt[:, :-1] |= dilated[:, 1:]
+        dilated = nxt
+    return dilated
 
 
 # --- extract ------------------------------------------------------------------
@@ -137,7 +163,7 @@ def cmd_extract(args) -> int:
     layers = extract_layers(side, blocks, water_elev)
     concrete = classify_concrete(layers["terrtype"])  # (side, side) bool, row0=top=north
 
-    bridge_gate = read_bridge_gate_overlay_cells(side, blocks)
+    bridge_gate = read_bridge_gate_overlay_cells(side, blocks, water_elev)
     excluded = int((concrete & bridge_gate).sum())
     concrete = concrete & ~bridge_gate  # landmine #7/#2: never bake bridge/gate overlay cells
 

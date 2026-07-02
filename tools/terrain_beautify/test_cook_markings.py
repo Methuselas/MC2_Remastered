@@ -18,6 +18,7 @@ CARVER5_MISSIONS = Path("A:/Games/Carver5-feasibility/data/missions")
 
 sys.path.insert(0, str(HERE))
 import marking_glyphs as mg  # noqa: E402
+import cook_markings as cm  # noqa: E402
 
 
 def run(*args) -> subprocess.CompletedProcess:
@@ -120,6 +121,34 @@ def test_extract_mc2_24_finds_runway(tmp_path):
 
 @pytest.mark.skipif(not (CARVER5_MISSIONS / "mc2_01.pak").is_file(),
                      reason="Carver5-feasibility stock mission data not present")
+def test_extract_mc2_01_finds_cement_runway(tmp_path):
+    """mc2_01's runway/pads are CEMENT terrain-type cells (not overlay tiles)
+    laid out DIAGONALLY -- the original overlay-only + bbox-aspect extract
+    missed it entirely (the WHOLESALE-VECTORIZE-1 gap). The cement classifier
+    must find exactly one runway strip and emit the full marking set, plus
+    road chains for the overlay-tagged road cells."""
+    out = tmp_path / "markings.json"
+    r = _extract("mc2_01", out)
+    assert r.returncode == 0, r.stdout + r.stderr
+    n_cem = int(r.stdout.split("cement_runway_components=")[1].split()[0])
+    assert n_cem >= 1
+    n_chains = int(r.stdout.split("road_chains=")[1].split()[0])
+    assert n_chains >= 1
+
+    doc = json.loads(out.read_text())
+    glyph_names = {g["glyph"] for g in doc["glyphs"]}
+    assert "runway_centerline_dashes" in glyph_names
+    assert "runway_edge_stripes" in glyph_names
+    assert "runway_threshold_bars" in glyph_names
+    assert "runway_numeral" in glyph_names
+    assert doc["road_chains"], "expected road ribbon chains for mc2_01"
+    for chain in doc["road_chains"]:
+        assert len(chain["points"]) >= 2
+        assert chain["surface"] in ("asphalt", "gravel")
+
+
+@pytest.mark.skipif(not (CARVER5_MISSIONS / "mc2_01.pak").is_file(),
+                     reason="Carver5-feasibility stock mission data not present")
 def test_extract_pak_untouched_byte_identical(tmp_path):
     pak = CARVER5_MISSIONS / "mc2_01.pak"
     before = pak.read_bytes()
@@ -132,6 +161,114 @@ def test_extract_pak_untouched_byte_identical(tmp_path):
 def test_extract_missing_pak_fails(tmp_path):
     r = run("extract", "--pak", str(tmp_path / "nope.pak"), "--out", str(tmp_path / "out.json"))
     assert r.returncode == 4
+
+
+# --- cement-region classifier (WHOLESALE-VECTORIZE-1: mc2_01 gap fix) ----------
+def _diagonal_strip_mask(side: int = 64, half_width: int = 2,
+                         r0: int = 10, r1: int = 44) -> np.ndarray:
+    """Synthetic 45-degree concrete strip: cells within `half_width` of the
+    r==c diagonal between rows r0..r1. Bbox aspect ~1.0 (the failure mode
+    that hid mc2_01's runway); PCA elongation is high."""
+    mask = np.zeros((side, side), dtype=bool)
+    for r in range(r0, r1 + 1):
+        for c in range(side):
+            if abs(r - c) <= half_width:
+                mask[r, c] = True
+    return mask
+
+
+def test_cement_classifier_diagonal_strip_is_runway():
+    mask = _diagonal_strip_mask()
+    comps = cm._cement_components(mask, side=64)
+    assert len(comps) == 1
+    comp = comps[0]
+    assert comp["kind"] == "cement_runway", comp
+    # principal axis must be the diagonal, +/-45 deg (mod 180)
+    assert abs(abs(comp["angle_deg"]) - 45.0) < 6.0, comp["angle_deg"]
+    # length along the diagonal ~ (r1-r0)*sqrt(2) cells
+    assert comp["length_wu"] > 30 * 128
+
+
+def test_cement_classifier_square_block_is_pad():
+    mask = np.zeros((64, 64), dtype=bool)
+    mask[20:32, 20:32] = True  # 12x12 compact block
+    comps = cm._cement_components(mask, side=64)
+    assert len(comps) == 1
+    assert comps[0]["kind"] == "cement_pad", comps[0]
+
+
+def test_cement_classifier_ignores_tiny_blobs():
+    mask = np.zeros((64, 64), dtype=bool)
+    mask[5:8, 5:8] = True  # 9 cells < CEMENT_MIN_COUNT
+    assert cm._cement_components(mask, side=64) == []
+
+
+def test_runway_headings_reciprocal():
+    n1, n2 = cm._runway_headings(0.0)   # east-west strip
+    assert {n1, n2} == {"09", "27"}
+    n1, n2 = cm._runway_headings(90.0)  # north-south strip
+    assert {n1, n2} == {"36", "18"}
+
+
+# --- road chain tracing + ribbon geometry --------------------------------------
+def test_trace_chains_orders_l_shape():
+    """An L-shaped 1-cell-wide road must come out as ONE ordered chain whose
+    endpoints are the two tips of the L."""
+    cells = [(5, c) for c in range(5, 15)] + [(r, 14) for r in range(6, 12)]
+    rows = np.array([r for r, _ in cells])
+    cols = np.array([c for _, c in cells])
+    chains = cm._trace_chains(rows, cols)
+    assert len(chains) == 1
+    path = chains[0]
+    # 8-connected BFS may legitimately cut the inside corner diagonally
+    # (skipping the corner cell) -- the ribbon polyline still covers the L.
+    assert len(path) >= len(cells) - 1
+    assert {path[0], path[-1]} == {(5, 5), (11, 14)}
+
+
+def test_trace_chains_deterministic():
+    cells = [(5, c) for c in range(5, 15)] + [(r, 10) for r in range(6, 14)]
+    rows = np.array([r for r, _ in cells])
+    cols = np.array([c for _, c in cells])
+    c1 = cm._trace_chains(rows, cols)
+    c2 = cm._trace_chains(rows, cols)
+    assert c1 == c2
+
+
+def test_trace_chains_branch_connects_to_trunk():
+    """A T-junction decomposes into trunk + branch; the branch chain must
+    start at (or adjacent to) a trunk cell so ribbons visually join."""
+    trunk = [(5, c) for c in range(0, 20)]
+    branch = [(r, 10) for r in range(6, 14)]
+    cells = trunk + branch
+    rows = np.array([r for r, _ in cells])
+    cols = np.array([c for _, c in cells])
+    chains = cm._trace_chains(rows, cols)
+    assert len(chains) == 2
+    trunk_cells = set(chains[0])
+    branch_path = chains[1]
+    # first or last cell of the branch is a trunk cell (junction attach)
+    assert branch_path[0] in trunk_cells or branch_path[-1] in trunk_cells
+
+
+def test_dp_simplify_collapses_collinear_points():
+    pts = [(float(x), 0.0) for x in range(0, 1000, 100)]
+    out = cm._dp_simplify(pts, eps=10.0)
+    assert out == [pts[0], pts[-1]]
+
+
+def test_dp_simplify_keeps_corner():
+    pts = [(0.0, 0.0), (100.0, 0.0), (200.0, 0.0), (200.0, 100.0), (200.0, 200.0)]
+    out = cm._dp_simplify(pts, eps=10.0)
+    assert (200.0, 0.0) in out
+    assert out[0] == pts[0] and out[-1] == pts[-1]
+
+
+def test_dash_runs_alternate_and_cover_polyline():
+    runs = cm._dash_runs([(0.0, 0.0), (100.0, 0.0)], dash_wu=10.0, gap_wu=10.0)
+    assert len(runs) == 5  # 10 on / 10 off over 100wu
+    (x0, _), (x1, _) = runs[0]
+    assert x0 == 0.0 and abs(x1 - 10.0) < 1e-6
 
 
 # --- schema validation (placement doc shape) ----------------------------------
@@ -231,6 +368,71 @@ def test_compose_clamps_oversized_canvas(tmp_path):
     assert "clamped" in r.stdout
     w, h = Image.open(out).size
     assert max(w, h) <= 512
+
+
+def _write_chain_markings(tmp_path: Path, chains: list[dict]) -> Path:
+    p = tmp_path / "markings.json"
+    p.write_text(json.dumps({"mission": "synthetic", "side": 60, "glyphs": [],
+                             "road_chains": chains}))
+    return p
+
+
+def test_compose_draws_road_ribbon(tmp_path):
+    """A straight horizontal chain through the canvas centre must produce an
+    opaque dark asphalt ribbon along it (flat parametric shading, no TGA)."""
+    overlay = _make_overlay_png(tmp_path, 40, 40)
+    markings = _write_chain_markings(tmp_path, [
+        {"points": [[-80.0, 0.0], [80.0, 0.0]], "width_wu": 30.0,
+         "surface": "asphalt", "centerline": False},
+    ])
+    out = tmp_path / "composed.png"
+    r = run("compose", "--markings", str(markings), "--overlay", str(overlay),
+            "--out", str(out), "--px-per-wu", "1.0")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "road_ribbons=1" in r.stdout
+    arr = np.array(Image.open(out).convert("RGBA"))
+    cy, cx = arr.shape[0] // 2, arr.shape[1] // 2
+    # ribbon fill is dark asphalt (much darker than the 150-grey base)
+    assert arr[cy, cx, 0] < 100, arr[cy, cx]
+    assert arr[cy, cx, 3] == 255
+    # corner far from the chain remains the untouched base grey
+    assert tuple(arr[0, 0, :3]) == (150, 150, 150)
+
+
+def test_compose_ribbon_centerline_dashes(tmp_path):
+    overlay = _make_overlay_png(tmp_path, 200, 200)
+    markings = _write_chain_markings(tmp_path, [
+        {"points": [[-90.0, 0.0], [90.0, 0.0]], "width_wu": 30.0,
+         "surface": "asphalt", "centerline": True},
+    ])
+    out = tmp_path / "composed.png"
+    r = run("compose", "--markings", str(markings), "--overlay", str(overlay),
+            "--out", str(out), "--px-per-wu", "1.0")
+    assert r.returncode == 0, r.stdout + r.stderr
+    arr = np.array(Image.open(out).convert("RGBA"))
+    cy = arr.shape[0] // 2
+    # centerline dashes: some yellow-ish pixels on the centre row (r,g high, b low)
+    row = arr[cy - 2:cy + 3, :, :]
+    yellow = (row[..., 0] > 200) & (row[..., 1] > 150) & (row[..., 2] < 100)
+    assert yellow.any(), "expected yellow centerline dash pixels on the ribbon"
+
+
+def test_compose_ribbon_deterministic(tmp_path):
+    """Edge-wear noise is seeded -- two composes of the same inputs must be
+    byte-identical."""
+    overlay = _make_overlay_png(tmp_path, 60, 60)
+    markings = _write_chain_markings(tmp_path, [
+        {"points": [[-80.0, -40.0], [0.0, 0.0], [80.0, 40.0]], "width_wu": 24.0,
+         "surface": "asphalt", "centerline": True},
+    ])
+    out1 = tmp_path / "c1.png"
+    out2 = tmp_path / "c2.png"
+    r1 = run("compose", "--markings", str(markings), "--overlay", str(overlay),
+             "--out", str(out1), "--px-per-wu", "1.0")
+    r2 = run("compose", "--markings", str(markings), "--overlay", str(overlay),
+             "--out", str(out2), "--px-per-wu", "1.0")
+    assert r1.returncode == 0 and r2.returncode == 0
+    assert out1.read_bytes() == out2.read_bytes()
 
 
 def test_compose_missing_markings_fails(tmp_path):
