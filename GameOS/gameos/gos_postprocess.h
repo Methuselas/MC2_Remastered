@@ -202,9 +202,10 @@ public:
     int getDynamicShadowMapSize() const { return dynShadowMapSize_; }
 
     // --- Item 1: Cascaded Shadow Maps (dynamic path) -----------------------
-    // Gate (MC2_SHADOW_CSM, default OFF). When OFF the legacy single-map path
-    // above is used unchanged (byte-identical). When ON, the dynamic shadow is
-    // a GL_TEXTURE_2D_ARRAY of csmCount layers, each with its own light matrix.
+    // Gate (MC2_SHADOW_CSM, default ON since 2026-06-18 `8ff13a36`; "=0" opts
+    // out to the legacy single-map path above, byte-identical). When ON
+    // (the default), the dynamic shadow is a GL_TEXTURE_2D_ARRAY of csmCount
+    // layers, each with its own light matrix.
     GLuint getDynamicShadowArrayTexture() const { return dynShadowArrayTex_; }
     int    getDynamicShadowCascadeCount() const { return csmCount_; }
     // Flat float[csmCount_*16] of per-cascade light-space matrices (col-major).
