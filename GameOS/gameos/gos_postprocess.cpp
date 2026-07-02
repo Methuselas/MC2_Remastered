@@ -2426,7 +2426,11 @@ void gosPostProcess::runShoreline()
     ZoneScopedN("Render.Shoreline");
     TracyGpuZone("Render.Shoreline");
 
-    if (!shorelineEnabled_ || !sceneHasTerrain_ || !shorelineProg_ || !shorelineProg_->is_valid()) return;
+    // TERRAIN-SHORELINE-MASK-1: yield to the terrain-side wet/foam band when
+    // active (recon landmine #6 "double-shore" -- avoid brightening the seam
+    // twice). Default false -> byte-identical to the pre-slice gate.
+    if (!shorelineEnabled_ || !sceneHasTerrain_ || !shorelineProg_ || !shorelineProg_->is_valid()
+        || shorelineSuppressedByTerrainMask_) return;
 
     // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: skip the 4 setup calls when the executor
     // already applied them (MC2_FRAMEGRAPH_EXECUTOR ON). Reset one-shot before draw.
@@ -5122,8 +5126,9 @@ bool gosPostProcess::executorSceneDepthTexValid() const
 
 bool gosPostProcess::executorShorelineWillRun() const
 {
+    // TERRAIN-SHORELINE-MASK-1: mirrors runShoreline()'s suppression term.
     return shorelineEnabled_ && shorelineProg_ && shorelineProg_->is_valid()
-        && sceneHasTerrain_;
+        && sceneHasTerrain_ && !shorelineSuppressedByTerrainMask_;
 }
 
 bool gosPostProcess::executorCloudShadowWillRun() const

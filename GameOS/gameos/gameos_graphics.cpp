@@ -1896,6 +1896,16 @@ class gosRenderer {
         gos_TERRAIN_EXTRA* getTerrainExtraData() const { return terrain_extra_data_; }
         bool isTerrainMVPValid() const { return terrain_mvp_valid_; }
         const mat4& getTerrainMVP() const { return terrain_mvp_; }
+        // TERRAIN-SHORELINE-MASK-1: shared render-shader clock accessor (same
+        // epoch + SmokeMode fixed-timestep override as the water fast-path's
+        // "time" uniform, gameos_graphics.cpp:~3343). Exposed so gos_terrain_lod_chunk.cpp
+        // can upload an identical f(worldPos,time)-only clock to the chunk frag
+        // (camera-INDEPENDENT by construction — no view matrix involved).
+        float getShaderClockSeconds() const {
+            return SmokeMode::fixedTimestepEnabled()
+                       ? (float)SmokeMode::fixedClockSeconds()
+                       : (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0);
+        }
         gosRenderMaterial* getTerrainMaterial() const { return terrain_material_; }
         const vec4& getTerrainCameraPos() const { return terrain_camera_pos_; }
         // Shadow mode
@@ -10650,6 +10660,15 @@ const float* gos_GetTerrainMVPMat4() {
         }
     }
     return p;
+}
+
+// TERRAIN-SHORELINE-MASK-1: shared render-shader clock, same computation as
+// the water fast-path's "time" uniform (SmokeMode fixed-timestep override for
+// deterministic capture, else wall-time since renderer init). Consumed by the
+// chunk terrain frag's shoreline wet/foam band (f(worldPos,time) ONLY — no
+// camera dependence, matching the water FS's camera-independence ruling).
+float gos_GetShaderClockSeconds() {
+    return g_gos_renderer ? g_gos_renderer->getShaderClockSeconds() : 0.0f;
 }
 
 // gos_GetTerrainTeseProgram removed in Task 7b (UBO pivot).

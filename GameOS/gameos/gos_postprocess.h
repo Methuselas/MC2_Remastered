@@ -288,6 +288,14 @@ public:
     // cloudShadowStateAppliedByExecutor_). Set by executorApplyShorelineState().
     bool shorelineStateAppliedByExecutor_ = false;
     void runShoreline();
+    // TERRAIN-SHORELINE-MASK-1 (recon landmine #6 "double-shore"): set every
+    // frame by the terrain chunk driver (gos_terrain_lod_chunk.cpp) to true
+    // when a terrain-side wet/foam shoreline mask is active (gate ON + sidecar
+    // loaded). runShoreline() yields when this is true so the screen-space
+    // foam halo and the new terrain-side band never brighten the seam twice.
+    // Default false -> runShoreline() behaves exactly as before (byte-identical).
+    bool shorelineSuppressedByTerrainMask_ = false;
+    void setShorelineSuppressedByTerrainMask(bool b) { shorelineSuppressedByTerrainMask_ = b; }
 
     // SSAO-GTAO-LITE-MVP-1 (Track V, MC2_SSAO). Half-res world-space AO.
     // Default OFF -> runSSAO() is skipped entirely (byte-identical). Resolved

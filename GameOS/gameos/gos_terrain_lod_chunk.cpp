@@ -1428,8 +1428,15 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     // (gameos_graphics.cpp tess draw + gos_terrain_patch_stream.cpp) do NOT
     // fire under this path, so sceneHasTerrain_ would otherwise stay false and
     // all four passes silently skip (root cause of the dead cloud-shadow pass).
-    if (gosPostProcess* pp = getGosPostProcess())
+    if (gosPostProcess* pp = getGosPostProcess()) {
         pp->markTerrainDrawn();
+        // TERRAIN-SHORELINE-MASK-1 (recon landmine #6): when the terrain-side
+        // wet/foam band is active, suppress the legacy screen-space
+        // runShoreline() pass so the seam isn't brightened twice. Mask
+        // inactive (gate off / no sidecar) -> setShorelineSuppressedByTerrainMask(false)
+        // every frame -> runShoreline() behaves exactly as before (byte-identical).
+        pp->setShorelineSuppressedByTerrainMask(gos_TerrainLodChunk_IsShorelineMaskActive());
+    }
     RenderCore::framegraph::noteTerrainPath(RenderCore::framegraph::TerrainPath::LODChunk);  // TERRAIN-PATH-TELEMETRY-1
 
     // Restore GL state.
@@ -1680,6 +1687,65 @@ void gos_TerrainLodChunk_UploadOverlaySidecar(const unsigned char* rgba, int w, 
             (unsigned)s_overlaySidecarTex, w, h, (size_t)w * (size_t)h * 4u,
             boundsTopLeftX, boundsTopLeftY, boundsSizeX, boundsSizeY);
     fflush(stderr);
+}
+
+// TERRAIN-SHORELINE-MASK-1: upload the authored land-side wet/foam shoreline
+// mask as a plain GL_RGBA8 2D texture (GL_LINEAR / CLAMP_TO_EDGE, arbitrary
+// WxH -- NOT tied to the vertex grid; sampled by world XY via
+// u_shorelineBounds in the frag, same pattern as the overlay-V2 sidecar).
+// Called ONLY when mclib/terrain.cpp actually loaded a mask (gate ON + file
+// present). rgba: uint8[w*h*4] row-major, R=signed dist, G=wet, B=foam,
+// A=valid.
+void gos_TerrainLodChunk_UploadShorelineMask(const unsigned char* rgba, int w, int h,
+                                              float boundsTopLeftX, float boundsTopLeftY,
+                                              float boundsSizeX, float boundsSizeY)
+{
+    if (!rgba || w <= 0 || h <= 0)
+        return;
+
+    if (s_shorelineMaskTex == 0)
+        glGenTextures(1, &s_shorelineMaskTex);
+    if (s_shorelineMaskTex == 0)
+    {
+        fprintf(stderr, "[TERRAIN_SHORELINE v1] glGenTextures failed\n");
+        fflush(stderr);
+        return;
+    }
+
+    GLint prevActive = GL_TEXTURE0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActive);
+    GLint prev2D = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev2D);
+
+    glBindTexture(GL_TEXTURE_2D, s_shorelineMaskTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prev2D);
+    glActiveTexture((GLenum)prevActive);
+
+    s_shorelineBounds[0] = boundsTopLeftX;
+    s_shorelineBounds[1] = boundsTopLeftY;
+    s_shorelineBounds[2] = boundsSizeX;
+    s_shorelineBounds[3] = boundsSizeY;
+
+    fprintf(stderr, "[TERRAIN_SHORELINE v1] uploaded handle=%u w=%d h=%d bytes=%zu "
+            "bounds=(%.1f,%.1f,%.1f,%.1f)\n",
+            (unsigned)s_shorelineMaskTex, w, h, (size_t)w * (size_t)h * 4u,
+            boundsTopLeftX, boundsTopLeftY, boundsSizeX, boundsSizeY);
+    fflush(stderr);
+}
+
+// TERRAIN-SHORELINE-MASK-1: true once a shoreline mask has been uploaded.
+// Consumed by gos_postprocess.cpp to suppress the legacy screen runShoreline()
+// pass (recon landmine #6 -- avoid double-brightening the seam).
+bool gos_TerrainLodChunk_IsShorelineMaskActive()
+{
+    return s_shorelineMaskTex != 0;
 }
 
 // Step 5c: per-vertex cement word upload (valid bit | atlas layer index). Built by

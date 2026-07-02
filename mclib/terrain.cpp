@@ -1038,6 +1038,123 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 				}
 			}
 
+			// TERRAIN-SHORELINE-MASK-1: v1 = ADDITIVE terrain-side wet/foam band
+			// sidecar. Gate MC2_TERRAIN_SHORELINE default OFF (mirrors
+			// MC2_TERRAIN_OVERLAY_V2's read pattern above). When ON, load an
+			// authored bounds-aware shoreline mask PNG (RGBA8, arbitrary WxH --
+			// offline-cooked by tools/terrain_beautify/cook_shoreline.py) if
+			// present; when absent or gate OFF, no texture is created and
+			// u_useShorelineMask uploads 0 at draw -> byte-identical (no wet/foam
+			// band; legacy screen runShoreline() stays active). Companion
+			// "<name>.bounds.txt" -- SAME convention as overlay_v2.bounds.txt
+			// (topLeftX topLeftY sizeX sizeY, world units; absent -> full map
+			// extent). MC2_TERRAIN_SHORELINE_FILE overrides the sidecar path
+			// (precedent: MC2_TERRAIN_OVERLAY_V2_FILE above).
+			{
+				static const bool s_shorelineGate = []() {
+					const char* v = getenv("MC2_TERRAIN_SHORELINE");
+					return (v && v[0] && v[0] != '0');
+				}();
+				if (s_shorelineGate)
+				{
+					char slPath[600];
+					if (const char* ov = getenv("MC2_TERRAIN_SHORELINE_FILE"))
+					{
+						strncpy(slPath, ov, sizeof(slPath) - 1);
+						slPath[sizeof(slPath) - 1] = '\0';
+					}
+					else
+					{
+						const char* nm = terrainName ? terrainName : "";
+						const char* bs = strrchr(nm, '\\');
+						const char* fs = strrchr(nm, '/');
+						const char* slash = (fs > bs) ? fs : bs;
+						char stem[160];
+						strncpy(stem, slash ? slash + 1 : nm, sizeof(stem) - 1);
+						stem[sizeof(stem) - 1] = '\0';
+						if (char* dot = strrchr(stem, '.')) *dot = '\0';
+						snprintf(slPath, sizeof(slPath),
+						         "data/missions/%s.beauty/shoreline_mask.png", stem);
+					}
+					FILE* sf = fopen(slPath, "rb");
+					if (!sf)
+					{
+						printf("[TERRAIN_SHORELINE v1] sidecar NOT FOUND path=%s (gate on)"
+						       " -- passthrough (legacy screen runShoreline())\n", slPath);
+						fflush(stdout);
+					}
+					else
+					{
+						fseek(sf, 0, SEEK_END);
+						long sFileSize = ftell(sf);
+						fseek(sf, 0, SEEK_SET);
+						if (sFileSize <= 0)
+						{
+							fclose(sf);
+							printf("[TERRAIN_SHORELINE v1] EMPTY FILE path=%s\n", slPath);
+							fflush(stdout);
+						}
+						else
+						{
+							std::vector<unsigned char> pngBytes((size_t)sFileSize);
+							size_t rd = fread(pngBytes.data(), 1, (size_t)sFileSize, sf);
+							fclose(sf);
+							if (rd != (size_t)sFileSize)
+							{
+								printf("[TERRAIN_SHORELINE v1] READ FAIL path=%s read=%zu want=%ld\n",
+								       slPath, rd, sFileSize);
+								fflush(stdout);
+							}
+							else
+							{
+								int sw = 0, sh = 0;
+								unsigned char* srgba = ControlMapPng_DecodeRGBA(
+									pngBytes.data(), (int)sFileSize, &sw, &sh);
+								if (!srgba)
+								{
+									printf("[TERRAIN_SHORELINE v1] PNG DECODE FAILED path=%s\n", slPath);
+									fflush(stdout);
+								}
+								else
+								{
+									// World bounds: default = full map extent, SAME
+									// (topLeftX, topLeftY=maxY) convention as
+									// overlay-V2. Companion bounds file overrides.
+									float halfMapSl = Terrain::worldUnitsMapSide * 0.5f;
+									float sTLX = -halfMapSl, sTLY = halfMapSl;
+									float sSizeX = 2.0f * halfMapSl, sSizeY = 2.0f * halfMapSl;
+									char sBoundsPath[620];
+									snprintf(sBoundsPath, sizeof(sBoundsPath), "%s", slPath);
+									size_t splen = strlen(sBoundsPath);
+									if (splen > 4 && strcmp(sBoundsPath + splen - 4, ".png") == 0)
+										sBoundsPath[splen - 4] = '\0';
+									strncat(sBoundsPath, ".bounds.txt", sizeof(sBoundsPath) - strlen(sBoundsPath) - 1);
+									FILE* sbf = fopen(sBoundsPath, "r");
+									if (sbf)
+									{
+										float sbx, sby, sbw, sbh;
+										if (fscanf(sbf, "%f %f %f %f", &sbx, &sby, &sbw, &sbh) == 4)
+										{
+											sTLX = sbx; sTLY = sby; sSizeX = sbw; sSizeY = sbh;
+											printf("[TERRAIN_SHORELINE v1] bounds override path=%s (%.1f,%.1f,%.1f,%.1f)\n",
+											       sBoundsPath, sTLX, sTLY, sSizeX, sSizeY);
+											fflush(stdout);
+										}
+										fclose(sbf);
+									}
+									gos_TerrainLodChunk_UploadShorelineMask(srgba, sw, sh,
+									                                         sTLX, sTLY, sSizeX, sSizeY);
+									printf("[TERRAIN_SHORELINE v1] LOADED path=%s size=%dx%d bounds=(%.1f,%.1f,%.1f,%.1f)\n",
+									       slPath, sw, sh, sTLX, sTLY, sSizeX, sSizeY);
+									fflush(stdout);
+									ControlMapPng_FreePixels(srgba);
+								}
+							}
+						}
+					}
+				}
+			}
+
 			// TERRAIN-VISUAL-HEIGHT-SAMPLE-1 Stage 1 (loader, log-only). Gate
 			// MC2_TERRAIN_VISUAL_HEIGHT default-OFF -> no load, no SSBO
 			// (byte-identical). Loads the 4x VISUAL heightfield bake into SSBO
