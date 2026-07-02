@@ -1,0 +1,21 @@
+{
+  "mission": "mc2_17",
+  "coarse_side": 120,
+  "factor": 16,
+  "visual_side": 1905,
+  "world_units_per_vertex_coarse": 128.0,
+  "world_units_per_vertex_visual": 8.0,
+  "corner_pinned": true,
+  "max_corner_error_wu": 0.0,
+  "reshape": null,
+  "elevation_wu": {
+    "min": 0.0,
+    "max": 486.7021179199219
+  },
+  "visual_delta_wu": {
+    "max_abs": 118.76747339963913,
+    "mean_abs": 3.628997966116594
+  },
+  "visual_height_file": "visual_height_16x.r32",
+  "note": "boring bilinear bake; corners exact; render-only (gameplay heightfield untouched)."
+}

@@ -87,6 +87,12 @@ uniform sampler2D u_shorelineMask;
 uniform int       u_useShorelineMask;
 uniform vec4      u_shorelineBounds; // topLeftX, topLeftY(=maxY), sizeX, sizeY (world units)
 uniform float     u_shaderTime;      // f(worldPos,time)-only clock for foam animation (NOT camera)
+// TERRAIN-SHORELINE-MASK-1 (visual-quality pass): user-tunable overall
+// strength knobs (MC2_TERRAIN_SHORELINE_STRENGTH / _FOAM env vars, C++ side
+// clamps to [0,2], default 1.0 = the authored look below). Kept separate from
+// the mask's own G/B weights so art can dial intensity without a re-cook.
+uniform float     u_shorelineStrength;     // wet/damp darken multiplier
+uniform float     u_shorelineFoamStrength; // foam rim multiplier
 
 uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uniform as legacy)
 uniform int   u_shadowTier;               // Slice B: per-chunk shadow tier (0=high,1=low,2=static,3=none)
@@ -983,6 +989,19 @@ void main() {
     // #6 / open ruling 6: cementHit already computed above). Foam is
     // f(v_worldPos, u_shaderTime) ONLY -- no view-dependent term anywhere in
     // this block (advisor camera-independence ruling, recon landmine #2).
+    //
+    // VISUAL-QUALITY FIX (post-ship): the original band read as a bright grey
+    // painted stripe, especially where the mask's own R-channel geometry
+    // still carries coarse-grid stair-steps (see cook_shoreline.py hi-res
+    // sourcing). Two independent mitigations, both f(worldPos,time) only:
+    //   1. Slope guard -- steep banks project the mask by world-XY distance
+    //      regardless of slope, so a band would otherwise smear straight
+    //      down a cliff face. Attenuate by the terrain normal's slope angle
+    //      (from N, already computed above): full strength on ~flat beaches,
+    //      fading to 0 by ~20 deg (cos(20deg)~=0.94).
+    //   2. Noise-BROKEN foam coverage -- foam alpha is now `band * fbm`
+    //      thresholded into a coverage mask (wisps of foam), not a smooth
+    //      multiply-brighten of the whole lobe (which read as a solid tint).
     if (u_useShorelineMask != 0) {
         vec2 slUV;
         slUV.x = (v_worldPos.x - u_shorelineBounds.x) / max(u_shorelineBounds.z, 1e-5);
@@ -992,23 +1011,37 @@ void main() {
             float slValid = sl.a;
             float slWet   = sl.g * slValid;
             float slFoam  = sl.b * slValid;
-            // Wet/damp darken: multiplicative darken + slight desaturation-toward-
-            // luma (wet sand/rock reads darker + a touch flatter), suppressed on
-            // cement/concrete (runway/pad should not look "wet-darkened").
-            if (slWet > 0.001 && cementHit == false) {
-                float wetLuma = dot(lit, kLumaWeights);
-                vec3  wetDark = mix(lit, vec3(wetLuma) * 0.72, 0.55) * 0.82;
-                lit = mix(lit, wetDark, clamp(slWet, 0.0, 1.0) * (1.0 - pureConcrete));
+
+            // Slope guard: N.z == cos(slope angle) for a unit normal (N.z=1 on
+            // flat ground). Full band strength up to ~12 deg, linear falloff
+            // to 0 by ~20 deg, so steep hillsides never carry a wet/foam smear.
+            const float kSlopeFullCos = 0.978; // cos(12 deg)
+            const float kSlopeZeroCos = 0.940; // cos(20 deg)
+            float slopeAtten = clamp((N.z - kSlopeZeroCos) / max(kSlopeFullCos - kSlopeZeroCos, 1e-5), 0.0, 1.0);
+
+            // Wet/damp darken: SUBTLE multiplicative darken only (no forced
+            // desaturation-toward-luma -- that read as a grey paint stripe).
+            // u_shorelineStrength scales overall intensity (art/runtime knob).
+            if (slWet > 0.001 && cementHit == false && slopeAtten > 0.0) {
+                float wetAmt = clamp(slWet, 0.0, 1.0) * (1.0 - pureConcrete) * slopeAtten * u_shorelineStrength;
+                vec3  wetDark = lit * 0.86; // subtle darken, no luma flattening
+                lit = mix(lit, wetDark, clamp(wetAmt, 0.0, 1.0));
             }
-            // Foam: procedural fBm rim, f(worldPos,time) ONLY (camera-INDEPENDENT
+            // Foam: procedural fBm, f(worldPos,time) ONLY (camera-INDEPENDENT
             // by construction -- no view matrix/camera pos anywhere in this
-            // expression), bright additive rim feathered by the B-channel weight.
-            if (slFoam > 0.001) {
-                float foamScroll = fbm(v_worldPos.xy * 0.05 + u_shaderTime * 0.15, 3) * 0.5 + 0.5;
-                float foamPulse  = fbm(v_worldPos.xy * 0.12 - u_shaderTime * 0.22 + 19.0, 2) * 0.5 + 0.5;
+            // expression). Coverage is THRESHOLDED noise (wisps), not a smooth
+            // brighten of the whole lobe -- band*fbm decides WHERE foam shows,
+            // not just how bright it is.
+            if (slFoam > 0.001 && slopeAtten > 0.0) {
+                float foamScroll = fbm(v_worldPos.xy * 0.09 + u_shaderTime * 0.15, 3) * 0.5 + 0.5;
+                float foamPulse  = fbm(v_worldPos.xy * 0.20 - u_shaderTime * 0.22 + 19.0, 2) * 0.5 + 0.5;
                 float foamNoise  = clamp(mix(foamScroll, foamPulse, 0.5), 0.0, 1.0);
-                float foamAmt    = clamp(slFoam, 0.0, 1.0) * (0.55 + 0.45 * foamNoise);
-                lit = mix(lit, vec3(0.92, 0.95, 0.94), foamAmt * (1.0 - pureConcrete));
+                // Coverage threshold: the noise must clear a bar that rises as
+                // the band weight falls, so foam appears as broken wisps near
+                // the lobe's edge and near-solid only at the exact waterline.
+                float coverage  = smoothstep(1.0 - clamp(slFoam, 0.0, 1.0) * 0.85, 1.0, foamNoise + (1.0 - clamp(slFoam, 0.0, 1.0)) * 0.15);
+                float foamAmt   = coverage * slopeAtten * u_shorelineFoamStrength;
+                lit = mix(lit, vec3(0.90, 0.93, 0.92), clamp(foamAmt, 0.0, 1.0) * (1.0 - pureConcrete));
             }
         }
     }

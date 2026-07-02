@@ -243,6 +243,8 @@ static GLint s_locShorelineMask     = -1;  // u_shorelineMask sampler
 static GLint s_locUseShorelineMask  = -1;  // u_useShorelineMask gate uniform
 static GLint s_locShorelineBounds   = -1;  // u_shorelineBounds (vec4 minX,minY,sizeX,sizeY)
 static GLint s_locShaderTime        = -1;  // u_shaderTime (f(worldPos,time)-only foam animation clock)
+static GLint s_locShorelineStrength     = -1;  // u_shorelineStrength (wet/damp darken multiplier)
+static GLint s_locShorelineFoamStrength = -1;  // u_shorelineFoamStrength (foam rim multiplier)
 // Step 5c: cement catalog atlas (tex3) accessors from gos_terrain_indirect.cpp.
 extern unsigned int gos_terrain_indirect_getCementAtlasGLTex();
 extern int          gos_terrain_indirect_getCementAtlasGridSide();
@@ -660,6 +662,8 @@ void gos_TerrainLodChunk_Init()
             s_locUseShorelineMask  = glGetUniformLocation(s_terrainProgram, "u_useShorelineMask");
             s_locShorelineBounds   = glGetUniformLocation(s_terrainProgram, "u_shorelineBounds");
             s_locShaderTime        = glGetUniformLocation(s_terrainProgram, "u_shaderTime");
+            s_locShorelineStrength     = glGetUniformLocation(s_terrainProgram, "u_shorelineStrength");
+            s_locShorelineFoamStrength = glGetUniformLocation(s_terrainProgram, "u_shorelineFoamStrength");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -1174,6 +1178,28 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                             s_shorelineBounds[2], s_shorelineBounds[3]);
             if (s_locShaderTime >= 0)
                 glUniform1f(s_locShaderTime, gos_GetShaderClockSeconds());
+            // TERRAIN-SHORELINE-MASK-1 (visual-quality pass): runtime intensity
+            // knobs, sampled once (feature gate is per-process anyway). Default
+            // 1.0 = the authored modest band in terrain_lod_chunk.frag; clamp to
+            // [0,2] so a bad env value can't blow the band out or invert it.
+            static const float s_shorelineStrength = []() {
+                const char* v = std::getenv("MC2_TERRAIN_SHORELINE_STRENGTH");
+                float f = v ? (float)std::atof(v) : 1.0f;
+                if (!(f == f)) f = 1.0f; // NaN guard
+                if (f < 0.0f) f = 0.0f; if (f > 2.0f) f = 2.0f;
+                return f;
+            }();
+            static const float s_shorelineFoamStrength = []() {
+                const char* v = std::getenv("MC2_TERRAIN_SHORELINE_FOAM");
+                float f = v ? (float)std::atof(v) : 1.0f;
+                if (!(f == f)) f = 1.0f; // NaN guard
+                if (f < 0.0f) f = 0.0f; if (f > 2.0f) f = 2.0f;
+                return f;
+            }();
+            if (s_locShorelineStrength >= 0)
+                glUniform1f(s_locShorelineStrength, s_shorelineStrength);
+            if (s_locShorelineFoamStrength >= 0)
+                glUniform1f(s_locShorelineFoamStrength, s_shorelineFoamStrength);
         }
     }
 

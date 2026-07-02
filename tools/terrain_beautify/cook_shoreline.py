@@ -94,8 +94,14 @@ WORLD_UNITS_PER_VERTEX = 128.0
 # Band-width floors (recon landmine #4): a band derived from a runtime/authored
 # parameter must never collapse to zero width.
 MIN_BAND_WU = 1.0
-DEFAULT_DAMP_WIDTH_WU = 64.0    # land-side wet/damp darken ramp extent
-DEFAULT_FOAM_WIDTH_WU = 24.0    # foam lobe half-width straddling the waterline
+# VISUAL-QUALITY FIX (post-ship, user report: bands read as huge bright "paint
+# stripes" on mc2_17): the original 64wu damp / 24wu foam solid bands were far
+# too wide/bright at the coarse-grid resolution these cooks actually shipped
+# at. Narrowed to the target range from the fix brief -- damp 24-32wu subtle
+# darkening, foam 4-8wu narrow noise-broken rim -- with headroom kept in the
+# CLI flags for per-mission tuning.
+DEFAULT_DAMP_WIDTH_WU = 28.0    # land-side wet/damp darken ramp extent
+DEFAULT_FOAM_WIDTH_WU = 6.0     # foam lobe half-width straddling the waterline
 # R-channel normalization: distance range mapped into [0,1] (0.5 = waterline).
 # Wide enough to cover the default damp band with headroom before clamping.
 BAND_NORM_WU = 128.0
