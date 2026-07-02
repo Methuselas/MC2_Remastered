@@ -1285,20 +1285,45 @@ void main() {
         const float kSlopeZeroCos = 0.940; // cos(20 deg)
         float slopeAtten = clamp((N.z - kSlopeZeroCos) / max(kSlopeFullCos - kSlopeZeroCos, 1e-5), 0.0, 1.0);
 
-        // Wet/damp darken: SUBTLE multiplicative darken only (no forced
-        // desaturation-toward-luma -- that read as a grey paint stripe).
+        // TERRAIN-SHORELINE-V4-STYLE (material-aware shores, user verdict
+        // "this ain't it" -- thin white foam line on near-black rock reads
+        // wrong): the shore treatment must match what the shore already IS,
+        // not garnish every waterline uniformly.
+        //   - beachMat: material affinity from the SAME matWeights the splat
+        //     composite used (x=rock, snowWeight separate) -- sand/dirt/grass
+        //     shores read as beaches and take foam + wet-sand; rock (and
+        //     snow) coasts take near-none.
+        //   - brightGround: composited ground luminance gate -- a bright foam
+        //     line on near-black ground stands out at any material weight;
+        //     absence beats wrongness (coordinator ruling #3).
+        // slopeAtten above remains the third, geometric guard.
+        float litLuma       = dot(lit, vec3(0.299, 0.587, 0.114));
+        float brightGround  = smoothstep(0.08, 0.26, litLuma);
+        float beachMat      = clamp(1.0 - matWeights.x - snowWeight, 0.0, 1.0);
+        float shoreAffinity = brightGround * beachMat;
+
+        // Wet band (coordinator ruling #2): must produce a VISIBLE albedo
+        // response on gentle shores. Tint toward a warm wet-sand chroma held
+        // at ~90% of the ground's own luminance: on bright sand this is the
+        // classic slightly-darker wet-sand strip; on mid-tone soil it reads
+        // as a sandy wet-soil band (hue response, not extra darkening of
+        // already-dark ground). Dark/rock shores are excluded by
+        // shoreAffinity (ruling #3: nothing beats wrongness there).
         // u_shorelineStrength scales overall intensity (art/runtime knob).
-        if (slWet > 0.001 && cementHit == false && slopeAtten > 0.0) {
-            float wetAmt = clamp(slWet, 0.0, 1.0) * (1.0 - pureConcrete) * slopeAtten * u_shorelineStrength;
-            vec3  wetDark = lit * 0.86; // subtle darken, no luma flattening
-            lit = mix(lit, wetDark, clamp(wetAmt, 0.0, 1.0));
+        if (slWet > 0.001 && cementHit == false && slopeAtten > 0.0 && shoreAffinity > 0.001) {
+            float wetAmt = clamp(slWet, 0.0, 1.0) * (1.0 - pureConcrete) * slopeAtten
+                         * shoreAffinity * u_shorelineStrength;
+            vec3  wetSand = vec3(1.16, 1.06, 0.78) * (litLuma * 0.90);
+            lit = mix(lit, wetSand, clamp(wetAmt, 0.0, 1.0) * 0.85);
         }
         // Foam: procedural fBm, f(worldPos,time) ONLY (camera-INDEPENDENT
         // by construction -- no view matrix/camera pos anywhere in this
         // expression). Coverage is THRESHOLDED noise (wisps), not a smooth
         // brighten of the whole lobe -- band*fbm decides WHERE foam shows,
-        // not just how bright it is.
-        if (slFoam > 0.001 && slopeAtten > 0.0) {
+        // not just how bright it is. Scaled by shoreAffinity (ruling #1):
+        // full beach-foam on gentle sand/dirt shores, near-zero on rock/dark
+        // coasts.
+        if (slFoam > 0.001 && slopeAtten > 0.0 && shoreAffinity > 0.001) {
             float foamScroll = fbm(v_worldPos.xy * 0.09 + u_shaderTime * 0.15, 3) * 0.5 + 0.5;
             float foamPulse  = fbm(v_worldPos.xy * 0.20 - u_shaderTime * 0.22 + 19.0, 2) * 0.5 + 0.5;
             float foamNoise  = clamp(mix(foamScroll, foamPulse, 0.5), 0.0, 1.0);
@@ -1306,7 +1331,7 @@ void main() {
             // the band weight falls, so foam appears as broken wisps near
             // the lobe's edge and near-solid only at the exact waterline.
             float coverage  = smoothstep(1.0 - clamp(slFoam, 0.0, 1.0) * 0.85, 1.0, foamNoise + (1.0 - clamp(slFoam, 0.0, 1.0)) * 0.15);
-            float foamAmt   = coverage * slopeAtten * u_shorelineFoamStrength;
+            float foamAmt   = coverage * slopeAtten * u_shorelineFoamStrength * shoreAffinity;
             // V4-STYLE (user verdict C): hue-NEUTRAL desaturated white. The old
             // (0.90,0.93,0.92) carried a faint green cast that read teal when
             // composited near the water tint; foam must not shift hue.
