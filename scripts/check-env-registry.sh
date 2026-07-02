@@ -312,6 +312,7 @@ ALLOWLIST=(
     MC2_VPL_REDUCE              # feature -- promote-to-registry
     MC2_VSYNC                   # infra
     MC2_WATER_GATE_DIAG         # trace
+    MC2_VERIFY_MODE             # infra -- MC2-VERIFY-LIVE-1 guard mode (log/fatal/off, default log)
     MC2_WATER_DEBUG             # trace
     MC2_WATER_DEBUG_MODE        # trace -- WATER-DEBUG-VIEWS-1 MDI FS material-space debug
     MC2_WATER_DEPTHPROBE        # trace
