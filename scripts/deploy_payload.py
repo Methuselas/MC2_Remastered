@@ -437,6 +437,19 @@ def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
         dirs[:] = [d for d in dirs if d.lower() != "fixtures"]
         for fn in sorted(files):
             p = os.path.join(dirpath, fn)
+            # GUARD (2026-07-02): refuse to ship shader sources containing git
+            # conflict markers. A mid-merge deploy shipped a frag with <<<<<<<
+            # markers -> GLSL compile fail -> shader_error smoke FAIL on the
+            # user's viewing lane. Cheap scan; text shader sources only.
+            if fn.lower().endswith((".frag", ".vert", ".comp", ".glsl", ".hglsl",
+                                    ".tesc", ".tese", ".geom")):
+                try:
+                    with open(p, "rb") as fh:
+                        blob = fh.read()
+                    if b"<<<<<<<" in blob or b">>>>>>>" in blob:
+                        fail(f"shader source contains git conflict markers: {p}")
+                except OSError as e:
+                    fail(f"cannot read shader source {p}: {e}")
             rel = os.path.relpath(p, src_root).replace(os.sep, "/")
             items.append((p, rel, "shader"))
 
