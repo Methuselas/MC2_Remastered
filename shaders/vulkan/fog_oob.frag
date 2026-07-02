@@ -21,6 +21,15 @@
 // pFar uses ndc-depth 0.0 (far) -- identical to the GL shader. No Y-flip is applied
 // because the pass reads TexCoord (interpolated [0,1] UV), not gl_FragCoord, and the
 // island uploads the depth image so texel (u,v) maps the same way as the GL sample.
+//
+// KNOWN DIVERGENCE vs the GL shader (SKYBOX-FOG-EXCLUDE-1/2): the GL fog_oob.frag
+// gained a stencil-tagged true-sky exclusion (usampler2D stencilTex +
+// u_skyExcludeEnabled, feathered by skyFade in v2). NOT ported here: the island's
+// UBO/binding POD (vulkan_oob_fog_island.cpp) has no stencil image, and the island
+// parity proof predates the feature. When the Vulkan backend reaches this pass for
+// real (Layer 6+), port the v2 FEATHERED form (skyExclude = skyFade on tagged
+// pixels), never the v1 hard zero -- v1's tag pass had a frame bug (azimuth wedge,
+// see shaders/hdri_skybox_stencil_tag.frag SKYBOX-FOG-EXCLUDE-2 note).
 #version 450
 
 layout(location = 0) in  vec2 TexCoord;
