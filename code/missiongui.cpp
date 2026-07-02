@@ -509,16 +509,41 @@ void MissionInterfaceManager::setTutorialText(const char *text)
 // ---- MC2_MIF_SPLIT: split MissionInterfaceManager::update() (the 1K 43.9ms) --
 // Default OFF. Prime suspect: Camera::inverseProject walking every quad on
 // camera-motion cache misses -> walk-vs-cacheHit counter proves it.
+//
+// MISSION-INTERFACE-PERF-1 (MC2_IFACE_COST_SPLIT, default OFF, either env
+// enables the whole thing): extends the split with
+//   - a rollovers bucket (updateRollovers was untimed),
+//   - ControlGui::update sub-phase fold-in (accumulators DEFINED in
+//     controlgui.cpp, extern below -- TOBJSPLIT precedent, terrobj.cpp),
+//   - one-line [IFACE_PERF v1] emission every 900 frames + at mission end
+//     (MissionInterfaceManager::destroy) so short smoke runs produce numbers
+//     without an interactive Tracy session.
+// chrono (not RDTSC) is fine here: per-phase once-per-frame brackets, not
+// per-element hot-loop probes. Zero chrono calls when both envs unset.
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
 #include "../GameOS/gameos/diagnostic_trace.h"  // CURSOR_TARGET trace (offscreen-pick recon)
+// CGui sub-phase per-frame ns accumulators -- DEFINED in controlgui.cpp.
+// Index order MUST match the MF_CG_* tail of MifPhase below (fold loop in
+// mfFrameEnd is the single mapping point).
+extern unsigned long long g_ifaceCgFrameNs[8];
 namespace {
-	enum MifPhase { MF_TOTAL=0, MF_INVPROJ, MF_LOS, MF_CTRLGUI, MF_UPDTGT, MF_POSTTGT, MF_DRAWBARS, MF_COUNT };
-	static const char* s_mfNames[MF_COUNT] = {"TOTAL","invProj","LOS","controlGui","updateTarget","postTarget","drawBars"};
-	static const bool s_mfOn = (getenv("MC2_MIF_SPLIT") != nullptr);
+	enum MifPhase { MF_TOTAL=0, MF_INVPROJ, MF_LOS, MF_CTRLGUI, MF_UPDTGT, MF_POSTTGT, MF_DRAWBARS, MF_ROLLOVERS,
+		// ControlGui::update sub-phases, folded from g_ifaceCgFrameNs[] --
+		// order matches CgPhase in controlgui.cpp.
+		MF_CG_PAUSE, MF_CG_BTNHOVER, MF_CG_ROSTER, MF_CG_MOVERSTATE, MF_CG_TACMAP, MF_CG_INFOWND, MF_CG_VEHTAB, MF_CG_FGBAR,
+		MF_COUNT };
+	const int MF_CG_FIRST = MF_CG_PAUSE;
+	static const char* s_mfNames[MF_COUNT] = {"TOTAL","invProj","LOS","controlGui","updateTarget","postTarget","drawBars","rollovers",
+		"cg.pauseWnd","cg.btnHover","cg.rosterScan","cg.moverState","cg.tacMap","cg.infoWnd","cg.vehicleTab","cg.fgBar"};
+	static const bool s_mfOn = (getenv("MC2_MIF_SPLIT") != nullptr) || (getenv("MC2_IFACE_COST_SPLIT") != nullptr);
 	static unsigned long long s_mfSum[MF_COUNT]={0}, s_mfMax[MF_COUNT]={0}, s_mfFrameNs[MF_COUNT]={0};
 	static unsigned long long s_mfFrames=0, s_mfInvWalks=0, s_mfInvHits=0;
+	// [IFACE_PERF v1] window accumulators (reset each emission).
+	static unsigned long long s_mfWinSum[MF_COUNT]={0}, s_mfWinMax[MF_COUNT]={0};
+	static unsigned long long s_mfWinFrames=0, s_mfWinWalks=0, s_mfWinHits=0;
+	static const unsigned long long MF_WINDOW_FRAMES = 900ULL;
 	static bool s_mfAtexit=false;
 	static void mfEmit() {
 		if (!s_mfOn) return;
@@ -528,6 +553,18 @@ namespace {
 			std::printf(" %s={avg_us:%.1f,max_us:%.1f}", s_mfNames[i],
 				s_mfFrames?(double)s_mfSum[i]/s_mfFrames/1000.0:0.0, (double)s_mfMax[i]/1000.0);
 		std::printf("\n"); std::fflush(stdout);
+	}
+	// One [IFACE_PERF v1] line per window (or partial window at mission end).
+	static void mfEmitWindow(const char* event) {
+		if (!s_mfOn || !s_mfWinFrames) return;
+		std::printf("[IFACE_PERF v1] event=%s frames=%llu invProj_walks=%llu invProj_cacheHits=%llu",
+			event, s_mfWinFrames, s_mfWinWalks, s_mfWinHits);
+		for (int i=0;i<MF_COUNT;i++)
+			std::printf(" %s={avg_us:%.1f,max_us:%.1f}", s_mfNames[i],
+				(double)s_mfWinSum[i]/s_mfWinFrames/1000.0, (double)s_mfWinMax[i]/1000.0);
+		std::printf("\n"); std::fflush(stdout);
+		for (int i=0;i<MF_COUNT;i++) { s_mfWinSum[i]=0; s_mfWinMax[i]=0; }
+		s_mfWinFrames=0; s_mfWinWalks=0; s_mfWinHits=0;
 	}
 	struct MifScope {
 		int idx; std::chrono::steady_clock::time_point t0;
@@ -539,7 +576,13 @@ namespace {
 		if (!s_mfOn) return;
 		if (!s_mfAtexit) { s_mfAtexit=true; std::atexit(mfEmit); }
 		++s_mfFrames; s_mfFrameNs[MF_TOTAL]=totalNs;
-		for (int i=0;i<MF_COUNT;i++) { s_mfSum[i]+=s_mfFrameNs[i]; if(s_mfFrameNs[i]>s_mfMax[i]) s_mfMax[i]=s_mfFrameNs[i]; s_mfFrameNs[i]=0; }
+		for (int c=0;c<8;c++) { s_mfFrameNs[MF_CG_FIRST+c]=g_ifaceCgFrameNs[c]; g_ifaceCgFrameNs[c]=0; }
+		for (int i=0;i<MF_COUNT;i++) {
+			s_mfSum[i]+=s_mfFrameNs[i]; if(s_mfFrameNs[i]>s_mfMax[i]) s_mfMax[i]=s_mfFrameNs[i];
+			s_mfWinSum[i]+=s_mfFrameNs[i]; if(s_mfFrameNs[i]>s_mfWinMax[i]) s_mfWinMax[i]=s_mfFrameNs[i];
+			s_mfFrameNs[i]=0;
+		}
+		if (++s_mfWinFrames >= MF_WINDOW_FRAMES) mfEmitWindow("window");
 	}
 }
 
@@ -1110,12 +1153,15 @@ void MissionInterfaceManager::update (void)
 	{
 		// Cursor and camera both unchanged - reuse the cached world point.
 		wPos = cachedWPos;
-		if (s_mfOn) ++s_mfInvHits;
+		if (s_mfOn) { ++s_mfInvHits; ++s_mfWinHits; }
 	}
 	else
 	{
+		// Coarse cache-miss-frames-only zone (not per-quad): the O(quads)
+		// inverseProject walk was invisible in Tracy without it.
+		ZoneScopedN("MIF.InverseProject");
 		MifScope _mInv(MF_INVPROJ);
-		if (s_mfOn) ++s_mfInvWalks;
+		if (s_mfOn) { ++s_mfInvWalks; ++s_mfWinWalks; }
 		// Per-frame cursor world position. screenToGroundPlaneApprox (the O(1)
 		// inverse-clip/z=0 unproject) shares the same broken worldToClipGL inverse
 		// as the chunk raycast picker (collapsed X response / wrong eye), so it
@@ -1322,7 +1368,7 @@ void MissionInterfaceManager::update (void)
 		lastUpdateDoubleClick = false;
 
 	{
-		ZoneScopedN("MIF.Rollovers");
+		ZoneScopedN("MIF.Rollovers"); MifScope _mRO(MF_ROLLOVERS);
 		updateRollovers();
 	}
 
@@ -3846,6 +3892,10 @@ void MissionInterfaceManager::init (FitIniFilePtr loader)
 //--------------------------------------------------------------------------------------
 void MissionInterfaceManager::destroy (void)
 {
+	// [IFACE_PERF v1] flush the partial cost-split window at mission teardown
+	// so runs shorter than 900 frames still emit numbers. No-op when gate OFF.
+	mfEmitWindow("mission_end");
+
 	hotKeyFont.destroy();
 	hotKeyHeaderFont.destroy();
 
