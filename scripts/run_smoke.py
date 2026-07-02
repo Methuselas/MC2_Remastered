@@ -1224,6 +1224,13 @@ def main():
                             # (default OFF). Must be allowlisted or Popen drops it
                             # and the gate-ON smoke runs the legacy 64px path.
                             "MC2_OVERLAY_TILE_HIRES",
+                            # TEAM-COMMANDER-OWNERSHIP-1: in-process idempotency
+                            # probe. On mission teardown it re-runs the unified
+                            # resetTeamsAndCommanders() (the ex-double-free) and
+                            # MC2_VERIFYs it was a clean no-op with home NULL.
+                            # Must be allowlisted or Popen drops it and the
+                            # gate-ON cycle soak silently does nothing.
+                            "MC2_MISSION_CYCLE_TEST",
                             # FRAME-CURRENTNESS-GUARDS-1 gates
                             "MC2_REGFLUSH_GUARD2",
                             "MC2_TARGETING_GUARD",
