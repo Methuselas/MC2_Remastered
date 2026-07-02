@@ -1735,6 +1735,15 @@ def main():
                             # FRAME-JOBS stable-light skip gate.
                             "MC2_LIGHTBRIDGE_STABLE_SKIP",
                             "MC2_LIGHTBRIDGE_COMMIT_TRACE",
+                            # STABLE-LIGHT-SKIP-BROADEN-1 (framebudget lane): broaden
+                            # the LBSS resubmit-skip to the legacy touch() Path-B
+                            # variants (live path in stock config). Requires
+                            # MC2_STABLE_LIGHT_SKIP armed for eligibility + the
+                            # TOUCH gate to take the skip. Without these allowlisted
+                            # the gate-ON A/B is inert.
+                            "MC2_STABLE_LIGHT_SKIP",
+                            "MC2_STABLE_LIGHT_SKIP_DIAG",
+                            "MC2_STABLE_LIGHT_SKIP_TOUCH",
                             # STATIC-SCENE-PROXY-RECON-1: proxy candidate classifier.
                             "MC2_STATIC_PROXY_RECON",
                             # STATIC-REGISTRY-COVERAGE-RECON-1: sub-classify rej_no_static_reg.
