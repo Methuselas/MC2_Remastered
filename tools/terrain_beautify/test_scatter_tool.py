@@ -265,6 +265,154 @@ def test_recook_is_idempotent_delete_and_reemit(tmp_path):
     assert stats_b["final_object_count"] == 1 + 5
 
 
+# --- tree channel (TERRAIN-TREE-SCATTER-V0) ----------------------------------
+def test_tree_slope_gate_excludes_outside_band():
+    """Tree channel's exclusion is the recon's 'slope-gate flip': rock
+    excludes ONLY too-steep; tree excludes BOTH too-flat and too-steep,
+    keeping only the [MIN,MAX] degree band."""
+    side = 10
+    layers = {"water": np.zeros((side, side), dtype=bool),
+              "overlay": np.zeros((side, side), dtype=bool)}
+    masks = {"slope_deg": np.array([[0.0, 10.0, 15.0, 20.0, 30.0] * 2] * side)}
+    foot = np.zeros((side, side), dtype=bool)
+    excl = st.compute_exclusion(layers, masks, foot, channel="tree")
+    # col 0 (slope=0) and col 4 (slope=30) are outside [5,25] -> excluded.
+    # col 1/2/3 (10/15/20) are inside -> not excluded by slope.
+    assert excl["slope"][:, 0].all()
+    assert excl["slope"][:, 4].all()
+    assert not excl["slope"][:, 1].any()
+    assert not excl["slope"][:, 2].any()
+    assert not excl["slope"][:, 3].any()
+
+
+def test_rock_slope_gate_unchanged_by_channel_param():
+    """Default/rock channel must behave exactly as before (only >MAX
+    excluded) -- guards against the tree flip leaking into the rock path."""
+    side = 10
+    layers = {"water": np.zeros((side, side), dtype=bool),
+              "overlay": np.zeros((side, side), dtype=bool)}
+    masks = {"slope_deg": np.array([[0.0, 10.0, 41.0] * 3 + [0.0]] * side)}
+    foot = np.zeros((side, side), dtype=bool)
+    excl = st.compute_exclusion(layers, masks, foot, channel="rock")
+    assert not excl["slope"][:, 0].any()  # flat: fine for rock
+    assert excl["slope"][:, 2].any()  # 41 deg > DEFAULT_SLOPE_MAX_DEG(40): excluded
+
+
+def test_water_shore_concrete_exclusion_unchanged_across_channels():
+    """Recon requirement: 'water/shore/concrete exclusion stays' regardless
+    of channel -- only the slope gate differs."""
+    side = 6
+    layers = {"water": np.array([[True] * side] + [[False] * side] * (side - 1)),
+              "overlay": np.array([[False] * side, [True] * side] + [[False] * side] * (side - 2))}
+    masks = {"slope_deg": np.zeros((side, side))}
+    foot = np.zeros((side, side), dtype=bool)
+    for channel in ("rock", "tree"):
+        excl = st.compute_exclusion(layers, masks, foot, channel=channel)
+        assert excl["water"][0].all()
+        assert excl["overlay"][1].all()
+
+
+def test_tree_density_peaks_mid_band_and_zero_outside():
+    side = 5
+    masks = {"slope_deg": np.array([[0.0, 5.0, 15.0, 25.0, 40.0]] * side),
+             "flat_playable": np.zeros((side, side), dtype=bool)}
+    density = st.load_density_mask(side, masks, None, channel="tree")
+    # mid-band (15 deg, the midpoint of [5,25]) has the highest density in
+    # the row; 0 deg and 40 deg (well outside the band) are at/near zero.
+    row = density[0]
+    assert row[2] == pytest.approx(max(row), abs=1e-9)
+    assert row[0] == pytest.approx(0.0, abs=1e-9)
+    assert row[4] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_plan_placements_tree_pool_assigns_reserved_objtypenums():
+    """Multi-prop pool: every accepted placement gets an objTypeNum key
+    drawn from the pool, and (since PYTHONHASHSEED-proof _cell_rng is
+    deterministic) re-running with the same seed reproduces the same picks."""
+    side = 12
+    elev = np.zeros((side, side))
+    density = np.ones((side, side))
+    exclusion = {"water": np.zeros((side, side), dtype=bool),
+                 "overlay": np.zeros((side, side), dtype=bool),
+                 "building_footprint": np.zeros((side, side), dtype=bool),
+                 "slope": np.zeros((side, side), dtype=bool)}
+    pool = st.PINE_SCATTER_OBJTYPENUMS
+    result_a = st.plan_placements(side, elev, density, exclusion, count=20, seed=9,
+                                   min_dist_wu=1.0, prop_pool=pool)
+    result_b = st.plan_placements(side, elev, density, exclusion, count=20, seed=9,
+                                   min_dist_wu=1.0, prop_pool=pool)
+    assert len(result_a["accepted"]) == 20
+    for p in result_a["accepted"]:
+        assert p["objTypeNum"] in pool
+    assert [p["objTypeNum"] for p in result_a["accepted"]] == \
+           [p["objTypeNum"] for p in result_b["accepted"]]
+    # sanity: with 20 draws across a 3-item pool, expect more than one
+    # distinct type picked (not a hardcoded constant pick).
+    assert len({p["objTypeNum"] for p in result_a["accepted"]}) > 1
+
+
+def test_plan_placements_single_prop_channel_has_no_objtypenum_key():
+    """Rock (single-prop, prop_pool=None) must NOT add a per-placement
+    objTypeNum key -- preserves exact pre-existing manifest shape."""
+    side = 8
+    elev = np.zeros((side, side))
+    density = np.ones((side, side))
+    exclusion = {"water": np.zeros((side, side), dtype=bool),
+                 "overlay": np.zeros((side, side), dtype=bool),
+                 "building_footprint": np.zeros((side, side), dtype=bool),
+                 "slope": np.zeros((side, side), dtype=bool)}
+    result = st.plan_placements(side, elev, density, exclusion, count=5, seed=1,
+                                 min_dist_wu=1.0, prop_pool=None)
+    for p in result["accepted"]:
+        assert "objTypeNum" not in p
+
+
+def test_cook_accepts_mixed_pine_scatter_objtypenums(tmp_path):
+    """cook_scatter must honor per-placement objTypeNum for the tree channel
+    (mixed PineScatter1/2/3 in one manifest) and validate ALL of them against
+    RESERVED_SCATTER_OBJTYPENUMS, not just a single manifest-level value."""
+    pak_path = _make_synthetic_pak_with_objects(tmp_path)
+    pool = st.PINE_SCATTER_OBJTYPENUMS
+    placements = [
+        {"row": i, "col": i, "x": float(i * 300), "y": float(i * 300), "z": 0.0,
+         "yaw": 0.0, "objTypeNum": pool[i % len(pool)]}
+        for i in range(6)
+    ]
+    manifest = _make_manifest(tmp_path, pak_path, 60, pool[0], placements)
+    out_pak = tmp_path / "cooked_tree.pak"
+    stats = st.cook_scatter(pak_path, manifest, out_pak, prop_verified=False, allow_unverified=True)
+    assert stats["new_scatter_written"] == 6
+
+    after = pak_append.read_packets(out_pak)
+    from mission_terrain_analyzer import decode_packet as _decode
+    for rec in after:
+        d = _decode(rec.storage_type, rec.payload)
+        if d is None or len(d) < 4:
+            continue
+        count = struct.unpack_from('<i', d, 0)[0]
+        if count <= 0 or 4 + count * 40 != len(d):
+            continue
+        recs = st._read_records(d)
+        written_types = {r[0] for r in recs if r[0] in pool}
+        assert written_types == set(pool[i % len(pool)] for i in range(6))
+        break
+
+
+def test_cook_refuses_mixed_manifest_with_one_bad_objtypenum(tmp_path):
+    """One rogue objTypeNum among otherwise-valid tree placements must still
+    refuse the whole cook (exhaustive validation, not just the first/last)."""
+    pak_path = _make_synthetic_pak_with_objects(tmp_path)
+    pool = st.PINE_SCATTER_OBJTYPENUMS
+    placements = [
+        {"row": 0, "col": 0, "x": 0.0, "y": 0.0, "z": 0.0, "yaw": 0.0, "objTypeNum": pool[0]},
+        {"row": 1, "col": 1, "x": 300.0, "y": 300.0, "z": 0.0, "yaw": 0.0, "objTypeNum": 42},
+    ]
+    manifest = _make_manifest(tmp_path, pak_path, 60, pool[0], placements)
+    with pytest.raises(ValueError, match="RESERVED_SCATTER_OBJTYPENUMS"):
+        st.cook_scatter(pak_path, manifest, tmp_path / "out.pak",
+                         prop_verified=True, allow_unverified=False)
+
+
 # --- round-trip prior-packet byte-identity -----------------------------------
 @pytest.mark.skipif(not (CARVER5_MISSIONS / "mc2_01.pak").is_file(), reason="Carver5 fixture pak not present")
 def test_cook_roundtrip_byte_identity_on_real_pak_copy(tmp_path):
