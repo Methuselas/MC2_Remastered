@@ -11,6 +11,7 @@
 #include "../../mclib/render_contract.h"  // [RENDER_PASS v1] noteRenderPass
 #include "../../RenderCore/RenderResourceRegistry.h"  // REGISTRY-TERRAIN-SSBO-1: TerrainHeightSsbo
 #include "../../RenderCore/GpuBufferOwner.h"  // TERRAIN-LODCHUNK-SSBO-OWNER-1: type/cement owner records
+#include "../../RenderCore/KtxLoader.h"  // TERRAIN-MATERIAL-TEXTURES-1: BC7 KTX2 albedo layer load
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -68,6 +69,9 @@ const float kTglcMacroVariation    = []() {
 }();
 const bool  kTglcEdgeFeather       = []() { return tglc_envOn("MC2_TERRAIN_EDGE_FEATHER"); }();
 const float kTglcEdgeFeatherStr    = []() { return tglc_envStrength("MC2_TERRAIN_EDGE_FEATHER_STRENGTH", 1.0f); }();
+// TERRAIN-MATERIAL-TEXTURES-1: per-layer PBR albedo array gate (default OFF ->
+// u_useMatAlbedo uploads 0 -> frag composition verbatim -> byte-identical).
+const bool  kTglcMatAlbedo         = []() { return tglc_envOn("MC2_TERRAIN_MATERIAL_TEXTURES"); }();
 }  // namespace
 
 // Terrain MVP matrix — exposed by gameos_graphics.cpp for all terrain draw paths.
@@ -192,6 +196,149 @@ static GLuint s_shorelineMaskTex   = 0;
 static float  s_shorelineBounds[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // topLeftX,topLeftY(=maxY),sizeX,sizeY
 
 // ---------------------------------------------------------------------------
+// TERRAIN-MATERIAL-TEXTURES-1: 6-layer BC7 sRGB albedo GL_TEXTURE_2D_ARRAY
+// (rock/grass/dirt/concrete/snow/cliff, layer order = MAT_LAYER_* 0..5) loaded
+// straight from the cooked data/terrain_layers/<channel>_albedo.ktx2 files.
+// Plain GLuint, same self-contained single-owner pattern as s_controlMapTex.
+// glName 0 = not loaded (gate off / load failed) -> u_useMatAlbedo uploads 0
+// at draw -> frag takes the verbatim colormap-tint else-path (byte-identical).
+// Built lazily at first gate-ON bind (GL context guaranteed live at draw).
+// ---------------------------------------------------------------------------
+static GLuint s_matAlbedoArrayTex   = 0;
+static bool   s_matAlbedoLoadTried  = false;
+// JSON overrides (terrain_materials.json "layers.<channel>.albedo" +
+// "textureRoot"), applied by terrainMaterials_apply BEFORE the first draw
+// (mission load precedes the first chunk bind). Empty = shipped default path.
+static const int kMatAlbedoLayerCount = 6;
+static const char* const kMatAlbedoChannelNames[kMatAlbedoLayerCount] = {
+    "rock", "grass", "dirt", "concrete", "snow", "cliff"
+};
+static char  s_matAlbedoLayerPath[kMatAlbedoLayerCount][512] = {{0}};
+static char  s_matAlbedoTextureRoot[512] = {0};  // default data/terrain_layers/
+// JSON strength (matAlbedoStrength). <0 = "no JSON value" sentinel; the bind
+// resolves env MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH > JSON > 0.7 default.
+static float s_matAlbedoStrengthJson = -1.0f;
+
+// Setters consumed by terrain_material_lib.cpp (TinyJson layers{} extension).
+// Local externs per the established accessor pattern in that file.
+void gos_SetTerrainMatAlbedoStrength(float s) { s_matAlbedoStrengthJson = s; }
+void gos_SetTerrainMatAlbedoTextureRoot(const char* root) {
+    if (!root) { s_matAlbedoTextureRoot[0] = '\0'; return; }
+    snprintf(s_matAlbedoTextureRoot, sizeof(s_matAlbedoTextureRoot), "%s", root);
+}
+void gos_SetTerrainMatAlbedoLayerPath(int layer, const char* path) {
+    if (layer < 0 || layer >= kMatAlbedoLayerCount) return;
+    if (!path) { s_matAlbedoLayerPath[layer][0] = '\0'; return; }
+    snprintf(s_matAlbedoLayerPath[layer], sizeof(s_matAlbedoLayerPath[layer]), "%s", path);
+}
+int gos_GetTerrainMatAlbedoLayerIndex(const char* channelName) {
+    if (!channelName) return -1;
+    for (int i = 0; i < kMatAlbedoLayerCount; ++i)
+        if (strcmp(channelName, kMatAlbedoChannelNames[i]) == 0) return i;
+    return -1;
+}
+
+// TERRAIN-MATERIAL-TEXTURES-1 lazy loader: called at the first gate-ON bind
+// (GL context live, like the other lazy chunk resources). Loads the 6 cooked
+// BC7 sRGB KTX2 layers and uploads the stored block streams VERBATIM
+// (glCompressedTexSubImage3D) into an immutable
+// GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM array -- sRGB decode happens in the
+// sampler (the BC7-sRGB audit finding; a linear internalformat here would
+// double-bright the terrain after the shader's own lighting).
+// ALL-or-nothing: any layer failing (missing file, not BC7-sRGB, dim/mip
+// mismatch vs layer 0) leaves glName 0 and logs why -- the draw then uploads
+// u_useMatAlbedo=0 and the frag stays on the verbatim tint path (fail-soft).
+static void tglc_EnsureMatAlbedoArrayLoaded()
+{
+    if (s_matAlbedoLoadTried) return;
+    s_matAlbedoLoadTried = true;
+
+    if (!GLEW_ARB_texture_compression_bptc) {
+        printf("[TERRAIN_MAT_TEX] BPTC unsupported on this GL -- albedo array disabled\n");
+        fflush(stdout);
+        return;
+    }
+
+    RenderCore::KtxImage imgs[kMatAlbedoLayerCount];
+    int refW = 0, refH = 0, refMips = 0;
+    for (int i = 0; i < kMatAlbedoLayerCount; ++i) {
+        char path[1024];
+        if (s_matAlbedoLayerPath[i][0] != '\0') {
+            snprintf(path, sizeof(path), "%s", s_matAlbedoLayerPath[i]);
+        } else {
+            const char* root = (s_matAlbedoTextureRoot[0] != '\0')
+                             ? s_matAlbedoTextureRoot : "data/terrain_layers/";
+            const size_t rl = strlen(root);
+            const bool needSlash = (rl > 0 && root[rl - 1] != '/' && root[rl - 1] != '\\');
+            snprintf(path, sizeof(path), "%s%s%s_albedo.ktx2",
+                     root, needSlash ? "/" : "", kMatAlbedoChannelNames[i]);
+        }
+        if (!RenderCore::ktxLoadRgba8(path, imgs[i])) {
+            printf("[TERRAIN_MAT_TEX] layer %d (%s): load FAILED '%s' -- albedo array disabled\n",
+                   i, kMatAlbedoChannelNames[i], path);
+            fflush(stdout);
+            return;
+        }
+        const RenderCore::KtxImage& img = imgs[i];
+        if (!img.isCompressed || img.vkFormat != 146u) {  // VK_FORMAT_BC7_SRGB_BLOCK
+            printf("[TERRAIN_MAT_TEX] layer %d (%s): '%s' vkFormat=%u is not BC7 sRGB (146) -- albedo array disabled\n",
+                   i, kMatAlbedoChannelNames[i], path, img.vkFormat);
+            fflush(stdout);
+            return;
+        }
+        if (i == 0) { refW = img.width; refH = img.height; refMips = img.mipCount; }
+        if (img.width != refW || img.height != refH || img.mipCount != refMips) {
+            printf("[TERRAIN_MAT_TEX] layer %d (%s): %dx%d mips=%d != layer0 %dx%d mips=%d -- albedo array disabled\n",
+                   i, kMatAlbedoChannelNames[i], img.width, img.height, img.mipCount,
+                   refW, refH, refMips);
+            fflush(stdout);
+            return;
+        }
+        printf("[TERRAIN_MAT_TEX] layer %d (%s): %s %dx%d BC7-sRGB mips=%d\n",
+               i, kMatAlbedoChannelNames[i], path, img.width, img.height, img.mipCount);
+        fflush(stdout);
+    }
+
+    const GLenum internalformat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+    const int levels = (refMips > 0) ? refMips : 1;
+    GLint prevActive = 0, prevArrayBinding = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActive);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &prevArrayBinding);
+    // TEX-CLASS: asset-pool -- terrain per-layer BC7 sRGB albedo 2D_ARRAY (content)
+    glGenTextures(1, &s_matAlbedoArrayTex);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, s_matAlbedoArrayTex);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, levels, internalformat,
+                   refW, refH, kMatAlbedoLayerCount);
+    size_t totalBytes = 0;
+    for (int layer = 0; layer < kMatAlbedoLayerCount; ++layer) {
+        const RenderCore::KtxImage& img = imgs[layer];
+        for (int lvl = 0; lvl < levels; ++lvl) {
+            const int lw = (refW >> lvl) ? (refW >> lvl) : 1;
+            const int lh = (refH >> lvl) ? (refH >> lvl) : 1;
+            const GLsizei imageSize =
+                static_cast<GLsizei>(((lw + 3) / 4) * ((lh + 3) / 4) * 16);  // BC7: 16 B / 4x4 block
+            glCompressedTexSubImage3D(GL_TEXTURE_2D_ARRAY, lvl, 0, 0, layer,
+                                      lw, lh, 1, internalformat, imageSize,
+                                      img.pixels.data() + img.mipByteOffsets[static_cast<size_t>(lvl)]);
+            totalBytes += static_cast<size_t>(imageSize);
+        }
+    }
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, levels - 1);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER,
+                    (levels > 1) ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);  // world-space tiling
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, static_cast<GLuint>(prevArrayBinding));
+    glActiveTexture(static_cast<GLenum>(prevActive));
+    printf("[TERRAIN_MAT_TEX] albedo array READY: %d layers %dx%d BC7-sRGB levels=%d vram=%.1f MiB tex=%u\n",
+           kMatAlbedoLayerCount, refW, refH, levels,
+           totalBytes / (1024.0 * 1024.0), s_matAlbedoArrayTex);
+    fflush(stdout);
+}
+
+// ---------------------------------------------------------------------------
 // Shader program + uniform locations (Phase 4).
 // ---------------------------------------------------------------------------
 
@@ -312,6 +459,13 @@ static GLint s_locPomView        = -1; // TERRAIN-CHUNK-POM-1: u_pomView (.x=gat
 static GLint s_locMatProfile     = -1;
 static GLint s_locControlMap     = -1;  // TERRAIN-CONTROLMAP-SAMPLE-1: u_controlMap sampler
 static GLint s_locUseControlMap  = -1;  // u_useControlMap gate uniform
+// TERRAIN-MATERIAL-TEXTURES-1: per-layer PBR albedo array (unit 4 -- free on
+// the chunk program: 0=colormap 1=overlay 2=shoreline 3=cement 5=normalArray
+// 9/10=shadows 11=transitionMask 12=controlMap 13=dynFullMap).
+static GLint s_locMatAlbedoArray    = -1;  // u_matAlbedoArray sampler2DArray
+static GLint s_locUseMatAlbedo      = -1;  // u_useMatAlbedo gate uniform
+static GLint s_locMatAlbedoStrength = -1;  // u_matAlbedoStrength mix knob
+static constexpr GLint kChunkTexUnitMatAlbedoArray = 4;
 // TERRAIN-OVERLAY-V2-PARITY-1: authored cement/pad/runway overlay sidecar.
 static GLint s_locOverlaySidecar    = -1;  // u_overlaySidecar sampler
 static GLint s_locUseOverlaySidecar = -1;  // u_useOverlaySidecar gate uniform
@@ -744,6 +898,9 @@ void gos_TerrainLodChunk_Init()
             s_locUseTransitionMask   = glGetUniformLocation(s_terrainProgram, "u_useTransitionMask");
             s_locControlMap    = glGetUniformLocation(s_terrainProgram, "u_controlMap");    // TERRAIN-CONTROLMAP-SAMPLE-1
             s_locUseControlMap = glGetUniformLocation(s_terrainProgram, "u_useControlMap");
+            s_locMatAlbedoArray    = glGetUniformLocation(s_terrainProgram, "u_matAlbedoArray");    // TERRAIN-MATERIAL-TEXTURES-1
+            s_locUseMatAlbedo      = glGetUniformLocation(s_terrainProgram, "u_useMatAlbedo");
+            s_locMatAlbedoStrength = glGetUniformLocation(s_terrainProgram, "u_matAlbedoStrength");
             s_locOverlaySidecar    = glGetUniformLocation(s_terrainProgram, "u_overlaySidecar");    // TERRAIN-OVERLAY-V2-PARITY-1
             s_locUseOverlaySidecar = glGetUniformLocation(s_terrainProgram, "u_useOverlaySidecar");
             s_locOverlayBounds     = glGetUniformLocation(s_terrainProgram, "u_overlayBounds");
@@ -811,6 +968,15 @@ void gos_TerrainLodChunk_Destroy()
         s_controlMapTex  = 0;
         s_controlMapSide = 0;
     }
+
+    // TERRAIN-MATERIAL-TEXTURES-1: free the per-layer albedo array (if loaded).
+    // Reset the load-tried latch so a renderer re-create reloads it.
+    if (s_matAlbedoArrayTex != 0)
+    {
+        glDeleteTextures(1, &s_matAlbedoArrayTex);
+        s_matAlbedoArrayTex = 0;
+    }
+    s_matAlbedoLoadTried = false;
 
     // TERRAIN-SHORELINE-MASK-1: free the authored shoreline mask texture (if loaded).
     if (s_shorelineMaskTex != 0)
@@ -1382,6 +1548,48 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             glActiveTexture(GL_TEXTURE0 + TERRAIN_CONTROLMAP_TEXUNIT);
             glBindTexture(GL_TEXTURE_2D, s_controlMapTex);
             glActiveTexture(GL_TEXTURE0);
+        }
+    }
+
+    // TERRAIN-MATERIAL-TEXTURES-1: per-layer PBR albedo array at unit 4. Lazy
+    // load at first gate-ON bind; u_useMatAlbedo uploads 0 when the gate is
+    // OFF or the load failed -> frag takes the verbatim colormap-tint path
+    // (byte-identical). Strength precedence: env > JSON (matAlbedoStrength,
+    // via gos_SetTerrainMatAlbedoStrength) > 0.7 default.
+    {
+        GLuint albTex = 0;
+        if (kTglcMatAlbedo) {
+            tglc_EnsureMatAlbedoArrayLoaded();
+            albTex = s_matAlbedoArrayTex;
+        }
+        const bool matAlbedoReady = (albTex != 0);
+        if (s_locUseMatAlbedo >= 0)
+            glUniform1i(s_locUseMatAlbedo, matAlbedoReady ? 1 : 0);
+        if (matAlbedoReady) {
+            if (s_locMatAlbedoArray >= 0) {
+                glUniform1i(s_locMatAlbedoArray, kChunkTexUnitMatAlbedoArray);
+                glActiveTexture(GL_TEXTURE0 + kChunkTexUnitMatAlbedoArray);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, albTex);
+                glActiveTexture(GL_TEXTURE0);
+            }
+            if (s_locMatAlbedoStrength >= 0) {
+                // env resolved once (mission-constant, REDUNDANT-PASS-HUNT-1
+                // discipline); -1 sentinel = env absent -> JSON -> 0.7.
+                static const float s_envMatAlbedoStrength = []() {
+                    const char* v = std::getenv("MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH");
+                    if (!v || !v[0]) return -1.0f;
+                    float f = (float)std::atof(v);
+                    if (!(f == f)) return -1.0f;  // NaN guard
+                    if (f < 0.0f) f = 0.0f;
+                    if (f > 1.0f) f = 1.0f;
+                    return f;
+                }();
+                const float strength =
+                      (s_envMatAlbedoStrength >= 0.0f)  ? s_envMatAlbedoStrength
+                    : (s_matAlbedoStrengthJson >= 0.0f) ? s_matAlbedoStrengthJson
+                    : 0.7f;
+                glUniform1f(s_locMatAlbedoStrength, strength);
+            }
         }
     }
 

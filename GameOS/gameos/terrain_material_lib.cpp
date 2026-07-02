@@ -22,6 +22,12 @@ extern void  gos_SetTerrainMatRoughness(float rock, float grass, float dirt, flo
 extern void  gos_SetTerrainMatAO(float rock, float grass, float dirt, float concrete);
 extern void  gos_SetTerrainTintStrengthScale(float s);
 extern void  gos_SetTerrainControlAlbedoStrength(float s);  // TERRAIN-CONTROLMAP-ALBEDO-1
+// TERRAIN-MATERIAL-TEXTURES-1 (definitions in gos_terrain_lod_chunk.cpp -- the
+// live chunk binder owns the albedo-array state, single-owner pattern).
+extern void  gos_SetTerrainMatAlbedoStrength(float s);
+extern void  gos_SetTerrainMatAlbedoTextureRoot(const char* root);
+extern void  gos_SetTerrainMatAlbedoLayerPath(int layer, const char* path);
+extern int   gos_GetTerrainMatAlbedoLayerIndex(const char* channelName);
 extern void  gos_SetTerrainDetailParams(float tiling, float strength);
 extern void  gos_SetTerrainSnowBrightnessDampen(float v);
 extern void  gos_SetTerrainClassGrass(float gMinusRLo, float gMinusRHi, float gBrightLo, float gBrightHi);
@@ -79,15 +85,55 @@ struct TinyJson {
         }
     }
 
-    // Parse {"key": float, ...} — nested objects/arrays are skipped (v1 uses
-    // flat keys exclusively; "layers" as an array is a v2 nicety per recon).
-    void floatObj(std::map<std::string,float>& out) {
+    // TERRAIN-MATERIAL-TEXTURES-1: one nested layer-object level,
+    //   "layers": { "<channel>": { "<field>": "<string>", ... }, ... }
+    // collected as "<channel>.<field>" -> string. Non-string fields inside a
+    // layer and non-object layer values are skipped (schema headroom for v2.1
+    // ORM/height entries without a reader change).
+    void layersObj(std::map<std::string,std::string>& out) {
+        if (!eat('{')) return;
+        for (;;) {
+            ws(); if (p >= e || *p == '}') { if (p < e) p++; break; }
+            auto layer = str(); if (!eat(':')) break;
+            ws();
+            if (p < e && *p == '{') {
+                if (!eat('{')) break;
+                for (;;) {
+                    ws(); if (p >= e || *p == '}') { if (p < e) p++; break; }
+                    auto field = str(); if (!eat(':')) break;
+                    ws();
+                    if (p < e && *p == '"') {
+                        std::string val = str();
+                        if (!layer.empty() && !field.empty())
+                            out[layer + "." + field] = val;
+                    } else {
+                        skipVal();
+                    }
+                    eat(',');
+                }
+            } else {
+                skipVal();
+            }
+            eat(',');
+        }
+    }
+
+    // Parse the root object: {"key": float, ...} exactly as the v1 reader
+    // (nested objects/arrays skipped) PLUS (TERRAIN-MATERIAL-TEXTURES-1) two
+    // v2 additions: top-level STRING values are collected into `strs` (e.g.
+    // "textureRoot") and the "layers" nested object is descended via
+    // layersObj. v1 files contain neither -> identical parse to before.
+    void floatObj(std::map<std::string,float>& out,
+                  std::map<std::string,std::string>& strs,
+                  std::map<std::string,std::string>& layerStrs) {
         if (!eat('{')) return;
         for (;;) {
             ws(); if (p >= e || *p == '}') { if (p < e) p++; break; }
             auto k = str(); if (!eat(':')) break;
             ws();
-            if (p < e && (*p == '{' || *p == '[')) skipVal();
+            if (p < e && *p == '{' && k == "layers") layersObj(layerStrs);
+            else if (p < e && (*p == '{' || *p == '[')) skipVal();
+            else if (p < e && *p == '"' && !k.empty()) strs[k] = str();
             else if (!k.empty()) out[k] = num();
             else skipVal();
             eat(',');
@@ -127,19 +173,66 @@ static void applyControlAlbedoStrength(const std::map<std::string,float>& v, boo
     fprintf(stderr, "[TerrainControlAlbedo] gate ON -- strength=%.3f\n", strength);
 }
 
+// TERRAIN-MATERIAL-TEXTURES-1: independent gate (own killswitch, per the
+// TERRAIN-CONTROLMAP-ALBEDO-1 precedent). Pushes the JSON matAlbedoStrength +
+// textureRoot + layers.<channel>.albedo path overrides to the chunk binder
+// (gos_terrain_lod_chunk.cpp owns the array state; its lazy load runs at the
+// first in-mission draw, i.e. AFTER this mission-load call -- overrides land
+// before the load reads them). Gate OFF -> return before any setter fires ->
+// no member writes -> byte-identical. Env strength precedence
+// (MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH > JSON > 0.7) lives at the bind.
+static void applyMatAlbedoTextures(const std::map<std::string,float>& v,
+                                   const std::map<std::string,std::string>& strs,
+                                   const std::map<std::string,std::string>& layerStrs,
+                                   bool jsonLoaded) {
+    if (!envIsSet("MC2_TERRAIN_MATERIAL_TEXTURES")) return;  // gate OFF -> no-op
+
+    float strength = -1.0f;  // <0 = no JSON value (binder falls to 0.7 default)
+    int pathOverrides = 0;
+    const char* root = "";
+    if (jsonLoaded) {
+        auto it = v.find("matAlbedoStrength");
+        if (it != v.end()) {
+            strength = it->second;
+            gos_SetTerrainMatAlbedoStrength(strength);
+        }
+        auto rootIt = strs.find("textureRoot");
+        if (rootIt != strs.end()) {
+            root = rootIt->second.c_str();
+            gos_SetTerrainMatAlbedoTextureRoot(root);
+        }
+        for (const auto& kv : layerStrs) {
+            const std::string& key = kv.first;  // "<channel>.<field>"
+            size_t dot = key.find('.');
+            if (dot == std::string::npos || key.compare(dot + 1, std::string::npos, "albedo") != 0)
+                continue;  // v1 consumes only the albedo field
+            int idx = gos_GetTerrainMatAlbedoLayerIndex(key.substr(0, dot).c_str());
+            if (idx < 0) continue;
+            gos_SetTerrainMatAlbedoLayerPath(idx, kv.second.c_str());
+            ++pathOverrides;
+        }
+    }
+    fprintf(stderr, "[TerrainMatTextures] gate ON -- json=%d strength=%.3f (<0 = binder default 0.7) "
+                    "textureRoot='%s' layerPathOverrides=%d\n",
+            jsonLoaded ? 1 : 0, strength, root, pathOverrides);
+}
+
 void terrainMaterials_apply(const char* /*missionName*/) {
     const char* pathEnv = getenv("MC2_TERRAIN_MATERIAL_LIB_FILE");
     const char* path = (pathEnv && pathEnv[0]) ? pathEnv : "data/terrain_materials.json";
     bool materialLibGateOn = envIsSet("MC2_TERRAIN_MATERIAL_LIB");
     bool controlAlbedoGateOn = envIsSet("MC2_TERRAIN_CONTROLMAP_ALBEDO");
+    bool matTexturesGateOn = envIsSet("MC2_TERRAIN_MATERIAL_TEXTURES");  // TERRAIN-MATERIAL-TEXTURES-1
 
-    if (!materialLibGateOn && !controlAlbedoGateOn) return;  // both gates OFF -> silent no-op
+    if (!materialLibGateOn && !controlAlbedoGateOn && !matTexturesGateOn)
+        return;  // all gates OFF -> silent no-op
 
     FILE* f = fopen(path, "r");
     if (!f) {
         if (materialLibGateOn)
             fprintf(stderr, "[TerrainMaterialLib] gate ON but no file at '%s' -- no-op\n", path);
         applyControlAlbedoStrength({}, /*jsonLoaded=*/false);  // shipped-default strength
+        applyMatAlbedoTextures({}, {}, {}, /*jsonLoaded=*/false);  // shipped-default paths/strength
         return;  // missing file = silent no-op (matches visual_tuning.json convention)
     }
 
@@ -149,6 +242,7 @@ void terrainMaterials_apply(const char* /*missionName*/) {
     if (sz <= 0 || sz > 512 * 1024) {
         fclose(f);
         applyControlAlbedoStrength({}, /*jsonLoaded=*/false);
+        applyMatAlbedoTextures({}, {}, {}, /*jsonLoaded=*/false);
         return;
     }
 
@@ -157,12 +251,15 @@ void terrainMaterials_apply(const char* /*missionName*/) {
     fclose(f);
 
     std::map<std::string,float> v;
+    std::map<std::string,std::string> strs;       // TERRAIN-MATERIAL-TEXTURES-1: top-level strings
+    std::map<std::string,std::string> layerStrs;  // "layers" nested-object fields
     TinyJson jp{ buf.c_str(), buf.c_str() + buf.size() };
-    jp.floatObj(v);
+    jp.floatObj(v, strs, layerStrs);
 
     applyControlAlbedoStrength(v, /*jsonLoaded=*/true);
+    applyMatAlbedoTextures(v, strs, layerStrs, /*jsonLoaded=*/true);
 
-    if (!materialLibGateOn) return;  // TERRAIN-CONTROLMAP-ALBEDO-1 gate handled above independently
+    if (!materialLibGateOn) return;  // independent gates above already handled
 
     // --- Byte-identity defaults: EXACT current hardcoded constants (recon
     // table). If the JSON omits a key, the corresponding gos_Set* call below

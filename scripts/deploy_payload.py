@@ -111,6 +111,22 @@ GAME_DATA_PAYLOAD = [
     "data/visual_tuning.json",
 ]
 
+# TERRAIN-MATERIAL-TEXTURES-1: per-layer BC7 sRGB albedo KTX2s read off
+# "data/terrain_layers/<channel>_albedo.ktx2" by the LOD-chunk albedo-array
+# loader (gos_terrain_lod_chunk.cpp) when MC2_TERRAIN_MATERIAL_TEXTURES=1.
+# Loose cooked sidecars (gitignored; regenerate via
+# tools/mc2texcook/cook_terrain_layers.py -- must be mip-complete BC7 sRGB).
+# OPTIONAL at deploy time: a missing layer file only logs and skips (the
+# engine fail-softs to the legacy tint path), matching the runtime contract.
+TERRAIN_LAYER_PAYLOAD = [
+    "data/terrain_layers/rock_albedo.ktx2",
+    "data/terrain_layers/grass_albedo.ktx2",
+    "data/terrain_layers/dirt_albedo.ktx2",
+    "data/terrain_layers/concrete_albedo.ktx2",
+    "data/terrain_layers/snow_albedo.ktx2",
+    "data/terrain_layers/cliff_albedo.ktx2",
+]
+
 FFMPEG_DLLS = [
     "avcodec-61.dll",
     "avformat-61.dll",
@@ -463,6 +479,15 @@ def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
         p = os.path.join(src_root, rel)
         if require_build and not os.path.isfile(p):
             fail(f"game data payload missing in source: {p}")
+        items.append((p, rel, "support"))
+
+    # TERRAIN-MATERIAL-TEXTURES-1: optional loose cooked sidecars -- skip (log)
+    # when absent instead of failing; the engine fail-softs without them.
+    for rel in TERRAIN_LAYER_PAYLOAD:
+        p = os.path.join(src_root, rel)
+        if not os.path.isfile(p):
+            log(f"terrain layer payload absent (skipped, engine fail-softs): {rel}")
+            continue
         items.append((p, rel, "support"))
 
     # Support payload: launch scripts (per target) + editor authoring trees.

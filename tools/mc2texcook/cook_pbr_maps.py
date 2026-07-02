@@ -84,18 +84,26 @@ def detect_maps(input_dir):
 # KTX2 cook helpers
 # ---------------------------------------------------------------------------
 
-def _ktx_create_uastc(ktx_exe, src_png, uastc_ktx2, vk_format, oetf):
+def _ktx_create_uastc(ktx_exe, src_png, uastc_ktx2, vk_format, oetf, mips=False):
     """
     Step 1: PNG -> UASTC KTX2.
 
     vk_format: e.g. 'R8G8B8A8_SRGB' or 'R8G8B8A8_UNORM'
     oetf:      'srgb' or 'linear'
+    mips:      True = bake a full mip chain (--generate-mipmap). Default False
+               preserves the historical single-level output for existing
+               callers (TERRAIN-MATERIAL-TEXTURES-1: terrain layer arrays need
+               mips or tiling terrain albedo shimmers at distance).
     """
     cmd = [
         ktx_exe, 'create',
         '--encode', 'uastc',
         '--format', vk_format,
         '--assign-tf', oetf,
+    ]
+    if mips:
+        cmd.append('--generate-mipmap')
+    cmd += [
         src_png,
         uastc_ktx2,
     ]
@@ -125,17 +133,18 @@ def _ktx_transcode_bc7(ktx_exe, uastc_ktx2, out_ktx2):
     return True
 
 
-def cook_png_to_bc7(ktx_exe, src_png, out_ktx2, vk_format, oetf, tmpdir):
+def cook_png_to_bc7(ktx_exe, src_png, out_ktx2, vk_format, oetf, tmpdir, mips=False):
     """
     Cook src_png -> BC7 KTX2 at out_ktx2.
     Uses tmpdir for the intermediate UASTC file.
+    mips=True bakes a full mip chain (see _ktx_create_uastc).
     Returns True on success.
     """
     basename = os.path.splitext(os.path.basename(out_ktx2))[0]
     uastc_tmp = os.path.join(tmpdir, f'{basename}_uastc.ktx2')
 
-    print(f'  [1/2] ktx create uastc ({vk_format}, {oetf}) ...')
-    if not _ktx_create_uastc(ktx_exe, src_png, uastc_tmp, vk_format, oetf):
+    print(f'  [1/2] ktx create uastc ({vk_format}, {oetf}, mips={mips}) ...')
+    if not _ktx_create_uastc(ktx_exe, src_png, uastc_tmp, vk_format, oetf, mips=mips):
         return False
 
     print(f'  [2/2] ktx transcode bc7 ...')
@@ -289,9 +298,9 @@ def resize_to_square(src_path, out_png, size):
     return out_png
 
 
-def cook_source_to_bc7(ktx_exe, src_png, out_ktx2, vk_format, oetf, tmpdir):
+def cook_source_to_bc7(ktx_exe, src_png, out_ktx2, vk_format, oetf, tmpdir, mips=False):
     """Thin re-export of cook_png_to_bc7 for callers that only have a plain PNG."""
-    return cook_png_to_bc7(ktx_exe, src_png, out_ktx2, vk_format, oetf, tmpdir)
+    return cook_png_to_bc7(ktx_exe, src_png, out_ktx2, vk_format, oetf, tmpdir, mips=mips)
 
 
 # ---------------------------------------------------------------------------

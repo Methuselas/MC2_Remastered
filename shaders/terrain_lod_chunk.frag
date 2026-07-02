@@ -253,6 +253,19 @@ uniform float snowBrightnessDampen; // <1 darkens detected snow (snowWeight-gate
 uniform vec4  matRoughness;
 uniform vec4  matAO;
 uniform int   u_useMaterialLib;
+// TERRAIN-MATERIAL-TEXTURES-1: per-layer PBR albedo array (BC7 sRGB KTX2s from
+// data/terrain_layers/<channel>_albedo.ktx2; layer order = MAT_LAYER_* 0..4 +
+// MAT_LAYER_MARBLE_CLIFF at 5). Gate MC2_TERRAIN_MATERIAL_TEXTURES default OFF
+// -> driver uploads u_useMatAlbedo=0 -> the legacy colormap-tint composition
+// below runs VERBATIM (byte-identical). ON: real material albedo replaces the
+// flat per-layer tints while the colormap stays the MACRO tint (2x multiply
+// keeps burn-in shading + per-mission colour); u_matAlbedoStrength (JSON key
+// matAlbedoStrength / env MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH, default 0.7)
+// mixes legacy-tinted vs textured composite. sRGB decode is the sampler's job
+// (array is GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM -- the BC7 sRGB audit finding).
+uniform sampler2DArray u_matAlbedoArray;
+uniform int   u_useMatAlbedo;       // 0 = legacy tint path verbatim
+uniform float u_matAlbedoStrength;  // 0..1 mix toward textured composite
 
 // Remaining legacy tunables (copied with legacy defaults; driver replicates the
 // env gates so default == legacy default). cellBombParams is a DEAD uniform in
@@ -981,6 +994,30 @@ void main() {
                              1.0, u_controlAlbedoStrength);
     vec3  baseColor   = mix(base, materialTint, tintStrength);
     if ((u_diag & 512) != 0) baseColor = base;   // DIAG 512: bypass material tint (A/B)
+
+    // TERRAIN-MATERIAL-TEXTURES-1: real per-layer albedo (gate ON only; OFF ->
+    // this block is skipped and everything below is the pre-slice path verbatim).
+    // Same per-layer world-space UV scheme as chunkDetailNormal (matTiling from
+    // the material-lib JSON; rock /3 matches the normal path) so albedo features
+    // line up with the detail normals. v1 samples the UNPERTURBED UVs (no POM
+    // offset -- that lives inside chunkDetailNormal; acceptable v1 drift, POM is
+    // default-OFF). Uniform control flow: u_useMatAlbedo is a uniform, so the
+    // implicit-LOD texture() calls here are well-defined (UB2 discipline).
+    if (u_useMatAlbedo != 0) {
+        vec2 uvM = v_worldPos.xy * (detailNormalTiling.x / MAT_WORLD_UNITS_PER_TILE);
+        vec3 texAlb =
+              matWeights.x * texture(u_matAlbedoArray, vec3(uvM * (matTiling.x / 3.0), float(MAT_LAYER_ROCK))).rgb
+            + matWeights.y * texture(u_matAlbedoArray, vec3(uvM * matTiling.y, float(MAT_LAYER_GRASS))).rgb
+            + matWeights.z * texture(u_matAlbedoArray, vec3(uvM * matTiling.z, float(MAT_LAYER_DIRT))).rgb
+            + matWeights.w * texture(u_matAlbedoArray, vec3(uvM * matTiling.w, float(MAT_LAYER_CONCRETE))).rgb
+            + snowWeight   * texture(u_matAlbedoArray, vec3(uvM * matTilingSnow, float(MAT_LAYER_SNOW))).rgb;
+        // Colormap remains the MACRO tint: 2x multiply keeps burn-in lighting and
+        // per-mission colour zones on top of the tiled material albedo (weights
+        // matWeights+snowWeight sum to 1 after the normalizations above).
+        vec3 texComposed = texAlb * base * 2.0;
+        baseColor = mix(baseColor, texComposed, clamp(u_matAlbedoStrength, 0.0, 1.0));
+    }
+
     // Cement: restore the authored colormap tone (runway/apron) instead of the
     // generic concrete tint.
     baseColor = mix(baseColor, base, concreteColorBlend);
@@ -991,9 +1028,32 @@ void main() {
     // desaturated the whole map to grey (matches legacy using WorldNorm.z).
     {
         float cliffBlend = smoothstep(0.85, 0.55, abs(macroNz));
+        // TERRAIN-MATERIAL-TEXTURES-1: LOD for the cliff-albedo triplanar samples
+        // below, computed HERE in uniform flow (fwidth inside the non-uniform
+        // cliffBlend branch would be UB -- UB2 discipline). 2048 texels per
+        // CLIFF_ALB_TS world units; gate OFF leaves it unused (no output change).
+        const float CLIFF_ALB_TS = 256.0;   // world units per cliff-albedo repeat
+        float cliffAlbLod = log2(max(length(fwidth(v_worldPos.xy)) * (2048.0 / CLIFF_ALB_TS), 1.0));
         if (cliffBlend > 0.01) {
             float luma = dot(baseColor, vec3(0.299, 0.587, 0.114));
             vec3  cliffColor = mix(vec3(luma), tintRock, 0.6) * 0.8;
+            // TERRAIN-MATERIAL-TEXTURES-1: the "cliffs look like rock" payoff --
+            // gate ON swaps the flat desaturate-toward-tintRock cliff colour for
+            // the real CLIFF material albedo (marble_cliff, layer 5) projected
+            // from world axes (triplanar, same plane weighting as the cliff
+            // normal block below) so steep faces stop showing stretched top-down
+            // colormap. textureLod with the hoisted LOD is branch-safe. Gate OFF
+            // -> cliffColor untouched -> byte-identical.
+            if (u_useMatAlbedo != 0) {
+                vec3 wpc = v_worldPos;
+                vec3 mNc = smoothTerrainNormal(v_worldPos.xy);
+                vec3 wnc = abs(mNc); wnc /= (wnc.x + wnc.y + wnc.z + 1e-5);
+                vec3 cliffAlb =
+                      textureLod(u_matAlbedoArray, vec3(wpc.yz / CLIFF_ALB_TS, float(MAT_LAYER_MARBLE_CLIFF)), cliffAlbLod).rgb * wnc.x
+                    + textureLod(u_matAlbedoArray, vec3(wpc.xz / CLIFF_ALB_TS, float(MAT_LAYER_MARBLE_CLIFF)), cliffAlbLod).rgb * wnc.y
+                    + textureLod(u_matAlbedoArray, vec3(wpc.xy / CLIFF_ALB_TS, float(MAT_LAYER_MARBLE_CLIFF)), cliffAlbLod).rgb * wnc.z;
+                cliffColor = mix(cliffColor, cliffAlb * base * 2.0, clamp(u_matAlbedoStrength, 0.0, 1.0));
+            }
             baseColor = mix(baseColor, cliffColor, cliffBlend * 0.7 * (1.0 - pureConcrete));
         }
     }
