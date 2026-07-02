@@ -1945,7 +1945,17 @@ typedef struct _MoverInitData {
 				mover->setLocalMoverId(0);
 
 			ObjectManager->modifyMoverLists(mover, MOVERLIST_ADD);
-			Team::teams[moverSpec->teamID]->addToRoster(mover);
+			// TEAM-COMMANDER-OWNERSHIP-1 audit: the only id-indexed access to the
+			// static Team::teams[] that survives OUTSIDE init's now-bounded create
+			// loops. moverSpec->teamID is a file/save-supplied char (MoverInitData)
+			// that indexes Team::teams[MAX_TEAMS] and is immediately dereferenced --
+			// a bad/mod-supplied id is an OOB read + NULL/garbage deref (companion to
+			// the init-side A5 write guards). Bound the index AND require the slot to
+			// have been created before the addToRoster deref; log mode skips the
+			// roster add for the malformed mover instead of AVing.
+			if (MC2_VERIFY_BOUNDS(moverSpec->teamID, MAX_TEAMS, "Mission::addMover moverSpec->teamID") &&
+				MC2_VERIFY_NOTNULL(Team::teams[moverSpec->teamID], "Mission::addMover Team::teams[teamID]"))
+				Team::teams[moverSpec->teamID]->addToRoster(mover);
 			missionInterface->addMover(mover);
 
 			for (long i = 0; i < ObjectManager->getNumMovers(); i++) {
@@ -2689,18 +2699,13 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 
 	result = missionFile->seekBlock("Teams");
 	Assert(result == NO_ERR, result, " Could not find Teams Block ");
-	for (int i = 0; i < Team::numTeams; i++)
-		if (Team::teams[i]) {
-			delete Team::teams[i];
-			Team::teams[i] = NULL;
-		}
-	Team::numTeams = 0;
-	for (int i = 0; i < Commander::numCommanders; i++)
-		if (Commander::commanders[i]) {
-			delete Commander::commanders[i];
-			Commander::commanders[i] = NULL;
-		}
-	Commander::numCommanders = 0;
+	// TEAM-COMMANDER-OWNERSHIP-1: re-init guard against stale teams/commanders
+	// from a prior mission that was NOT torn down (quickstart -> mission without a
+	// logistics destroy). Was a duplicated inline free loop identical to the one
+	// in Mission::destroy -- the divergence/dual-free source. Now the single
+	// shared authority; also nulls the home aliases before they are re-pointed
+	// below at :2808/:2833.
+	Mission::resetTeamsAndCommanders();
 
 	//------------------------------------------------------------
 	// First, let's see how many teams and commanders there are...
@@ -4271,6 +4276,17 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		if (commandersToLoad[curCommanderId][0] == -1)
 			continue;
 
+		// TEAM-COMMANDER-OWNERSHIP-1 audit: this reads commandersToLoad back to
+		// INDEX + DEREF Commander::commanders[] below, but (unlike the setTeam
+		// site at :2851) only checked != -1. A caller-supplied id >= MAX_COMMANDERS
+		// is an OOB read, and a valid-but-uncreated slot (init loops only made
+		// [0..maxCommanderID]) is a NULL ->getGroup() deref. Bound + null-check the
+		// slot once here; log mode skips this commander's groups.
+		long ctlCommander = commandersToLoad[curCommanderId][0];
+		if (!MC2_VERIFY_BOUNDS(ctlCommander, MAX_COMMANDERS, "Mission::init commander-groups commandersToLoad") ||
+			!MC2_VERIFY_NOTNULL(Commander::commanders[ctlCommander], "Mission::init commander-groups Commander::commanders[]"))
+			continue;
+
 		sprintf(headingStr, "Commander%dGroup:%d", curCommanderId, numGroups);
 		result = missionFile->seekBlock(headingStr);
 		while (result == NO_ERR) {
@@ -4282,10 +4298,10 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			Assert(result == NO_ERR, result, " could not find Mates in Group in Scenario File ");
 			for (long curMate = 0; curMate < MAX_MOVERGROUP_COUNT_START; curMate++) {
 				if ((groupMates[curMate] > 0) && parts[groupMates[curMate]].objectWID) {
-					ObjectManager->setPartId(ObjectManager->getByWatchID(parts[groupMates[curMate]].objectWID), commandersToLoad[curCommanderId][0], numGroups, curMate);
-					Commander::commanders[commandersToLoad[curCommanderId][0]]->getGroup(numGroups)->add((MoverPtr)ObjectManager->getByWatchID(parts[groupMates[curMate]].objectWID));
+					ObjectManager->setPartId(ObjectManager->getByWatchID(parts[groupMates[curMate]].objectWID), ctlCommander, numGroups, curMate);
+					Commander::commanders[ctlCommander]->getGroup(numGroups)->add((MoverPtr)ObjectManager->getByWatchID(parts[groupMates[curMate]].objectWID));
 					if (!pointSet) {
-						Commander::commanders[commandersToLoad[curCommanderId][0]]->getGroup(numGroups)->selectPoint(true);
+						Commander::commanders[ctlCommander]->getGroup(numGroups)->selectPoint(true);
 						pointSet = true;
 					}
 				}
@@ -4595,6 +4611,52 @@ void Mission::initTGLForMission()
 
 
 //----------------------------------------------------------------------------------
+// TEAM-COMMANDER-OWNERSHIP-1: the ONE owner / ONE destroy path for the
+// Team::teams[]/Commander::commanders[] static arrays. Previously the identical
+// free loop was duplicated inline in Mission::init (re-init guard) AND
+// Mission::destroy -- two copies that could drift, double-free, or (the live
+// hazard) leave Team::home/Commander::home dangling into a freed slot across a
+// mission cycle. Both sites now call this single helper.
+//
+// Contract: idempotent + null-safe. Every live slot up to the recorded count is
+// deleted and nulled, the counts are zeroed, and the home aliases are nulled.
+// A second back-to-back call is a guaranteed no-op (counts are 0), which is the
+// property the MC2_MISSION_CYCLE_TEST probe in destroy() exercises to prove the
+// double-free can no longer happen.
+void Mission::resetTeamsAndCommanders()
+{
+	long numt = Team::numTeams;
+	for (long i = 0; i < numt; i++)
+		if (Team::teams[i]) {
+			delete Team::teams[i];
+			Team::teams[i] = NULL;
+		}
+	Team::numTeams = 0;
+	// Null the raw alias into teams[] -- it pointed at a slot just freed above
+	// (or was already NULL). Leaving it dangling is the cross-cycle hazard the
+	// game-layer review flagged; readers (mission.cpp:659/930/... , update HUD /
+	// objectives) guard some but not all dereferences.
+	Team::home = NULL;
+
+	long numC = Commander::numCommanders;
+	for (long i = 0; i < numC; i++)
+		if (Commander::commanders[i]) {
+			delete Commander::commanders[i];
+			Commander::commanders[i] = NULL;
+		}
+	Commander::numCommanders = 0;
+	Commander::home = NULL;
+
+	// Post-condition: exactly one teardown authority left the statics empty.
+	// Silent when TRUE; only the cold path (a leftover live slot / stale count
+	// -> a would-be leak or double-free source) logs/stops per MC2_VERIFY_MODE.
+	MC2_VERIFY(Team::numTeams == 0 && Commander::numCommanders == 0,
+		"resetTeamsAndCommanders: counts not zeroed (teams=%ld commanders=%ld)",
+		Team::numTeams, Commander::numCommanders);
+}
+
+
+//----------------------------------------------------------------------------------
 void Mission::destroy (bool initLogistics)
 {
 	// MC2-VERIFY-LIVE-1: [VERIFY] counter line at mission end (soak evidence:
@@ -4767,21 +4829,31 @@ void Mission::destroy (bool initLogistics)
 	//	SensorManager = NULL;
 	//}
 
-	long numt = Team::numTeams;
-	for (long i = 0; i < numt; i++)
-		if (Team::teams[i]) {
-			delete Team::teams[i];
-			Team::teams[i] = NULL;
-		}
-	Team::numTeams = 0;
+	// TEAM-COMMANDER-OWNERSHIP-1: single teardown authority (was a duplicated
+	// inline free loop; see resetTeamsAndCommanders()). Also nulls the
+	// Team::home/Commander::home aliases.
+	Mission::resetTeamsAndCommanders();
 
-	long numC = Commander::numCommanders;
-	for (int i = 0; i < numC; i++)
-		if (Commander::commanders[i]) {
-			delete Commander::commanders[i];
-			Commander::commanders[i] = NULL;
+	// MC2_MISSION_CYCLE_TEST fixture: prove the class this slice retires -- the
+	// dual-free / dangling-home hazard -- can no longer bite. resetTeams...()
+	// just ran on a fully populated set (the real teardown); calling it a SECOND
+	// time here is exactly the "init frees, then destroy frees again" double-free
+	// that used to live in two divergent copies. If the helper is not idempotent
+	// this either AVs on a stale slot or trips the count verify. It must be a
+	// clean no-op with home left NULL. Gated off by default (zero cost / zero
+	// behavior change unless MC2_MISSION_CYCLE_TEST is set for a soak run).
+	{
+		static const bool s_missionCycleTest = (getenv("MC2_MISSION_CYCLE_TEST") != nullptr);
+		if (s_missionCycleTest) {
+			Mission::resetTeamsAndCommanders();   // idempotent re-free (the ex-double-free)
+			MC2_VERIFY(Team::numTeams == 0 && Commander::numCommanders == 0 &&
+					Team::home == NULL && Commander::home == NULL,
+				"MC2_MISSION_CYCLE_TEST: reset not idempotent / home not nulled "
+				"(teams=%ld commanders=%ld home=%p/%p)",
+				Team::numTeams, Commander::numCommanders,
+				(void*)Team::home, (void*)Commander::home);
 		}
-	Commander::numCommanders = 0;
+	}
 
 	if (Mover::triggerAreaMgr) {
 		delete Mover::triggerAreaMgr;
