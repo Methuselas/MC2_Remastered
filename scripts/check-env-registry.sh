@@ -273,8 +273,10 @@ ALLOWLIST=(
     MC2_TERRAIN_SHORELINE_FILE  # override -- explicit shoreline mask (optional modulator) path override
     MC2_TERRAIN_SHORELINE_STRENGTH   # override -- wet/damp darken intensity multiplier [0,2]
     MC2_TERRAIN_SHORELINE_FOAM       # override -- foam rim intensity multiplier [0,2]
-    MC2_TERRAIN_SHORELINE_WET_HEIGHT  # override -- V3 wet-band height above water (world units)
-    MC2_TERRAIN_SHORELINE_FOAM_HEIGHT # override -- V3 foam-band height above water (world units)
+    MC2_TERRAIN_SHORELINE_WET_RUN     # override -- V3 wet-band horizontal run from waterline (world units)
+    MC2_TERRAIN_SHORELINE_FOAM_RUN    # override -- V3 foam-band horizontal run from waterline (world units)
+    MC2_TERRAIN_SHORELINE_WET_HEIGHT  # override -- legacy alias for _WET_RUN (now horizontal-run units)
+    MC2_TERRAIN_SHORELINE_FOAM_HEIGHT # override -- legacy alias for _FOAM_RUN (now horizontal-run units)
     MC2_TERRAIN_VISUAL_DISPLACE # feature -- TERRAIN-VISUAL-HEIGHT displacement from 4x bake (default OFF)
     MC2_TERRAIN_VISUAL_DISPLACE_FAR  # override -- far-band displacement scale knob
     MC2_TERRAIN_MASK_DISPATCH   # feature -- promote-to-registry

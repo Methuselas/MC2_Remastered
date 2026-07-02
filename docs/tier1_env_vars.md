@@ -259,8 +259,9 @@ call from inside a draw-bind path.
 - `MC2_TERRAIN_SHORELINE_FILE=<path>` — override the OPTIONAL mask sidecar path (default `data/missions/<stem>.beauty/shoreline_mask.png`), offline-cooked by `tools/terrain_beautify/cook_shoreline.py`. When present, its G/B channels MODULATE the elevation bands (wide-beach falloff / basin exclusion); when absent, the gate alone still produces full elevation bands.
 - `MC2_TERRAIN_SHORELINE_STRENGTH=F` — wet/damp darken intensity multiplier, clamped [0,2]. Default 1.0.
 - `MC2_TERRAIN_SHORELINE_FOAM=F` — foam rim intensity multiplier, clamped [0,2]. Default 1.0.
-- `MC2_TERRAIN_SHORELINE_WET_HEIGHT=F` — V3 wet-lobe height above `u_waterElevation`, world units. Default 3.0 (locked design range 2-4).
-- `MC2_TERRAIN_SHORELINE_FOAM_HEIGHT=F` — V3 foam-rim height above `u_waterElevation`, world units. Default 1.2 (locked design range 0.8-1.5).
+- `MC2_TERRAIN_SHORELINE_WET_RUN=F` — V3 wet-lobe width as a **horizontal** world-unit run inland from the drawn waterline (the frag converts vertical rise → horizontal run via the macro slope). Default 16.0 (~4.8 m). **UNIT CHANGE** vs the pre-horizontal-fix knob: values are horizontal runs, not vertical heights.
+- `MC2_TERRAIN_SHORELINE_FOAM_RUN=F` — V3 foam-rim width, horizontal world-unit run from the waterline. Default 5.0 (~1.5 m). Same unit change as `_WET_RUN`.
+- `MC2_TERRAIN_SHORELINE_WET_HEIGHT=F` / `MC2_TERRAIN_SHORELINE_FOAM_HEIGHT=F` — **legacy aliases** for `_WET_RUN` / `_FOAM_RUN` (consulted only when the `_RUN` name is unset). NOTE: since the horizontal-distance fix these values are interpreted as horizontal runs, not vertical heights — an old `_WET_HEIGHT=3.0` now means a 3 wu (~0.9 m) run, far narrower than the 16 wu default.
 - `MC2_TERRAIN_VISUAL_HEIGHT=1` — loads the 4x-res VISUAL heightfield bake into an SSBO (binding 26) for corner-pinned interior displacement (`mclib/terrain.cpp`). Default **OFF** = no load, no SSBO, byte-identical; also enabled implicitly by `MC2_TERRAIN_VISUAL_DISPLACE=1`. `MC2_TERRAIN_VISUAL_HEIGHT_FILE=<path>` overrides the bake file path.
 
 ## Water gates

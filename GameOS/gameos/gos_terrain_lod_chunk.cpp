@@ -1347,20 +1347,29 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                 glUniform1f(s_locShorelineStrength, s_shorelineStrength);
             if (s_locShorelineFoamStrength >= 0)
                 glUniform1f(s_locShorelineFoamStrength, s_shorelineFoamStrength);
-            // TERRAIN-SHORELINE-V3: band heights (world units above water).
-            // Locked design defaults: wet ~3.0wu (range 2-4), foam ~1.2wu
-            // (range 0.8-1.5). MC2_TERRAIN_SHORELINE_WET_HEIGHT / _FOAM_HEIGHT
-            // override for art iteration without a shader edit.
+            // TERRAIN-SHORELINE-V3 (horizontal-run fix): band widths are
+            // HORIZONTAL world-unit runs from the drawn waterline (the frag
+            // converts vertical rise -> horizontal run via the macro slope;
+            // see terrain_lod_chunk.frag). The c1593a1f conversion kept the
+            // old VERTICAL defaults (wet 3.0wu / foam 1.2wu) as horizontal
+            // runs -- ~1m of band, invisible at RTS zoom. Horizontal-native
+            // defaults: wet 16.0wu (~4.8m) run, foam 5.0wu (~1.5m) run.
+            // Primary knobs MC2_TERRAIN_SHORELINE_WET_RUN / _FOAM_RUN
+            // (horizontal wu); legacy _WET_HEIGHT / _FOAM_HEIGHT names still
+            // honored as aliases but are now interpreted as horizontal runs
+            // (unit change documented in docs/tier1_env_vars.md).
             static const float s_shorelineWetHeight = []() {
-                const char* v = std::getenv("MC2_TERRAIN_SHORELINE_WET_HEIGHT");
-                float f = v ? (float)std::atof(v) : 3.0f;
-                if (!(f == f) || f <= 0.0f) f = 3.0f; // NaN/non-positive guard
+                const char* v = std::getenv("MC2_TERRAIN_SHORELINE_WET_RUN");
+                if (!v) v = std::getenv("MC2_TERRAIN_SHORELINE_WET_HEIGHT"); // legacy alias
+                float f = v ? (float)std::atof(v) : 16.0f;
+                if (!(f == f) || f <= 0.0f) f = 16.0f; // NaN/non-positive guard
                 return f;
             }();
             static const float s_shorelineFoamHeight = []() {
-                const char* v = std::getenv("MC2_TERRAIN_SHORELINE_FOAM_HEIGHT");
-                float f = v ? (float)std::atof(v) : 1.2f;
-                if (!(f == f) || f <= 0.0f) f = 1.2f; // NaN/non-positive guard
+                const char* v = std::getenv("MC2_TERRAIN_SHORELINE_FOAM_RUN");
+                if (!v) v = std::getenv("MC2_TERRAIN_SHORELINE_FOAM_HEIGHT"); // legacy alias
+                float f = v ? (float)std::atof(v) : 5.0f;
+                if (!(f == f) || f <= 0.0f) f = 5.0f; // NaN/non-positive guard
                 return f;
             }();
             if (s_locShorelineWetHeight >= 0)

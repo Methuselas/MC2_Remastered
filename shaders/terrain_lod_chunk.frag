@@ -98,13 +98,15 @@ uniform float     u_shaderTime;      // f(worldPos,time)-only clock for foam ani
 // the mask's own G/B weights so art can dial intensity without a re-cook.
 uniform float     u_shorelineStrength;     // wet/damp darken multiplier
 uniform float     u_shorelineFoamStrength; // foam rim multiplier
-// TERRAIN-SHORELINE-V3: elevation band heights (world units above u_waterElevation).
-// wetHeight is the outer wet/damp lobe; foamHeight is the narrower bright rim
-// hugging the exact waterline. Defaults picked per the locked V3 design (wet
-// ~2-4wu, foam ~0.8-1.5wu); exposed as knobs for the C++ driver to widen/narrow
-// without a shader edit (mirrors u_shorelineStrength's runtime-tunable pattern).
-uniform float     u_shorelineWetHeight;    // default 3.0 wu
-uniform float     u_shorelineFoamHeight;   // default 1.2 wu
+// TERRAIN-SHORELINE-V3 (horizontal-run fix): band widths, HORIZONTAL world-unit
+// runs from the drawn waterline (main() converts vertical rise -> horizontal
+// run via the macro slope). wetHeight is the outer wet/damp lobe; foamHeight
+// is the narrower bright rim hugging the exact waterline. The c1593a1f
+// horizontal conversion kept the old VERTICAL defaults (3.0/1.2wu) as runs --
+// ~1m of band, invisible at RTS zoom. Horizontal-native defaults: wet 16wu,
+// foam 5wu (MC2_TERRAIN_SHORELINE_WET_RUN / _FOAM_RUN; legacy _HEIGHT aliased).
+uniform float     u_shorelineWetHeight;    // default 16.0 wu horizontal run
+uniform float     u_shorelineFoamHeight;   // default 5.0 wu horizontal run
 
 uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uniform as legacy)
 uniform int   u_shadowTier;               // Slice B: per-chunk shadow tier (0=high,1=low,2=static,3=none)
@@ -1046,10 +1048,11 @@ void main() {
         float sinSlope = sqrt(max(1.0 - nzc * nzc, 1e-6));
         sinSlope       = max(sinSlope, 0.03);            // >= ~1.7deg -> bounded run
         float horizDist = max(aboveWater, 0.0) * (nzc / sinSlope);
-        // Widths are now HORIZONTAL world-units from the waterline. Reuse the
-        // existing wet/foam knobs (default 3.0 / 1.2 wu) but interpret them as
-        // horizontal reach -- on a shallow beach this holds the band tight to
-        // the waterline instead of smearing 15m inland.
+        // Widths are HORIZONTAL world-units from the waterline (defaults now
+        // horizontal-native: wet 16wu / foam 5wu -- the c1593a1f conversion
+        // kept the vertical 3.0/1.2 defaults, ~1m of band, invisible at RTS
+        // zoom). On a shallow beach this holds the band to a consistent
+        // readable width instead of smearing 15m inland or vanishing.
         float wetHeight  = max(u_shorelineWetHeight,  1e-4);
         float foamHeight = max(u_shorelineFoamHeight,  1e-4);
         // Wet lobe: 1.0 at/under the waterline, fading to 0.0 by wetHeight
@@ -1093,6 +1096,13 @@ void main() {
         // Slope guard: N.z == cos(slope angle) for a unit normal (N.z=1 on
         // flat ground). Full band strength up to ~12 deg, linear falloff
         // to 0 by ~20 deg, so steep hillsides never carry a wet/foam smear.
+        // KEPT under the horizontal-run measure (reasoned, not redundant):
+        // the horizontal conversion normalizes PLAN-VIEW width, but on a
+        // steep bank the band still climbs run*tan(slope) wu VERTICALLY up
+        // the face (16wu run @ 45 deg = 16wu-tall wet stripe on the cliff
+        // wall, prominent at oblique RTS view angles). The guard is the sole
+        // cliff-face suppression; it does not double-count on beaches
+        // (<12 deg = full strength, where the run measure does all the work).
         const float kSlopeFullCos = 0.978; // cos(12 deg)
         const float kSlopeZeroCos = 0.940; // cos(20 deg)
         float slopeAtten = clamp((N.z - kSlopeZeroCos) / max(kSlopeFullCos - kSlopeZeroCos, 1e-5), 0.0, 1.0);
