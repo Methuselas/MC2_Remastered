@@ -1149,6 +1149,50 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "before default-on: SubData into the in-flight whole-frame/cross-phase light "
         "buffer STALLS on NVIDIA (the stall the orphan dodged); tolerated on AMD."
     },
+    {
+        "MC2_LIGHT_PREFIX_GPU_COPY",
+        "MC2_LIGHT_PREFIX_GPU_COPY",
+        EnvVarKind::Feature,
+        false,
+        "LIGHT-PREFIX-GPU-COPY-1 (TXMMGR-PERF-EASYWINS-1): keep a VRAM stash of the "
+        "immutable static light prefix [0..S) and glCopyBufferSubData it into the "
+        "freshly-orphaned slot-20 light SSBO each frame instead of re-pushing it over "
+        "PCIe; only the dynamic suffix goes through glBufferSubData. Fixes the "
+        "STATIC_LIGHT_UPLOAD_SPLIT prefix-skip that LIGHTSSBO-ORPHAN-1 defeated "
+        "(measured light_upload ~950us/frame on mc2_24 = ~9.7MB/frame). NVIDIA-safe "
+        "by the same orphan discipline: writes only into the fresh store; the stash "
+        "is read-only except on prefixDirty (bake/re-bake) frames. Default-OFF "
+        "pending soak; unset/=0 -> ORPHAN-1 path byte-identical. Requires "
+        "MC2_STATIC_LIGHT_UPLOAD_SPLIT + MC2_LIGHTBAKE (both default-ON); subsumed "
+        "by MC2_GPUBUF_LIGHT_GROWONCE when set."
+    },
+    {
+        "MC2_SHADOW_CASTER_CULL_CACHE",
+        "MC2_SHADOW_CASTER_CULL_CACHE",
+        EnvVarKind::Feature,
+        false,
+        "SHADOW-CASTER-CULL-CACHE-1 (TXMMGR-PERF-EASYWINS-1): reuse the "
+        "Shadow.CasterCull result (mclib/txmmgr.cpp DynamicShadowPass) across "
+        "frames when BOTH the static-prop registry generation and the 16-float "
+        "dynamic light-space matrix are unchanged (bit-compare). The cull is a "
+        "pure function of (caster set, matrix, margin); margin/includeBldg are "
+        "session-static. Camera motion or any registry mutation recomputes "
+        "exactly as before. Default-OFF pending soak; unset/=0 -> per-frame "
+        "recompute (byte-identical)."
+    },
+    {
+        "MC2_RENDERLISTS_COST_SPLIT",
+        "MC2_RENDERLISTS_COST_SPLIT",
+        EnvVarKind::Trace,
+        false,
+        "TXMMGR-PERF-EASYWINS-1: coarse per-phase CPU cost split of "
+        "MC_TextureManager::renderLists() (mclib/txmmgr.cpp). Emits one "
+        "[RENDERLISTS_COST v1] stderr summary every 60 frames with per-frame mean "
+        "us per phase (preamble/light_upload/sp_registry_flush/dyn_shadow/"
+        "sp_batcher_flush/...) + total + self (unattributed). Smoke-visible "
+        "complement of the Tracy zones. Default-OFF = zero overhead beyond one "
+        "cached-bool test per phase."
+    },
     // SPIRV-CONSUMER-PILOT-BUILD-1: runtime SPIR-V consumer (postprocess pilot).
     {
         "MC2_SHADER_SPIRV",

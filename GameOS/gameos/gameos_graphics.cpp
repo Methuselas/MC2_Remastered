@@ -8961,6 +8961,39 @@ static const bool s_lightSsboTrace =
 static constexpr GLsizeiptr kLightRecordStride = 3600;
 static constexpr GLsizeiptr kLightGrowHeadroomRecords = 128;
 
+// LIGHT-PREFIX-GPU-COPY-1 (TXMMGR-PERF-EASYWINS-1): keep a VRAM stash of the
+// immutable static light prefix [0..S) and, per frame, glCopyBufferSubData it
+// into the freshly-orphaned slot-20 SSBO instead of re-pushing it over PCIe.
+// Only the dynamic suffix [S..count) goes through glBufferSubData each frame.
+//
+// WHY: LIGHTSSBO-ORPHAN-1 (the NVIDIA implicit-sync stall fix) orphans the
+// whole store every frame, which defeated the STATIC_LIGHT_UPLOAD_SPLIT
+// prefix-skip — measured [RENDERLISTS_COST v1] light_upload ~950 µs/frame on
+// mc2_24 (~2.7k static records × 3600 B ≈ 9.7 MB PCIe re-upload per frame).
+//
+// NVIDIA-SAFETY (why this does NOT reintroduce the ORPHAN-1 stall): the orphan
+// still happens (fresh store, no in-flight readers), the prefix arrives via a
+// GPU-side VRAM->VRAM copy (no CPU-blocking PCIe write), and the stash itself
+// is only WRITTEN on prefixDirty frames (mission-load bake / re-bake) — it is
+// read-only in steady state, so no cross-frame in-flight-write hazard exists.
+// Contract: any [0..S) mutation sets mc2MarkStaticLightPrefixDirty()
+// (mclib/txmmgr.cpp:1583-1591), which refreshes the stash here.
+//
+// Default OFF pending soak; kill-switch by unsetting. Requires the split path
+// (MC2_STATIC_LIGHT_UPLOAD_SPLIT default-ON + MC2_LIGHTBAKE default-ON).
+// Subsumed by MC2_GPUBUF_LIGHT_GROWONCE when that ships (grow-once branch
+// runs first).
+static bool gosLightPrefixGpuCopyEnabled() {
+    static const bool s_on = []() {
+        const char* v = std::getenv("MC2_LIGHT_PREFIX_GPU_COPY");
+        return v && v[0] != '0';
+    }();
+    return s_on;
+}
+static GLuint     s_lightPrefixStash      = 0;  // immutable prefix mirror (VRAM)
+static GLsizeiptr s_lightPrefixStashBytes = 0;  // stash capacity
+static GLsizeiptr s_lightPrefixStashLive  = 0;  // live prefix bytes valid in stash
+
 // LIGHT-GROW-ONCE-SUBDATA-1: when MC2_GPUBUF_LIGHT_GROWONCE is ON, upload only
 // the live used bytes into the single persistent slot-20 SSBO via
 // glBufferSubData (no per-frame full glBufferData orphan re-spec). Grow ONLY
@@ -9129,11 +9162,63 @@ void __stdcall gos_LightDataSsbo_UploadSplit(const void* data, size_t prefixByte
 	// implicitly since the whole buffer is now fresh).
 	if (s_lightDataSsbo == 0 || (GLsizeiptr)totalBytes > s_lightDataSsboBytes) {
 		gos_LightDataSsbo_Upload(data, totalBytes);  // reuses create/grow + binding
+		// LIGHT-PREFIX-GPU-COPY-1: the caller CONSUMED prefixDirty before this
+		// early return. If a re-bake (S unchanged) landed on the same frame as a
+		// buffer grow, the stash would silently keep the stale prefix. Force a
+		// refresh on the next gated frame (cheap; grow frames are rare).
+		s_lightPrefixStashLive = 0;
 		if (s_lightSsboTrace) {
 			std::fprintf(stderr, "[LIGHTSSBO v2] event=full_on_grow total=%zu prefix=%zu\n",
 			             totalBytes, prefixBytes);
 			std::fflush(stderr);
 		}
+		return;
+	}
+
+	// LIGHT-PREFIX-GPU-COPY-1 (gated, default OFF): orphan-preserving prefix
+	// restore via VRAM->VRAM copy; PCIe traffic = dynamic suffix only.
+	if (gosLightPrefixGpuCopyEnabled() && prefixBytes > 0) {
+		// Refresh the stash when the prefix mutated (bake/re-bake sets the
+		// dirty flag), on first use, or when S extended (mission-load growth).
+		const bool stashStale = prefixDirty || s_lightPrefixStash == 0 ||
+		                        (GLsizeiptr)prefixBytes != s_lightPrefixStashLive;
+		if (stashStale) {
+			if ((GLsizeiptr)prefixBytes > s_lightPrefixStashBytes) {
+				// Grow with the same +128-record headroom cadence as the CPU
+				// backing store so mission-load growth amortizes.
+				const GLsizeiptr cap = (GLsizeiptr)prefixBytes +
+				    kLightGrowHeadroomRecords * kLightRecordStride;
+				if (s_lightPrefixStash) glDeleteBuffers(1, &s_lightPrefixStash);
+				glGenBuffers(1, &s_lightPrefixStash);
+				glBindBuffer(GL_COPY_READ_BUFFER, s_lightPrefixStash);
+				glBufferData(GL_COPY_READ_BUFFER, cap, nullptr, GL_STATIC_DRAW);
+				s_lightPrefixStashBytes = cap;
+			} else {
+				glBindBuffer(GL_COPY_READ_BUFFER, s_lightPrefixStash);
+			}
+			MC2_GL_BufferSubData(GL_COPY_READ_BUFFER, 0, (GLsizeiptr)prefixBytes, base);
+			s_lightPrefixStashLive = (GLsizeiptr)prefixBytes;
+			if (s_lightSsboTrace) {
+				std::fprintf(stderr,
+				    "[LIGHTSSBO v3] event=prefix_stash_refresh prefix=%zu cap=%td dirty=%d\n",
+				    prefixBytes, (ptrdiff_t)s_lightPrefixStashBytes, prefixDirty ? 1 : 0);
+				std::fflush(stderr);
+			}
+		} else {
+			glBindBuffer(GL_COPY_READ_BUFFER, s_lightPrefixStash);
+		}
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
+		// Same orphan discipline as ORPHAN-1: fresh store, no in-flight readers.
+		MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW, LightSsbo);
+		glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER,
+		                    0, 0, (GLsizeiptr)prefixBytes);
+		if (totalBytes > prefixBytes) {
+			glBufferSubData(GL_SHADER_STORAGE_BUFFER, (GLintptr)prefixBytes,
+			                (GLsizeiptr)(totalBytes - prefixBytes), base + prefixBytes);
+		}
+		glBindBuffer(GL_COPY_READ_BUFFER, 0);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 		return;
 	}
 
@@ -9168,6 +9253,14 @@ void __stdcall gos_LightDataSsbo_Destroy()
 		s_lightDataSsbo      = 0;
 		s_lightDataSsboBytes = 0;
 		invalidateLightDataSsbo();  // LIGHTDATA-SSBO-OWNER-1: mark registry slot unavailable on teardown
+	}
+	// LIGHT-PREFIX-GPU-COPY-1: tear down the prefix stash alongside the main
+	// SSBO; the next mission's first dirty frame recreates it.
+	if (s_lightPrefixStash) {
+		glDeleteBuffers(1, &s_lightPrefixStash);
+		s_lightPrefixStash      = 0;
+		s_lightPrefixStashBytes = 0;
+		s_lightPrefixStashLive  = 0;
 	}
 }
 
