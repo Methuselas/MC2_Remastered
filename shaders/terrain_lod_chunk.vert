@@ -51,6 +51,49 @@ uniform int u_visualDampOn;    // 1 = near-object displacement fade active (bind
 // (default); 0.0 = coarse heightfield only (mode-2 verts fall back to `h`, matching
 // the byte-identical coarse path's Z). Only affects u_visualDisplace==2 verts.
 uniform float u_visualDisplaceFar;
+// TERRAIN-LOD-GEOMORPH-1: binding-26 layout extension. When u_geomorphMips==1 the
+// buffer holds [fine V*V | mip(2) | mip(4) | mip(5) | mip(10) | mip(20)], each mip
+// u_mapSide*u_mapSide row-major: MAX of the fine bake over the +/- stride/2
+// coarse-cell footprint at EVERY coarse vertex (full resolution, so stitch-stride
+// lookups at any index are well-defined). Coarse-band INTERIOR verts read their
+// OWN stride's mip so decimation can no longer drop ridge maxima (silhouette fix);
+// block-PERIMETER verts keep the S2 fine-bake/stitch path verbatim, so every seam
+// agrees with every neighbour band by construction (seam ownership: perimeter
+// never mips, never morphs).
+uniform int   u_geomorphMips;   // 1 = mips resident in binding 26
+uniform int   u_lodStep;        // this block's stride (1,2,4,5,10,20); shared with frag
+// TERRAIN-LOD-GEOMORPH-1 rung a: per-block geomorph factor m [0,1]. Interior
+// verts lerp own-band mip height -> parent-band (next-coarser) surface as the
+// block approaches its demotion threshold, so the band switch lands on geometry
+// that already matches (temporal slide instead of a one-frame snap). m is
+// constant per block; perimeter verts never morph, so shared edges agree
+// between blocks regardless of each side's m (seam-ownership ruling).
+uniform float u_morphFactor;
+float mipH(int cx, int cy, int stride) {
+    cx = clamp(cx, 0, u_mapSide - 1);
+    cy = clamp(cy, 0, u_mapSide - 1);
+    int lvl = (stride == 2) ? 0 : (stride == 4) ? 1 : (stride == 5) ? 2
+            : (stride == 10) ? 3 : 4;   // 20 -> 4
+    int base = u_visualSide * u_visualSide + lvl * u_mapSide * u_mapSide;
+    return heightsFine[base + cx + cy * u_mapSide];
+}
+// Parent-band surface at coarse vertex (cx,cy): bilinear over the parent
+// stride-P lattice (P is NOT always a multiple of the own stride — 4->5 — so a
+// full bilinear is required, not a lattice point-sample). At parent lattice
+// points this equals the parent's own vertex height exactly; between them it
+// lies on the parent's bilinear patch (differs from the parent's triangulated
+// surface only by the diagonal split — bounded, zero at parent verts).
+float parentBandH(int cx, int cy, int P) {
+    int x0 = (cx / P) * P;
+    int y0 = (cy / P) * P;
+    float tx = float(cx - x0) / float(P);
+    float ty = float(cy - y0) / float(P);
+    float h00 = mipH(x0,     y0,     P);
+    float h10 = mipH(x0 + P, y0,     P);
+    float h01 = mipH(x0,     y0 + P, P);
+    float h11 = mipH(x0 + P, y0 + P, P);
+    return mix(mix(h00, h10, tx), mix(h01, h11, tx), ty);
+}
 out vec3  v_worldPos;
 out float v_terrainType;
 
@@ -95,9 +138,14 @@ void main() {
     // the coarse (gameplay) surface and the bake surface; damp==0 within object
     // footprints -> units/buildings stand on true gameplay height.
     // Default OFF -> falls through to the original coarse path (byte-identical).
-    // NOTE: this branch is mode 1 (LOD0 fine patches) ONLY. It previously tested
-    // `!= 0`, which swallowed mode-2 chunks (coarse-stride localOffsets indexed
-    // as fine) and made the S2-ALLLOD block below dead code.
+    // TERRAIN-LOD-GEOMORPH-1 FIX (latent S2 bug): this branch is mode 1 (LOD0 fine
+    // patches) ONLY — its localOffset is in FINE (1/4-coarse) units and its world
+    // position math is fine-grid (fx*32). The original `!= 0` condition ALSO caught
+    // mode 2, whose patches are COARSE-unit — every coarse-band block rendered
+    // collapsed to 1/4 size at its NW corner (floating slabs) and the mode-2 Z-swap
+    // block below was unreachable dead code. Caught by the FORCE_LOD=4 pixel oracle;
+    // must be `== 1` so mode 2 falls through to the coarse path + stitch + its own
+    // (geomorph-mip + reauth-damp) displacement block.
     if (u_visualDisplace == 1) {
         int qx4 = u_quadCountX * 4;
         int qy4 = u_quadCountY * 4;
@@ -275,8 +323,44 @@ void main() {
             }
             h = mix(mix(hC0, hv0, kFar2 * d0), mix(hC1, hv1, kFar2 * d1), t2);
         } else {
-            float hv = sampleHFine(mapX, mapY);
-            float d  = (u_visualDampOn != 0) ? dampAt(mapX, mapY) : 1.0;
+            // MERGE (geomorph x reauth): resolve the displaced height in TWO
+            // ordered stages — MORPH first, then DAMP.
+            //  Stage 1 (geomorph): hv = own-band max-mip height, then lerp toward
+            //    the parent band's surface by u_morphFactor so the LOD band switch
+            //    is geometry-continuous. Built from the FINAL fine bake, so it
+            //    already carries any reauth/mountainify reshaping.
+            //  Stage 2 (reauth): fade the fully-morphed hv toward the coarse
+            //    gameplay height h by the near-object damp (damp==0 -> stand on
+            //    true gameplay height) times the far-band knob.
+            // Default (no mips): hv falls back to the plain bake sample, so this
+            // reduces exactly to reauth's damped S2 swap.
+            float hv = sampleHFine(mapX, mapY);   // own bake corner value (fallback)
+            // TERRAIN-LOD-GEOMORPH-1: block-INTERIOR verts of a coarse band read
+            // their OWN max-mip level instead of the bake corner value, so the
+            // stride-N lattice carries the peak of the footprint it decimated
+            // away (silhouette-LOSS fix, recon sec 3/4b). Perimeter verts
+            // (localOffset on the block edge — includes every stitched vert)
+            // are EXCLUDED and keep the S2 sample above: both sides of every
+            // seam read identical values, zero new crack risk. Skirts never
+            // reach here (mode-2 branch already gates isSkirtFlag==0).
+            bool onPerim = (localOffset.x == 0 || localOffset.x == u_quadCountX ||
+                            localOffset.y == 0 || localOffset.y == u_quadCountY);
+            if (u_geomorphMips == 1 && !onPerim && u_lodStep > 1) {
+                hv = mipH(mapX, mapY, u_lodStep);
+                // Rung a: slide toward the parent band's surface as the block
+                // nears its demotion threshold (m=0 at band interior -> own
+                // surface unchanged; m=1 -> parent surface, so the LOD switch
+                // is geometry-continuous). Stride 20 has no parent (m forced 0
+                // CPU-side; guard here anyway).
+                if (u_morphFactor > 0.0 && u_lodStep < 20) {
+                    int P = (u_lodStep == 2) ? 4 : (u_lodStep == 4) ? 5
+                          : (u_lodStep == 5) ? 10 : 20;
+                    hv = mix(hv, parentBandH(mapX, mapY, P),
+                             clamp(u_morphFactor, 0.0, 1.0));
+                }
+            }
+            // Stage 2: damped far-fade of the morph-resolved height (morph THEN damp).
+            float d = (u_visualDampOn != 0) ? dampAt(mapX, mapY) : 1.0;
             h = mix(h, hv, kFar2 * d);
         }
     }

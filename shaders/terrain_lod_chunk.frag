@@ -123,6 +123,14 @@ uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_
                                           //        after selection): TERRAIN-CONTROLMAP-SAMPLE-1
                                           // 2048 = viz shoreline mask channels (R=dist,G=wet,
                                           //        B=foam as RGB): TERRAIN-SHORELINE-MASK-1
+                                          // Exact-value escapes (not bitmask): 40 shadow-tier
+                                          // tint (Slice B); 41 LOD-band tint; 42 geomorph
+                                          // morph-factor heat (TERRAIN-LOD-GEOMORPH-1)
+
+// TERRAIN-LOD-GEOMORPH-1: per-block geomorph factor (0 = own band, 1 = parent
+// band). Same program-level uniform the vert consumes; read here ONLY by the
+// u_diag==42 heat view.
+uniform float u_morphFactor;
 
 // LIGHTING-DEBUG-VIEWS-1A-CHUNK: unified lighting debug channel, SAME enum as
 // static_prop / gos_terrain.frag. Separate from u_diag (bitmask) to avoid
@@ -454,6 +462,35 @@ void main() {
         else if (u_shadowTier == 2) tc = vec3(0.0, 0.0, 1.0);   // static-only (far)      blue
         else                        tc = vec3(0.5, 0.5, 0.5);   // none/culled            grey
         fragColor = vec4(tc, 1.0);
+        GBuffer1  = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
+    }
+
+    // TERRAIN-LOD-GEOMORPH-1 debug: LOD-band tint (MC2_TERRAIN_LOD_CHUNK_DIAG=41).
+    // Flat color per band from u_lodStep (recon sec 6 palette, LOD0..5 =
+    // green/cyan/blue/yellow/orange/red). Mirrors the ==40 shadow-tier precedent.
+    if (u_diag == 41) {
+        vec3 bc;
+        if      (u_lodStep == 1)  bc = vec3(0.0, 1.0, 0.0);   // LOD0 green
+        else if (u_lodStep == 2)  bc = vec3(0.0, 1.0, 1.0);   // LOD1 cyan
+        else if (u_lodStep == 4)  bc = vec3(0.0, 0.3, 1.0);   // LOD2 blue
+        else if (u_lodStep == 5)  bc = vec3(1.0, 1.0, 0.0);   // LOD3 yellow
+        else if (u_lodStep == 10) bc = vec3(1.0, 0.55, 0.0);  // LOD4 orange
+        else                      bc = vec3(1.0, 0.0, 0.0);   // LOD5 red
+        fragColor = vec4(bc, 1.0);
+        GBuffer1  = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
+    }
+
+    // TERRAIN-LOD-GEOMORPH-1 debug: morph-factor heat (MC2_TERRAIN_LOD_CHUNK_DIAG=42).
+    // Black (m=0, own band) -> red -> yellow -> white (m=1, riding the parent
+    // surface). Shows exactly where and how fast transitions slide.
+    if (u_diag == 42) {
+        float m = clamp(u_morphFactor, 0.0, 1.0);
+        vec3 heat = vec3(clamp(m * 3.0, 0.0, 1.0),
+                         clamp(m * 3.0 - 1.0, 0.0, 1.0),
+                         clamp(m * 3.0 - 2.0, 0.0, 1.0));
+        fragColor = vec4(heat, 1.0);
         GBuffer1  = vec4(0.5, 0.5, 1.0, 1.0);
         return;
     }

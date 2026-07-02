@@ -56,12 +56,19 @@ constexpr int TERRAIN_SHORELINE_TEXUNIT = 2;
 //   (0=high-res dynamic near, 1=low-res dynamic mid, 2=static-only far, 3=none).
 //   Set as u_shadowTier; used ONLY by the MC2_TERRAIN_LOD_CHUNK_DIAG=40 tier-tint
 //   debug view. Does NOT change shadow sampling (Slice C). nullptr -> 0.
+// morphFactors: parallel float array [count] (TERRAIN-LOD-GEOMORPH-1). Per-block
+//   geomorph factor m in [0,1]: 0 = pure own-band surface, 1 = parent-band
+//   surface (block interior slides onto the next-coarser band before the LOD
+//   switch, killing the one-frame silhouette snap). Set as u_morphFactor; only
+//   consumed by the vert when the bake shipped max mips (u_geomorphMips).
+//   nullptr -> 0 (no morph).
 void gos_TerrainLodChunk_SubmitDrawCommands(
     const TerrainDrawCommand* cmds,
     const float*              skirtDepths,
     const unsigned char*      skirtEdgeMasks,
     const unsigned int*       edgeStitch,
     const int*                shadowTiers,
+    const float*              morphFactors,
     int                       count);
 
 // Upload full heightfield to GPU SSBO at map load.
@@ -71,7 +78,14 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide);
 // TERRAIN-VISUAL-HEIGHT-SAMPLE-1 Stage 1: upload the 4x VISUAL heightfield bake to
 // a dedicated SSBO (binding 26). visualHeights: float[V*V] row-major, V=(mapSide-1)*4+1.
 // Stage 1 is load+log only — NO geometry samples binding 26 yet (Stage 2 displaces).
-void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int V);
+// TERRAIN-LOD-GEOMORPH-1: optional max-preserving mip levels (visual_height_mips.r32)
+// are APPENDED to the same binding-26 SSBO: mipMaxes = 5 levels (strides 2,4,5,10,20),
+// each mapSide*mapSide row-major floats (mipFloats = 5*mapSide*mapSide total), holding
+// the MAX of the fine bake over the +/- stride/2 coarse-cell footprint at every coarse
+// vertex. nullptr/0 = no mips (legacy layout, geomorph inactive).
+void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int V,
+                                                const float* mipMaxes = nullptr,
+                                                int mipFloats = 0);
 
 // TERRAIN-REAUTH-UNPIN-1 Half B: near-object displacement fade (the objfade
 // safety). Static damp map (float[side*side] row-major, 0 = displacement OFF on

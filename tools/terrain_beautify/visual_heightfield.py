@@ -421,6 +421,50 @@ def build_object_damp(side: int, foot: np.ndarray, radius_wu: float = 256.0,
     return t * t * (3.0 - 2.0 * t)   # smoothstep
 
 
+# TERRAIN-LOD-GEOMORPH-1: coarse-band vertex strides the renderer decimates to
+# (mclib/terrain.cpp LOD_STEPS[1:]). One max-reduced level is emitted per stride.
+MIP_STRIDES = (2, 4, 5, 10, 20)
+
+
+def _sliding_max(a: np.ndarray, halfw: int, axis: int) -> np.ndarray:
+    """Centered sliding-window max along `axis` (edge-padded, window 2*halfw+1)."""
+    from numpy.lib.stride_tricks import sliding_window_view
+    pad = [(0, 0), (0, 0)]
+    pad[axis] = (halfw, halfw)
+    p = np.pad(a, pad, mode="edge")
+    return sliding_window_view(p, 2 * halfw + 1, axis=axis).max(axis=-1)
+
+
+def build_max_mips(visual: np.ndarray, factor: int, side: int) -> dict:
+    """Max-preserving reduction levels for the coarse-band silhouette fix.
+
+    For each renderer LOD stride N the level stores, AT EVERY coarse vertex
+    (side x side, full resolution -- no decimation, so stitch lookups at any
+    stride-aligned index are well-defined), the MAX of the FINAL fine bake over
+    the Voronoi footprint that vertex represents on the stride-N lattice:
+    +/- N/2 coarse cells = +/- N*factor/2 fine samples. A coarse band whose
+    vertex Z reads its own level can no longer drop ridge maxima that fall
+    between surviving vertices (silhouette-LOSS root cause,
+    TERRAIN-LOD-GEOMORPH-RECON-1 sec 3). Built from the FINAL `visual` array
+    (post-reshape / post-reauth+mountainify) so silhouette maxes track whatever
+    surface actually ships -- it composes with --reauth automatically. The mips
+    sidecar MUST be regenerated whenever the fine bake changes."""
+    levels = []
+    stats = []
+    corners = visual[::factor, ::factor][:side, :side]
+    for s in MIP_STRIDES:
+        halfw = (s * factor) // 2                     # +/- s/2 coarse cells in fine units
+        m = _sliding_max(_sliding_max(visual, halfw, 0), halfw, 1)
+        mip = m[::factor, ::factor][:side, :side]     # sample at coarse verts
+        lift = mip - corners
+        levels.append(mip.astype("<f4"))
+        stats.append({"stride": s, "window_fine": 2 * halfw + 1,
+                      "max_lift_wu": float(lift.max()),
+                      "mean_lift_wu": float(lift.mean())})
+    return {"blob": np.concatenate([lv.ravel() for lv in levels]),
+            "strides": list(MIP_STRIDES), "stats": stats}
+
+
 def nearest_coarse(elev: np.ndarray, factor: int) -> np.ndarray:
     """The blocky reference: each visual cell = its containing coarse value."""
     N = elev.shape[0]
@@ -446,7 +490,8 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
          reauth: bool = False, shape_tolerance: float = 0.10,
          max_drift: float = 24.0, reauth_passes: int = 60,
          objfade_radius_wu: float = 256.0,
-         mountainify_amp: float = 0.0, seed: int = 1337) -> dict:
+         mountainify_amp: float = 0.0, seed: int = 1337,
+         mips: bool = True) -> dict:
     pak = missions_dir / f"{mission}.pak"
     if not pak.is_file():
         return {"mission": mission, "error": f"not found: {pak}"}
@@ -514,9 +559,23 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
 
     delta = visual - nearest_coarse(elev, factor)             # smoothing introduced
 
+    # TERRAIN-LOD-GEOMORPH-1: max-preserving mip levels, built from the FINAL
+    # fine bake (post-reshape / post-any-future-reauth) so silhouette maxes
+    # track whatever surface actually ships. Emitted as a sibling sidecar the
+    # engine appends to the binding-26 SSBO; absent file = legacy behavior.
+    mips_info = None
+    if mips:
+        mm = build_max_mips(visual, factor, side)
+        mips_info = {"file": "visual_height_mips.r32",
+                     "strides": mm["strides"],
+                     "grid_side": int(side),
+                     "levels": mm["stats"]}
+
     beauty = out_root / f"{mission}.beauty"
     beauty.mkdir(parents=True, exist_ok=True)
     visual.astype("<f4").tofile(beauty / f"visual_height_{factor}x.r32")
+    if mips:
+        mm["blob"].astype("<f4").tofile(beauty / "visual_height_mips.r32")
     _save_gray(visual, beauty / "visual_height_preview.png")
     _save_gray(np.abs(delta), beauty / "visual_delta_heatmap.png")
     if damp is not None:
@@ -550,6 +609,7 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
                             "mean_abs": float(np.abs(delta).mean())},
         "visual_height_file": f"visual_height_{factor}x.r32",
         "visual_damp_file": ("visual_damp.r32" if damp is not None else None),
+        "max_mips": mips_info,
         "note": note,
     }
     (beauty / "visual_height_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -582,6 +642,9 @@ def main() -> int:
     ap.add_argument("--mountainify-amp", type=float, default=14.0,
                     help="mountainify detail amplitude (wu) at full rock weight")
     ap.add_argument("--seed", type=int, default=1337, help="mountainify noise seed")
+    # TERRAIN-LOD-GEOMORPH-1 knob
+    ap.add_argument("--no-mips", action="store_true",
+                    help="skip TERRAIN-LOD-GEOMORPH-1 max-mip sidecar emission")
     args = ap.parse_args()
     if args.mountainify:
         args.reauth = True
@@ -598,7 +661,7 @@ def main() -> int:
                    max_drift=args.max_drift, reauth_passes=args.reauth_passes,
                    objfade_radius_wu=args.objfade_radius_wu,
                    mountainify_amp=(args.mountainify_amp if args.mountainify else 0.0),
-                   seed=args.seed)
+                   seed=args.seed, mips=not args.no_mips)
         if rep.get("error"):
             print(f"[visual-bake] {m}: ERROR {rep['error']}", file=sys.stderr); rc = 1; continue
         extra = ""
@@ -631,6 +694,11 @@ def main() -> int:
                 ri = rep["reshape"]
                 extra = (f" pyr_score {ri['pyramid_top_score_before']:.2f}->{ri['pyramid_top_score_after']:.2f}"
                          f" corner_move<={ri['max_corner_move_wu']:.1f}wu")
+        # TERRAIN-LOD-GEOMORPH-1: mip max-lift per stride (all modes)
+        if rep.get("max_mips"):
+            lifts = ["%d:%.0f" % (lv["stride"], lv["max_lift_wu"])
+                     for lv in rep["max_mips"]["levels"]]
+            extra += " mips max_lift[" + " ".join(lifts) + "]wu"
         print(f"[visual-bake] {m}: coarse={rep['coarse_side']} -> visual={rep['visual_side']} "
               f"(x{rep['factor']}) corner_err={rep['max_corner_error_wu']:.3g} "
               f"{'PASS' if ok else 'FAIL'}  delta_max={rep['visual_delta_wu']['max_abs']:.2f}wu "
