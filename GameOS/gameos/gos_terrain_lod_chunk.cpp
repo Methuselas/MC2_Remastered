@@ -921,6 +921,7 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     const unsigned char*      skirtEdgeMasks,
     const unsigned int*       edgeStitch,
     const int*                shadowTiers,
+    const float*              morphFactors,
     int                       count)
 {
     if (count == 0) return;
@@ -1629,6 +1630,11 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             glUniform1i(s_locEdgeStitch, edgeStitch ? (GLint)edgeStitch[i] : 0);
         if (s_locShadowTier >= 0)  // Slice B: per-chunk shadow tier (DIAG=40 tint only)
             glUniform1i(s_locShadowTier, shadowTiers ? (GLint)shadowTiers[i] : 0);
+        // TERRAIN-LOD-GEOMORPH-1: per-block geomorph factor. Uploaded 0 whenever
+        // the geomorph is inactive so a stale value can never leak into a draw.
+        if (s_locMorphFactor >= 0)
+            glUniform1f(s_locMorphFactor,
+                        (geomorphActive && morphFactors) ? morphFactors[i] : 0.0f);
 
         // --- Draw main patch (skirtDepth=0 so isSkirtFlag pulls height by 0) ---
         if (s_locSkirtDepth >= 0)

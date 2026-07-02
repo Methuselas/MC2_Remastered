@@ -54,6 +54,13 @@ uniform float u_visualDisplaceFar;
 // never mips, never morphs).
 uniform int   u_geomorphMips;   // 1 = mips resident in binding 26
 uniform int   u_lodStep;        // this block's stride (1,2,4,5,10,20); shared with frag
+// TERRAIN-LOD-GEOMORPH-1 rung a: per-block geomorph factor m [0,1]. Interior
+// verts lerp own-band mip height -> parent-band (next-coarser) surface as the
+// block approaches its demotion threshold, so the band switch lands on geometry
+// that already matches (temporal slide instead of a one-frame snap). m is
+// constant per block; perimeter verts never morph, so shared edges agree
+// between blocks regardless of each side's m (seam-ownership ruling).
+uniform float u_morphFactor;
 float mipH(int cx, int cy, int stride) {
     cx = clamp(cx, 0, u_mapSide - 1);
     cy = clamp(cy, 0, u_mapSide - 1);
@@ -61,6 +68,23 @@ float mipH(int cx, int cy, int stride) {
             : (stride == 10) ? 3 : 4;   // 20 -> 4
     int base = u_visualSide * u_visualSide + lvl * u_mapSide * u_mapSide;
     return heightsFine[base + cx + cy * u_mapSide];
+}
+// Parent-band surface at coarse vertex (cx,cy): bilinear over the parent
+// stride-P lattice (P is NOT always a multiple of the own stride — 4->5 — so a
+// full bilinear is required, not a lattice point-sample). At parent lattice
+// points this equals the parent's own vertex height exactly; between them it
+// lies on the parent's bilinear patch (differs from the parent's triangulated
+// surface only by the diagonal split — bounded, zero at parent verts).
+float parentBandH(int cx, int cy, int P) {
+    int x0 = (cx / P) * P;
+    int y0 = (cy / P) * P;
+    float tx = float(cx - x0) / float(P);
+    float ty = float(cy - y0) / float(P);
+    float h00 = mipH(x0,     y0,     P);
+    float h10 = mipH(x0 + P, y0,     P);
+    float h01 = mipH(x0,     y0 + P, P);
+    float h11 = mipH(x0 + P, y0 + P, P);
+    return mix(mix(h00, h10, tx), mix(h01, h11, tx), ty);
 }
 out vec3  v_worldPos;
 out float v_terrainType;
@@ -220,6 +244,17 @@ void main() {
                             localOffset.y == 0 || localOffset.y == u_quadCountY);
             if (u_geomorphMips == 1 && !onPerim && u_lodStep > 1) {
                 hv = mipH(mapX, mapY, u_lodStep);
+                // Rung a: slide toward the parent band's surface as the block
+                // nears its demotion threshold (m=0 at band interior -> own
+                // surface unchanged; m=1 -> parent surface, so the LOD switch
+                // is geometry-continuous). Stride 20 has no parent (m forced 0
+                // CPU-side; guard here anyway).
+                if (u_morphFactor > 0.0 && u_lodStep < 20) {
+                    int P = (u_lodStep == 2) ? 4 : (u_lodStep == 4) ? 5
+                          : (u_lodStep == 5) ? 10 : 20;
+                    hv = mix(hv, parentBandH(mapX, mapY, P),
+                             clamp(u_morphFactor, 0.0, 1.0));
+                }
             }
         }
         h = mix(h, hv, clamp(u_visualDisplaceFar, 0.0, 1.0));

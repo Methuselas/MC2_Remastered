@@ -55,12 +55,19 @@ constexpr int TERRAIN_SHORELINE_TEXUNIT = 2;
 //   (0=high-res dynamic near, 1=low-res dynamic mid, 2=static-only far, 3=none).
 //   Set as u_shadowTier; used ONLY by the MC2_TERRAIN_LOD_CHUNK_DIAG=40 tier-tint
 //   debug view. Does NOT change shadow sampling (Slice C). nullptr -> 0.
+// morphFactors: parallel float array [count] (TERRAIN-LOD-GEOMORPH-1). Per-block
+//   geomorph factor m in [0,1]: 0 = pure own-band surface, 1 = parent-band
+//   surface (block interior slides onto the next-coarser band before the LOD
+//   switch, killing the one-frame silhouette snap). Set as u_morphFactor; only
+//   consumed by the vert when the bake shipped max mips (u_geomorphMips).
+//   nullptr -> 0 (no morph).
 void gos_TerrainLodChunk_SubmitDrawCommands(
     const TerrainDrawCommand* cmds,
     const float*              skirtDepths,
     const unsigned char*      skirtEdgeMasks,
     const unsigned int*       edgeStitch,
     const int*                shadowTiers,
+    const float*              morphFactors,
     int                       count);
 
 // Upload full heightfield to GPU SSBO at map load.

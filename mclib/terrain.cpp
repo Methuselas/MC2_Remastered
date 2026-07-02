@@ -234,28 +234,50 @@ static std::vector<uint32_t> s_stitchStepVec;
 // MC2_TERRAIN_LOD_CHUNK_DIAG=40 tier-tint; does NOT change shadow sampling.
 static std::vector<int> s_shadowTierVec;
 
-// Choose LOD level (0-5) for a block given squared distance and previous level.
-// Promotion (going finer) is immediate; demotion (going coarser) uses 10%
-// hysteresis in linear distance (= 1.21x in distSq) to prevent flickering.
-static uint8_t chooseLodLevel(float distSq, uint8_t prevLevel)
+// TERRAIN-LOD-GEOMORPH-1: per-draw-command geomorph factor m in [0,1]. Parallel
+// to s_drawCmds; written in Pass 3 in lockstep with s_cmdCount from the block's
+// FINAL lodLevel (post cement/neighbor clamps) + its center distance. Fed to the
+// vert as u_morphFactor; only consumed when the bake shipped max mips.
+static std::vector<float> s_morphFactorVec;
+
+// Camera-isolation diagnostic: MC2_TERRAIN_LOD_CHUNK_FORCE_LOD=k forces every
+// block to LOD k (0=finest). With FORCE_LOD=0 + NO_CULL + NO_SKIRTS, rotation
+// in place MUST be stable — if it still breaks, the defect is in the
+// shader/worldToClip/camera convention, NOT LOD/cull/skirt policy.
+// (Shared by chooseLodLevel and computeMorphFactor — a forced LOD also forces
+// morphFactor=0 so FORCE_LOD A/B captures show the PURE band surface.)
+static int lodForceLevel()
 {
-    // Camera-isolation diagnostic: MC2_TERRAIN_LOD_CHUNK_FORCE_LOD=k forces every
-    // block to LOD k (0=finest). With FORCE_LOD=0 + NO_CULL + NO_SKIRTS, rotation
-    // in place MUST be stable — if it still breaks, the defect is in the
-    // shader/worldToClip/camera convention, NOT LOD/cull/skirt policy.
     static const int s_forceLod = []() -> int {
         const char* v = getenv("MC2_TERRAIN_LOD_CHUNK_FORCE_LOD");
         return v ? atoi(v) : -1;
     }();
-    if (s_forceLod >= 0)
-        return (uint8_t)(s_forceLod > 5 ? 5 : s_forceLod);
+    return s_forceLod;
+}
 
-    // Runtime distance scale (default 1.0). >1 pushes LOD transitions farther.
+// Runtime distance scale (default 1.0). >1 pushes LOD transitions farther.
+// MC2_TERRAIN_LOD_CHUNK_DIST_SCALE — shared by band selection and geomorph
+// factor so the morph window tracks the scaled thresholds exactly.
+static float lodDistScale()
+{
     static const float s_distScale = []() -> float {
         const char* v = getenv("MC2_TERRAIN_LOD_CHUNK_DIST_SCALE");
         float s = v ? (float)atof(v) : 1.0f;
         return (s > 0.05f) ? s : 1.0f;
     }();
+    return s_distScale;
+}
+
+// Choose LOD level (0-5) for a block given squared distance and previous level.
+// Promotion (going finer) is immediate; demotion (going coarser) uses 10%
+// hysteresis in linear distance (= 1.21x in distSq) to prevent flickering.
+static uint8_t chooseLodLevel(float distSq, uint8_t prevLevel)
+{
+    const int forceLod = lodForceLevel();
+    if (forceLod >= 0)
+        return (uint8_t)(forceLod > 5 ? 5 : forceLod);
+
+    const float s_distScale = lodDistScale();
 
     uint8_t desired = 5;
     for (int k = 0; k < 5; ++k) {
@@ -272,6 +294,39 @@ static uint8_t chooseLodLevel(float distSq, uint8_t prevLevel)
             return prevLevel; // stay fine
     }
     return desired;
+}
+
+// TERRAIN-LOD-GEOMORPH-1 rung a: per-block geomorph factor m in [0,1].
+// m=0 at band entry (pure own-band max-mip surface), ramping to 1 over the
+// OUTER (1 - MORPH_START) fraction of the band so the block's interior verts
+// slide onto the parent band's surface BEFORE the demotion threshold — the
+// band switch then lands on geometry that already matches (no one-frame snap).
+// Promotion mirrors it: a freshly promoted block enters at m~1 (== the surface
+// it just left) and slides down as the camera approaches. Levels 0 (mode-1
+// fine path) and 5 (no coarser parent) never morph. Under FORCE_LOD the factor
+// is pinned to 0 so A/B captures isolate the pure band surface. Consumed by
+// the vert only when mips are resident (u_geomorphMips) — no mips, no morph.
+static float computeMorphFactor(float distSq, uint8_t level)
+{
+    if (level == 0 || level >= 5) return 0.0f;
+    if (lodForceLevel() >= 0)     return 0.0f;
+    static const float s_morphStart = []() -> float {
+        const char* v = getenv("MC2_TERRAIN_LOD_MORPH_START");
+        float s = v ? (float)atof(v) : 0.6f;
+        if (s < 0.0f) s = 0.0f;
+        if (s > 0.95f) s = 0.95f;
+        return s;
+    }();
+    const float sc = lodDistScale();
+    const float lo = LOD_DIST_THRESH[level - 1] * sc;
+    const float hi = LOD_DIST_THRESH[level] * sc;
+    if (hi <= lo) return 0.0f;
+    const float d = sqrtf(distSq);
+    float r = (d - lo) / (hi - lo);            // 0..1 across the band (may exceed under hysteresis/clamps)
+    float m = (r - s_morphStart) / (1.0f - s_morphStart);
+    if (m < 0.0f) m = 0.0f;
+    if (m > 1.0f) m = 1.0f;
+    return m;
 }
 
 bool 						drawTerrainGrid = false;		//Override locally in editor so game don't come with these please!  Love -fs
@@ -2125,6 +2180,8 @@ long Terrain::update (void)
 				s_stitchStepVec.resize(need, 0);
 			if (s_shadowTierVec.size() < need)  // Slice B
 				s_shadowTierVec.resize(need, 0);
+			if (s_morphFactorVec.size() < need) // TERRAIN-LOD-GEOMORPH-1
+				s_morphFactorVec.resize(need, 0.0f);
 		}
 
 		// Cache frustum planes once for this frame (eye->cacheFrustumPlanes()
@@ -2502,6 +2559,18 @@ long Terrain::update (void)
 				else if (stDist < shadowR1 * shadowMidFarMult)  shadowTier = 1; // full-map cascade mid -> coarse dynamic
 				else                                            shadowTier = 2; // far -> static-only candidate
 				s_shadowTierVec[s_cmdCount] = shadowTier;
+				// TERRAIN-LOD-GEOMORPH-1: geomorph factor from the block's FINAL
+				// lodLevel (post cement/neighbor clamps) + center distance to the
+				// SAME eye the band selection used (eyeX/eyeY, camera origin).
+				// A block clamped finer than distance suggests simply rides at
+				// m=1 (already on its parent surface) — still seam-safe because
+				// perimeter verts never morph.
+				{
+					const float mfDx = chunkCenterX - eyeX;
+					const float mfDy = chunkCenterY - eyeY;
+					s_morphFactorVec[s_cmdCount] =
+						computeMorphFactor(mfDx * mfDx + mfDy * mfDy, bm.lodLevel);
+				}
 				tierChunks[shadowTier]++;
 				// World-area of this chunk = quads * (128*128) world-units^2.
 				tierArea[shadowTier] +=
@@ -3126,7 +3195,9 @@ void Terrain::flushDrawCommands (void)
 		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_skirtDepths,
 			s_skirtEdgeMaskVec.empty() ? nullptr : s_skirtEdgeMaskVec.data(),
 			s_stitchStepVec.empty() ? nullptr : s_stitchStepVec.data(),
-			s_shadowTierVec.empty() ? nullptr : s_shadowTierVec.data(), s_cmdCount);
+			s_shadowTierVec.empty() ? nullptr : s_shadowTierVec.data(),
+			s_morphFactorVec.empty() ? nullptr : s_morphFactorVec.data(),  // TERRAIN-LOD-GEOMORPH-1
+			s_cmdCount);
 		gos_render_pass_timer::End(gos_render_pass_timer::Pass_TerrainChunk);
 	}
 }
