@@ -4277,18 +4277,27 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			continue;
 
 		// TEAM-COMMANDER-OWNERSHIP-1 audit: this reads commandersToLoad back to
-		// INDEX + DEREF Commander::commanders[] below, but (unlike the setTeam
-		// site at :2851) only checked != -1. A caller-supplied id >= MAX_COMMANDERS
-		// is an OOB read, and a valid-but-uncreated slot (init loops only made
-		// [0..maxCommanderID]) is a NULL ->getGroup() deref. Bound + null-check the
-		// slot once here; log mode skips this commander's groups.
+		// INDEX + DEREF Commander::commanders[] below, but (unlike the setTeam site
+		// at :2851) only checked != -1. A caller-supplied id >= MAX_COMMANDERS is an
+		// OOB read (always a bug -> bound it up front). The NULL-slot case (init
+		// loops only created [0..maxCommanderID]) is NOT gated here: the original
+		// only dereferences the slot INSIDE the group-block while loop, so a NULL
+		// slot with no CommanderNGroup:0 block is benign and must stay silent to
+		// keep stock byte-identical. The null-check therefore gates only the actual
+		// dereference site, once per commander that truly has group blocks.
 		long ctlCommander = commandersToLoad[curCommanderId][0];
-		if (!MC2_VERIFY_BOUNDS(ctlCommander, MAX_COMMANDERS, "Mission::init commander-groups commandersToLoad") ||
-			!MC2_VERIFY_NOTNULL(Commander::commanders[ctlCommander], "Mission::init commander-groups Commander::commanders[]"))
+		if (!MC2_VERIFY_BOUNDS(ctlCommander, MAX_COMMANDERS, "Mission::init commander-groups commandersToLoad"))
 			continue;
 
 		sprintf(headingStr, "Commander%dGroup:%d", curCommanderId, numGroups);
 		result = missionFile->seekBlock(headingStr);
+		// A group block exists for this commander -> the loop below WILL deref the
+		// slot. Verify it was created before entering (matches the original's
+		// reachable deref exactly; skips the malformed commander's groups in log
+		// mode instead of AVing on the uninitialized slot).
+		if (result == NO_ERR &&
+			!MC2_VERIFY_NOTNULL(Commander::commanders[ctlCommander], "Mission::init commander-groups Commander::commanders[]"))
+			continue;
 		while (result == NO_ERR) {
 			//---------------------------
 			// Read in the Group Mates...
