@@ -100,6 +100,17 @@ BUILDING_PBR_PAYLOAD = [
     "data/materials/pbr/corrugatedsteel006a_orm.ktx2",
 ]
 
+# Renderer config JSON read directly off "data/<name>.json" relative paths by
+# GameOS/gameos (terrain_material_lib.cpp, visual_tuning_profile.cpp) -- both
+# game AND editor installs load these (shared renderer core), so they must
+# ship even though neither is a build output. Missing file = silent no-op at
+# runtime (both readers tolerate absence), but shipping without them silently
+# drops per-mission/material tuning that was authored assuming the file loads.
+GAME_DATA_PAYLOAD = [
+    "data/terrain_materials.json",
+    "data/visual_tuning.json",
+]
+
 FFMPEG_DLLS = [
     "avcodec-61.dll",
     "avformat-61.dll",
@@ -433,6 +444,12 @@ def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
         p = os.path.join(src_root, rel)
         if require_build and not os.path.isfile(p):
             fail(f"building PBR payload missing in source: {p}")
+        items.append((p, rel, "support"))
+
+    for rel in GAME_DATA_PAYLOAD:
+        p = os.path.join(src_root, rel)
+        if require_build and not os.path.isfile(p):
+            fail(f"game data payload missing in source: {p}")
         items.append((p, rel, "support"))
 
     # Support payload: launch scripts (per target) + editor authoring trees.
