@@ -109,11 +109,24 @@ void main()
     vec4 pFar  = invViewProj * vec4(ndc, 0.0, 1.0);
     vec3 worldDir = normalize(pFar.xyz / pFar.w - pNear.xyz / pNear.w);
 
-    // worldDir.z < 0 = sky. Clouds at horizon (z~0) and fill the void below.
-    if (worldDir.z < -0.22) { outFog = vec4(0.0); return; }
-
-    // Fade in from just-above-horizon. No fade-out below — fill the full void.
-    float skyFade = smoothstep(-0.22, -0.01, worldDir.z);
+    // FOG-HORIZON-CLAMP-1 (mirrors GL shaders/fog_oob.frag). elevSin = -worldDir.z
+    // is the sine of the ray's elevation above the horizon (z<0 = up in this
+    // frame). Full fog at/below the horizon, smooth fade to zero across
+    // [START_SIN, END_SIN], clear above -- keeps the cloud bank from bleeding
+    // upward into the sky. DIVERGENCE: the GL path passes these band edges + a
+    // runtime kill-switch (MC2_FOG_HORIZON_CLAMP / _FADE_START / _FADE_END) via
+    // uniforms; this Vulkan island has no such UBO fields (its parity POD +
+    // golden proof predate the feature), so the DEFAULT profile is baked as
+    // constants here: start=0deg (sin 0), end=5deg (sin 0.08716), clamp ON. When
+    // the Vulkan backend reaches this pass for real (Layer 6+), promote these to
+    // FogOobParams UBO fields (int u_horizonClampEnabled; float startSin,endSin)
+    // to regain the runtime knobs -- same descriptor work the SKYBOX-FOG-EXCLUDE
+    // note above defers.
+    const float FOG_HORIZON_START_SIN = 0.0;      // sin(0deg)
+    const float FOG_HORIZON_END_SIN   = 0.08716;  // sin(5deg)
+    float elevSin = -worldDir.z;
+    if (elevSin >= FOG_HORIZON_END_SIN) { outFog = vec4(0.0); return; }
+    float skyFade = 1.0 - smoothstep(FOG_HORIZON_START_SIN, FOG_HORIZON_END_SIN, elevSin);
 
     // Slow horizontal drift for cloud animation. Shift worldDir in XY plane.
     vec3 p3 = worldDir * 4.5 + vec3(u_time * 0.008, u_time * 0.002, 0.0);

@@ -32,6 +32,19 @@ uniform float     u_time;
 uniform usampler2D stencilTex;
 uniform int        u_skyExcludeEnabled;
 
+// FOG-HORIZON-CLAMP-1: elevation profile. In the invWorldToClipGL frame,
+// worldDir.z < 0 = looking up (sky), z == 0 = horizon, z > 0 = looking down.
+// elevSin = -worldDir.z is the sine of the view ray's elevation above the
+// horizon. The desired shape: FULL fog at/below the horizon (covers the OOB
+// terrain/water to the sides and down) and a smooth fade to ZERO within a small
+// elevation band just above the horizon, leaving the sky above CLEAR. The CPU
+// precomputes the band edges as sines (u_horizonFadeStartSin < u_horizonFadeEndSin)
+// so this stays trig-free. u_horizonClampEnabled == 0 restores the legacy
+// worldDir.z 0.22 exclusion band (kill-switch MC2_FOG_HORIZON_CLAMP=0).
+uniform int   u_horizonClampEnabled;
+uniform float u_horizonFadeStartSin;
+uniform float u_horizonFadeEndSin;
+
 // ---- 3D value noise ----
 // Sampling worldDir (unit sphere) in 3D eliminates all UV projection
 // artifacts: no seams, no directional tilt, no vertical streaks.
@@ -72,11 +85,22 @@ void main()
     vec4 pFar  = invViewProj * vec4(ndc, 0.0, 1.0);
     vec3 worldDir = normalize(pFar.xyz / pFar.w - pNear.xyz / pNear.w);
 
-    // worldDir.z < 0 = sky. Clouds at horizon (z~0) and fill the void below.
-    if (worldDir.z < -0.22) { outFog = vec4(0.0); return; }
-
-    // Fade in from just-above-horizon. No fade-out below — fill the full void.
-    float skyFade = smoothstep(-0.22, -0.01, worldDir.z);
+    // FOG-HORIZON-CLAMP-1: elevation-angle profile (primary shape).
+    //   elevSin = -worldDir.z  (positive above horizon, negative below).
+    //   full fog for elevSin <= startSin (horizon and below),
+    //   smooth fade to zero across [startSin, endSin], clear above endSin.
+    // Legacy fallback (u_horizonClampEnabled == 0): the old worldDir.z 0.22 band,
+    // which faded IN from below the horizon and let fog survive up to ~12deg.
+    float skyFade;
+    if (u_horizonClampEnabled != 0) {
+        float elevSin = -worldDir.z;
+        if (elevSin >= u_horizonFadeEndSin) { outFog = vec4(0.0); return; }
+        skyFade = 1.0 - smoothstep(u_horizonFadeStartSin, u_horizonFadeEndSin, elevSin);
+    } else {
+        // Legacy: worldDir.z < 0 = sky. Fade in from just-above-horizon.
+        if (worldDir.z < -0.22) { outFog = vec4(0.0); return; }
+        skyFade = smoothstep(-0.22, -0.01, worldDir.z);
+    }
 
     // SKYBOX-FOG-EXCLUDE-2 (feathered): where the stencil tag says "true sky",
     // roll the fog off across the SAME worldDir.z band the fade above uses,

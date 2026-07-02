@@ -462,6 +462,26 @@ public:
     float oobFogOpacity_ = 1.0f;
     void  runFogOob();
 
+    // FOG-HORIZON-CLAMP-1: reshape the OOB/edge-fog elevation profile so fog is
+    // FULL at/below the horizon (covers OOB terrain/water sideways + down) and
+    // fades to ZERO within a small elevation band just above the horizon, leaving
+    // the sky above clear. Supersedes the old worldDir.z 0.22 exclusion band
+    // (which let fog survive to ~12deg+ elevation, bleeding up into the sky).
+    //   MC2_FOG_HORIZON_FADE_START -- elevation (deg) where the fade begins; fog
+    //                                 still full at/below this.  Default 0.
+    //   MC2_FOG_HORIZON_FADE_END   -- elevation (deg) where fog reaches zero.
+    //                                 Default 5.  Must be > start.
+    //   MC2_FOG_HORIZON_CLAMP=0    -- kill-switch: restore the previous profile
+    //                                 (no elevation clamp; old worldDir.z band).
+    // Shader form is cheap: we pass the SINES of the two angles (elevSin =
+    // -worldDir.z for a normalized dir), so the frag does a plain smoothstep on
+    // -worldDir.z with no per-fragment trig.
+    bool  fogHorizonClampEnabled_ = true;    // default ON (rides existing fog gate)
+    float fogHorizonFadeStartDeg_ = 0.0f;
+    float fogHorizonFadeEndDeg_   = 5.0f;
+    float fogHorizonFadeStartSin_ = 0.0f;    // sin(0deg)
+    float fogHorizonFadeEndSin_   = 0.08716f;// sin(5deg); recomputed from env in ctor
+
     // HZB-DEPTH-PYRAMID-MVP-1 (TRACKRV-HZB-VISIBILITY-OPUS-1). Gated reverse-Z
     // Hi-Z depth pyramid built from sceneDepthTex_ via a custom fragment MIN
     // reduction (shaders/hzb_reduce.frag). Default-OFF (MC2_HZB_BUILD): when OFF

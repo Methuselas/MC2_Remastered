@@ -694,6 +694,36 @@ void gosPostProcess::init(int w, int h)
             edgeFogEnabled_ ? 1 : 0, edgeFogStart_, edgeFogHeight_, edgeFogMax_);
     }
 
+    // FOG-HORIZON-CLAMP-1: elevation profile shared by OOB + edge fog. Rides the
+    // existing (default-ON) fog gates -- this is a tuning of the fog's SHAPE, not
+    // a new feature. Kill-switch MC2_FOG_HORIZON_CLAMP=0 restores the previous
+    // worldDir.z 0.22 exclusion band. Knobs are in DEGREES of elevation above the
+    // horizon; we precompute their sines here so the frag stays trig-free
+    // (elevSin = -worldDir.z for a normalized view ray).
+    {
+        if (const char* v = getenv("MC2_FOG_HORIZON_CLAMP"))
+            fogHorizonClampEnabled_ = !(v[0] == '0' && v[1] == '\0');
+        if (const char* v = getenv("MC2_FOG_HORIZON_FADE_START"))
+            fogHorizonFadeStartDeg_ = (float)std::atof(v);
+        if (const char* v = getenv("MC2_FOG_HORIZON_FADE_END"))
+            fogHorizonFadeEndDeg_   = (float)std::atof(v);
+        // Guard the ordering so smoothstep(edge0<edge1) always holds; a degenerate
+        // or inverted band would make the fade a hard step. Clamp to [-90,90].
+        auto clampDeg = [](float d) { return d < -90.0f ? -90.0f : (d > 90.0f ? 90.0f : d); };
+        fogHorizonFadeStartDeg_ = clampDeg(fogHorizonFadeStartDeg_);
+        fogHorizonFadeEndDeg_   = clampDeg(fogHorizonFadeEndDeg_);
+        if (fogHorizonFadeEndDeg_ <= fogHorizonFadeStartDeg_)
+            fogHorizonFadeEndDeg_ = fogHorizonFadeStartDeg_ + 0.5f; // minimum band
+        const float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+        fogHorizonFadeStartSin_ = std::sin(fogHorizonFadeStartDeg_ * kDeg2Rad);
+        fogHorizonFadeEndSin_   = std::sin(fogHorizonFadeEndDeg_   * kDeg2Rad);
+        std::fprintf(stderr,
+            "[FOG_HORIZON v1] clamp=%d fadeStart=%.2fdeg(sin=%.4f) fadeEnd=%.2fdeg(sin=%.4f)\n",
+            fogHorizonClampEnabled_ ? 1 : 0,
+            fogHorizonFadeStartDeg_, fogHorizonFadeStartSin_,
+            fogHorizonFadeEndDeg_,   fogHorizonFadeEndSin_);
+    }
+
     // HZB-DEPTH-PYRAMID-MVP-1: reduction shader. Gate (hzbEnabled_) is resolved
     // earlier (before createFBOs); default OFF -> no allocation, no-op build.
     hzbReduceProg_ = glsl_program::makeProgram("hzb_reduce",
@@ -2596,6 +2626,14 @@ void gosPostProcess::runEdgeFog()
     edgeFogProg_->setFloat("u_fogMax",           edgeFogMax_);
     edgeFogProg_->setFloat("u_waterElevation",   waterElevation_);
 
+    // FOG-HORIZON-CLAMP-1: same elevation profile as the OOB pass. The edge-fog
+    // frag already refuses fog for rays looking up/horizontal (dz >= -0.001), so
+    // this narrows the surviving small-downward-elevation band toward the horizon
+    // exactly like fog_oob, keeping upward bleed out of the sky.
+    edgeFogProg_->setInt("u_horizonClampEnabled", fogHorizonClampEnabled_ ? 1 : 0);
+    edgeFogProg_->setFloat("u_horizonFadeStartSin", fogHorizonFadeStartSin_);
+    edgeFogProg_->setFloat("u_horizonFadeEndSin",   fogHorizonFadeEndSin_);
+
     // SKYBOX-FOG-EXCLUDE-1: gate-ON only; default OFF -> u_skyExcludeEnabled=0,
     // stencilTex left unbound (unit 1 stays whatever it was -- shader never
     // reads it when the uniform is 0, so this is byte-identical OFF).
@@ -2704,6 +2742,13 @@ void gosPostProcess::runFogOob()
     fogOobProg_->setFloat3("u_fogColor",  oobFogColor_);
     fogOobProg_->setFloat("u_fogOpacity", oobFogOpacity_);
     fogOobProg_->setFloat("u_time", fogTime);
+
+    // FOG-HORIZON-CLAMP-1: elevation profile. clamp=1 (default) selects the new
+    // shape (full at/below horizon, fade to zero in [startSin,endSin]); clamp=0
+    // restores the legacy worldDir.z 0.22 band in-shader.
+    fogOobProg_->setInt("u_horizonClampEnabled", fogHorizonClampEnabled_ ? 1 : 0);
+    fogOobProg_->setFloat("u_horizonFadeStartSin", fogHorizonFadeStartSin_);
+    fogOobProg_->setFloat("u_horizonFadeEndSin",   fogHorizonFadeEndSin_);
 
     // SKYBOX-FOG-EXCLUDE-1: gate-ON only; default OFF -> u_skyExcludeEnabled=0,
     // stencilTex left unbound (shader never reads it when the uniform is 0,

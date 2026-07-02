@@ -41,6 +41,17 @@ uniform float     u_waterElevation;  // sea-level world Z — skip fog at/below 
 uniform usampler2D stencilTex;
 uniform int        u_skyExcludeEnabled;
 
+// FOG-HORIZON-CLAMP-1: shared elevation profile (see fog_oob.frag). elevSin =
+// -normalize(wFar-wNear).z is the sine of the view ray's elevation above the
+// horizon. Full fog at/below the horizon, smooth fade to zero across
+// [startSin,endSin], clear above -- keeps the cloud bank from bleeding upward
+// into the sky. This narrows the surviving band toward the horizon on top of the
+// pass's existing "dz >= -0.001 => no fog" upward guard. u_horizonClampEnabled==0
+// restores the previous behaviour (no elevation clamp).
+uniform int   u_horizonClampEnabled;
+uniform float u_horizonFadeStartSin;
+uniform float u_horizonFadeEndSin;
+
 void main()
 {
     float rawDepth = texture(depthTex, TexCoord).r;
@@ -106,7 +117,19 @@ void main()
     float innerRamp   = smoothstep(u_fogStart, 0.0, distFromEdge);
     float outsideFill = step(0.0, -distFromEdge);
 
+    // FOG-HORIZON-CLAMP-1: fold in the shared elevation profile. elevSin =
+    // -viewDir.z; full at/below horizon, fade to zero across [startSin,endSin].
+    // (The dz>=-0.001 guard above already killed strictly up/horizontal rays; this
+    // shapes the small surviving downward-elevation band toward the horizon so the
+    // cloud bank never bleeds upward.) clamp=0 -> factor 1.0 (previous behaviour).
+    float horizonFactor = 1.0;
+    if (u_horizonClampEnabled != 0) {
+        float elevSin = -normalize(wFar - wNear).z;
+        horizonFactor = 1.0 - smoothstep(u_horizonFadeStartSin, u_horizonFadeEndSin, elevSin);
+    }
+
     float fogFactor = clamp(max(innerRamp, outsideFill) * heightFade * u_fogMax, 0.0, 1.0)
-                      * skyExclude;  // SKYBOX-FOG-EXCLUDE-2 feather (1.0 when gate OFF)
+                      * skyExclude   // SKYBOX-FOG-EXCLUDE-2 feather (1.0 when gate OFF)
+                      * horizonFactor;  // FOG-HORIZON-CLAMP-1 (1.0 when clamp OFF)
     outFog = vec4(u_fogColor, fogFactor);
 }

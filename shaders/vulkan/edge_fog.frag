@@ -107,6 +107,20 @@ void main()
     float innerRamp   = smoothstep(u_fogStart, 0.0, distFromEdge);
     float outsideFill = step(0.0, -distFromEdge);
 
-    float fogFactor = clamp(max(innerRamp, outsideFill) * heightFade * u_fogMax, 0.0, 1.0);
+    // FOG-HORIZON-CLAMP-1 (mirrors GL shaders/edge_fog.frag). Fold in the shared
+    // elevation profile: elevSin = -viewDir.z; full at/below the horizon, fade to
+    // zero across [START_SIN, END_SIN], keeping the cloud bank from bleeding
+    // upward. DIVERGENCE (same as fog_oob.frag / the SKYBOX-FOG-EXCLUDE note): the
+    // GL path passes the band edges + kill-switch via uniforms; this island's POD
+    // predates the feature, so the DEFAULT profile (0deg..5deg, clamp ON) is baked
+    // as constants. Promote to EdgeFogParams UBO fields at Layer 6+ for runtime
+    // knobs.
+    const float FOG_HORIZON_START_SIN = 0.0;      // sin(0deg)
+    const float FOG_HORIZON_END_SIN   = 0.08716;  // sin(5deg)
+    float elevSin = -normalize(wFar - wNear).z;
+    float horizonFactor = 1.0 - smoothstep(FOG_HORIZON_START_SIN, FOG_HORIZON_END_SIN, elevSin);
+
+    float fogFactor = clamp(max(innerRamp, outsideFill) * heightFade * u_fogMax, 0.0, 1.0)
+                      * horizonFactor;  // FOG-HORIZON-CLAMP-1
     outFog = vec4(u_fogColor, fogFactor);
 }
