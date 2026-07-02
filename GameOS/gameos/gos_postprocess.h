@@ -487,6 +487,12 @@ private:
     GLuint sceneFBO_;
     GLuint sceneColorTex_;
     GLuint sceneDepthTex_;
+    // SKYBOX-FOG-EXCLUDE-1: stencil-only view onto sceneDepthTex_'s storage
+    // (GL_DEPTH_STENCIL_TEXTURE_MODE=GL_STENCIL_INDEX baked in via glTextureView,
+    // so it can be sampled in the same draw as the depth-mode sceneDepthTex_
+    // binding without per-bind mode toggling). Lazily created; 0 when
+    // MC2_SKYBOX_FOG_EXCLUDE=0 (never allocated -> zero cost OFF).
+    GLuint sceneStencilViewTex_ = 0;
     GLuint sceneNormalTex_;
     GLuint sceneObjectIdTex_ = 0;   // M1.5 R32UI MRT attachment-2 (gated on MC2_OBJECT_ID_BUFFER)
     GLuint sceneDepthCopyTex_ = 0;  // VFX-SOFT-PARTICLES-MVP-1 lazy depth copy (DEPTH24_STENCIL8)
@@ -529,6 +535,10 @@ private:
     bool          hdriEnabled_     = false;  // resolved once from env at init
     bool          hdriReady_       = false;  // true iff tex + program both valid
     GLuint        hdriDummyVao_    = 0;      // fallback when quadVAO_ unavailable
+    // SKYBOX-FOG-EXCLUDE-1: stencil-only tag pass program (hdri_skybox_stencil_tag.frag).
+    // Compiled lazily on first use under MC2_SKYBOX_FOG_EXCLUDE=1; null/no-op when
+    // the gate is off (zero cost OFF).
+    glsl_program* hdriSkyboxStencilTagProg_ = nullptr;
     // HDRI-SKY Item 2: GL-equirect azimuth (radians) of the baked sun in the
     // EXR, derived at load time by luminance-weighted centroid of the brightest
     // above-horizon texels. NaN => scan unavailable (sun-sync stays disabled).
