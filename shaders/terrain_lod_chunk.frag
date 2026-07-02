@@ -177,6 +177,12 @@ uniform vec3  tintDirt;             // default (0.48, 0.42, 0.33)
 uniform vec3  tintConcrete;         // default (0.55, 0.53, 0.50)
 uniform vec3  tintSnow;             // default (0.75, 0.78, 0.84)
 uniform float tintStrengthScale;   // 0 = colormap passthrough, 1 = full tint
+// TERRAIN-CONTROLMAP-ALBEDO-1: lifts tintStrength toward 1.0 so authored
+// matWeights (control map) can fully repaint the albedo instead of being
+// capped at the classifier-era 0.18-0.50 (0.85 under snow) ceiling. 0.0 =
+// exact current expression (byte-identical); 1.0 = baseColor==materialTint
+// (colormap fully replaced by weight-composed per-layer tints).
+uniform float u_controlAlbedoStrength; // default 0.0 (gate OFF -> identity)
 uniform float snowBrightnessDampen; // <1 darkens detected snow (snowWeight-gated); default 0.78
 // TERRAIN-MATERIAL-LIB-1: per-layer roughness/AO scalars (rock,grass,dirt,concrete).
 // Neutral (1,1,1,1) defaults. Only consumed when u_useMaterialLib != 0 -- gate
@@ -768,7 +774,11 @@ void main() {
                        + tintSnow * snowWeight;
     float colLum      = dot(base, kLumaWeights);
     float tintBase    = mix(0.18, 0.50, smoothstep(0.1, 0.6, colLum));
-    float tintStrength= mix(tintBase, 0.85, snowWeight) * tintStrengthScale;
+    // TERRAIN-CONTROLMAP-ALBEDO-1: u_controlAlbedoStrength==0.0 -> mix(x,1.0,0.0)
+    // == x -> algebraically identical to the pre-slice expression. >0 lifts the
+    // classifier-era cap toward full weight-composed albedo (materialTint).
+    float tintStrength= mix(mix(tintBase, 0.85, snowWeight) * tintStrengthScale,
+                             1.0, u_controlAlbedoStrength);
     vec3  baseColor   = mix(base, materialTint, tintStrength);
     if ((u_diag & 512) != 0) baseColor = base;   // DIAG 512: bypass material tint (A/B)
     // Cement: restore the authored colormap tone (runway/apron) instead of the

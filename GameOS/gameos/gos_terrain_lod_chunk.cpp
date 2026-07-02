@@ -171,11 +171,14 @@ static GLint    s_locTintGrass          = -1;
 static GLint    s_locTintDirt           = -1;
 static GLint    s_locTintStrengthScale  = -1;
 static GLint    s_locSnowBrightnessDampen = -1;  // <1 darkens detected snow
+// TERRAIN-CONTROLMAP-ALBEDO-1: lifts tintStrength toward 1.0 (0=byte-identical).
+static GLint    s_locControlAlbedoStrength = -1;
 extern void  gos_GetTerrainMatTiling(float*, float*, float*, float*, float*);
 extern void  gos_GetTerrainTintRock(float*, float*, float*);
 extern void  gos_GetTerrainTintGrass(float*, float*, float*);
 extern void  gos_GetTerrainTintDirt(float*, float*, float*);
 extern float gos_GetTerrainTintStrengthScale();
+extern float gos_GetTerrainControlAlbedoStrength();  // TERRAIN-CONTROLMAP-ALBEDO-1
 // Remaining legacy tunables (env gates replicated in the upload so default==legacy).
 extern float gos_GetTerrainLightingV1Strength();
 extern float gos_GetTerrainLightingV2Floor();
@@ -581,6 +584,7 @@ void gos_TerrainLodChunk_Init()
             s_locTintDirt          = glGetUniformLocation(s_terrainProgram, "tintDirt");
             s_locTintStrengthScale = glGetUniformLocation(s_terrainProgram, "tintStrengthScale");
             s_locSnowBrightnessDampen = glGetUniformLocation(s_terrainProgram, "snowBrightnessDampen");
+            s_locControlAlbedoStrength = glGetUniformLocation(s_terrainProgram, "u_controlAlbedoStrength");  // TERRAIN-CONTROLMAP-ALBEDO-1
             s_locLightingV1  = glGetUniformLocation(s_terrainProgram, "terrainLightingV1Strength");
             s_locLightingV2  = glGetUniformLocation(s_terrainProgram, "terrainLightingV2ShadowFillFloor");
             s_locNfhStrength = glGetUniformLocation(s_terrainProgram, "terrainNormalsFromHeightStrength");
@@ -1107,6 +1111,10 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         // turned down); MC2_TERRAIN_SNOW_BRIGHTNESS_DAMPEN overrides.
         static const float s_snowDampen = [](){ const char* v = getenv("MC2_TERRAIN_SNOW_BRIGHTNESS_DAMPEN"); return v ? (float)atof(v) : 0.78f; }();
         if (s_locSnowBrightnessDampen >= 0) glUniform1f(s_locSnowBrightnessDampen, s_snowDampen);
+        // TERRAIN-CONTROLMAP-ALBEDO-1: default member 0.0f -> uploaded verbatim
+        // -> frag's mix(x,1.0,0.0)==x (byte-identical) when gate is OFF.
+        if (s_locControlAlbedoStrength >= 0)
+            glUniform1f(s_locControlAlbedoStrength, gos_GetTerrainControlAlbedoStrength());
 
         // Remaining tunables. Hemisphere V1/V2 are env-gated OFF by default (match
         // legacy: force-zeroed unless MC2_TERRAIN_LIGHTING_V1/V2 set). NFH strength

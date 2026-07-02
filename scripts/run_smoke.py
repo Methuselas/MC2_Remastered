@@ -1110,6 +1110,12 @@ def main():
                             # drops it and the gate-ON smoke does nothing.
                             "MC2_TERRAIN_MATERIAL_LIB",
                             "MC2_TERRAIN_MATERIAL_LIB_FILE",
+                            # TERRAIN-CONTROLMAP-ALBEDO-1 -- lifts the control-map
+                            # weight-composed tint toward full albedo (default OFF).
+                            # Must be allowlisted or Popen drops it and the gate-ON
+                            # smoke does nothing.
+                            "MC2_TERRAIN_CONTROLMAP_ALBEDO",
+                            "MC2_TERRAIN_CONTROLMAP_ALBEDO_STRENGTH",
                             # Mask-dispatch (pre-bake-terrain merge)
                             "MC2_TERRAIN_MASK_DISPATCH",
                             "MC2_TERRAIN_MASK_DISPATCH_PARITY",

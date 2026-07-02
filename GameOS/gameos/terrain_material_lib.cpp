@@ -21,6 +21,7 @@ extern void  gos_SetTerrainTintSnow(float r, float g, float b);
 extern void  gos_SetTerrainMatRoughness(float rock, float grass, float dirt, float concrete);
 extern void  gos_SetTerrainMatAO(float rock, float grass, float dirt, float concrete);
 extern void  gos_SetTerrainTintStrengthScale(float s);
+extern void  gos_SetTerrainControlAlbedoStrength(float s);  // TERRAIN-CONTROLMAP-ALBEDO-1
 extern void  gos_SetTerrainDetailParams(float tiling, float strength);
 extern void  gos_SetTerrainSnowBrightnessDampen(float v);
 extern void  gos_SetTerrainClassGrass(float gMinusRLo, float gMinusRHi, float gBrightLo, float gBrightHi);
@@ -106,22 +107,50 @@ static float getf(const std::map<std::string,float>& m, const char* key, float d
 
 } // namespace
 
-void terrainMaterials_apply(const char* /*missionName*/) {
-    if (!envIsSet("MC2_TERRAIN_MATERIAL_LIB")) return;  // gate OFF -> silent no-op, members untouched
+// TERRAIN-CONTROLMAP-ALBEDO-1: independent gate from MC2_TERRAIN_MATERIAL_LIB
+// (per USER RULING -- this slice ships its own killswitch). Applies the
+// controlAlbedoStrength key from the SAME terrain_materials.json (or
+// MC2_TERRAIN_MATERIAL_LIB_FILE override) even when MC2_TERRAIN_MATERIAL_LIB
+// itself is off, so authors can turn on just the albedo-repaint knob without
+// opting into the rest of the material-lib tuning surface. Precedence:
+// env MC2_TERRAIN_CONTROLMAP_ALBEDO_STRENGTH wins over JSON, JSON wins over
+// the shipped 0.7 default. Gate OFF -> member stays at its 0.0f C++
+// initializer -> byte-identical.
+static void applyControlAlbedoStrength(const std::map<std::string,float>& v, bool jsonLoaded) {
+    if (!envIsSet("MC2_TERRAIN_CONTROLMAP_ALBEDO")) return;  // gate OFF -> no-op, member stays 0.0f
 
+    float strength = jsonLoaded ? getf(v, "controlAlbedoStrength", 0.7f) : 0.7f;
+    if (const char* envStrength = getenv("MC2_TERRAIN_CONTROLMAP_ALBEDO_STRENGTH")) {
+        if (envStrength[0] != '\0') strength = (float)atof(envStrength);  // env wins over JSON
+    }
+    gos_SetTerrainControlAlbedoStrength(strength);
+    fprintf(stderr, "[TerrainControlAlbedo] gate ON -- strength=%.3f\n", strength);
+}
+
+void terrainMaterials_apply(const char* /*missionName*/) {
     const char* pathEnv = getenv("MC2_TERRAIN_MATERIAL_LIB_FILE");
     const char* path = (pathEnv && pathEnv[0]) ? pathEnv : "data/terrain_materials.json";
+    bool materialLibGateOn = envIsSet("MC2_TERRAIN_MATERIAL_LIB");
+    bool controlAlbedoGateOn = envIsSet("MC2_TERRAIN_CONTROLMAP_ALBEDO");
+
+    if (!materialLibGateOn && !controlAlbedoGateOn) return;  // both gates OFF -> silent no-op
 
     FILE* f = fopen(path, "r");
     if (!f) {
-        fprintf(stderr, "[TerrainMaterialLib] gate ON but no file at '%s' -- no-op\n", path);
+        if (materialLibGateOn)
+            fprintf(stderr, "[TerrainMaterialLib] gate ON but no file at '%s' -- no-op\n", path);
+        applyControlAlbedoStrength({}, /*jsonLoaded=*/false);  // shipped-default strength
         return;  // missing file = silent no-op (matches visual_tuning.json convention)
     }
 
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     rewind(f);
-    if (sz <= 0 || sz > 512 * 1024) { fclose(f); return; }
+    if (sz <= 0 || sz > 512 * 1024) {
+        fclose(f);
+        applyControlAlbedoStrength({}, /*jsonLoaded=*/false);
+        return;
+    }
 
     std::string buf((size_t)sz, '\0');
     fread(&buf[0], 1, (size_t)sz, f);
@@ -130,6 +159,10 @@ void terrainMaterials_apply(const char* /*missionName*/) {
     std::map<std::string,float> v;
     TinyJson jp{ buf.c_str(), buf.c_str() + buf.size() };
     jp.floatObj(v);
+
+    applyControlAlbedoStrength(v, /*jsonLoaded=*/true);
+
+    if (!materialLibGateOn) return;  // TERRAIN-CONTROLMAP-ALBEDO-1 gate handled above independently
 
     // --- Byte-identity defaults: EXACT current hardcoded constants (recon
     // table). If the JSON omits a key, the corresponding gos_Set* call below

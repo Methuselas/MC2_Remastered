@@ -1941,6 +1941,10 @@ class gosRenderer {
         void getTerrainClassDirt(float* v) const   { memcpy(v, terrain_class_dirt_,  4 * sizeof(float)); }
         void  setTerrainTintStrengthScale(float s) { terrain_tint_strength_scale_ = s; }
         float getTerrainTintStrengthScale() const   { return terrain_tint_strength_scale_; }
+        // TERRAIN-CONTROLMAP-ALBEDO-1: default 0.0 -> shader's mix(x,1.0,0.0)==x
+        // -> byte-identical when gate is OFF.
+        void  setTerrainControlAlbedoStrength(float s) { terrain_control_albedo_strength_ = s; }
+        float getTerrainControlAlbedoStrength() const   { return terrain_control_albedo_strength_; }
         // TERRAIN-MATERIAL-LIB-1: no setter existed prior (member only had an
         // env-read static initializer); added so the JSON reader can apply it
         // when MC2_TERRAIN_SNOW_BRIGHTNESS_DAMPEN is unset (env still wins).
@@ -2453,6 +2457,11 @@ class gosRenderer {
         float terrain_class_grass_[4] = { -0.02f, 0.06f, 0.22f, 0.40f };
         float terrain_class_dirt_[4]  = { -0.02f, 0.06f, 0.22f, 0.45f };
         float terrain_tint_strength_scale_ = 1.0f;  // 0=colormap passthrough, 1=full tint
+        // TERRAIN-CONTROLMAP-ALBEDO-1: default 0.0 -- gate OFF uploads this
+        // verbatim, and the frag's mix(x,1.0,0.0)==x is algebraically the
+        // pre-slice expression (byte-identical). Gate ON + JSON/env authors
+        // this toward 1.0 so authored control-map weights fully repaint albedo.
+        float terrain_control_albedo_strength_ = 0.0f;
         // Snow brightness dampen: <1 darkens detected-snow fragments. Default 0.78
         // (visibly turned down); MC2_TERRAIN_SNOW_BRIGHTNESS_DAMPEN overrides.
         float terrain_snow_brightness_dampen_ = [](){ const char* v = getenv("MC2_TERRAIN_SNOW_BRIGHTNESS_DAMPEN"); return v ? (float)atof(v) : 0.78f; }();
@@ -2539,6 +2548,8 @@ class gosRenderer {
             GLint matRoughness = -1;               // per-layer roughness scalar (vec4)
             GLint matAO        = -1;               // per-layer AO scalar (vec4)
             GLint useMaterialLib = -1;             // 0=off (byte-identical); 1=roughness/AO term applied
+            // TERRAIN-CONTROLMAP-ALBEDO-1
+            GLint controlAlbedoStrength = -1;      // 0=byte-identical, 1=full weight-composed albedo
             GLuint program = 0;
         } terrainLocs_;
 
@@ -2593,6 +2604,10 @@ class gosRenderer {
             GLint matRoughness = -1;
             GLint matAO        = -1;
             GLint useMaterialLib = -1;
+            // TERRAIN-CONTROLMAP-ALBEDO-1: shares the same identity contract as
+            // the chunk path above (default 0.0 -> byte-identical when unbound
+            // too, since loc stays -1 until the uniform is declared here).
+            GLint controlAlbedoStrength = -1;
             GLuint program = 0;
         } thinTerrainLocs_;
 
@@ -2686,6 +2701,8 @@ class gosRenderer {
             terrainLocs_.matRoughness   = glGetUniformLocation(shp, "matRoughness");
             terrainLocs_.matAO          = glGetUniformLocation(shp, "matAO");
             terrainLocs_.useMaterialLib = glGetUniformLocation(shp, "u_useMaterialLib");
+            // TERRAIN-CONTROLMAP-ALBEDO-1
+            terrainLocs_.controlAlbedoStrength = glGetUniformLocation(shp, "u_controlAlbedoStrength");
         }
 
         void cacheThinTerrainUniformLocations(GLuint shp) {
@@ -2751,6 +2768,11 @@ class gosRenderer {
             // TERRAIN-LIGHTING-2
             thinTerrainLocs_.terrainLightingV2ShadowFillFloor =
                 glGetUniformLocation(shp, "terrainLightingV2ShadowFillFloor");
+            // TERRAIN-CONTROLMAP-ALBEDO-1: stays -1 until gos_terrain_thin's frag
+            // declares the uniform too (thin path is the dead/legacy indirect
+            // shader per recon) -- upload call below is >=0 guarded, no-op.
+            thinTerrainLocs_.controlAlbedoStrength =
+                glGetUniformLocation(shp, "u_controlAlbedoStrength");
         }
 
         void cacheShadowUniformLocations(GLuint shp) {
@@ -6940,6 +6962,9 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     if (tl.matRoughness  >= 0)        glUniform4fv(tl.matRoughness, 1, terrain_mat_roughness_);
     if (tl.matAO         >= 0)        glUniform4fv(tl.matAO,        1, terrain_mat_ao_);
     if (tl.useMaterialLib >= 0)       glUniform1i(tl.useMaterialLib, terrainMaterialLibEnabled() ? 1 : 0);
+    // TERRAIN-CONTROLMAP-ALBEDO-1: gate default OFF -> member stays 0.0f ->
+    // uploaded verbatim -> frag's mix(x,1.0,0.0)==x (byte-identical).
+    if (tl.controlAlbedoStrength >= 0) glUniform1f(tl.controlAlbedoStrength, terrain_control_albedo_strength_);
     if (tl.time >= 0) {
         float elapsed = SmokeMode::fixedTimestepEnabled()
                         ? (float)SmokeMode::fixedClockSeconds()
@@ -7076,6 +7101,10 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
     if (tl.tintDirt  >= 0)            glUniform3fv(tl.tintDirt,  1, terrain_tint_dirt_);
     if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
     if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
+    // TERRAIN-CONTROLMAP-ALBEDO-1: loc stays -1 on this (dead thin/legacy)
+    // path today; guarded upload is a no-op until gos_terrain.frag declares
+    // the uniform too.
+    if (tl.controlAlbedoStrength >= 0) glUniform1f(tl.controlAlbedoStrength, terrain_control_albedo_strength_);
     if (tl.time >= 0) {
         float elapsed = SmokeMode::fixedTimestepEnabled()
                         ? (float)SmokeMode::fixedClockSeconds()
@@ -9729,6 +9758,13 @@ void gos_SetTerrainTintStrengthScale(float s) {
 }
 float gos_GetTerrainTintStrengthScale() {
     return g_gos_renderer ? g_gos_renderer->getTerrainTintStrengthScale() : 1.0f;
+}
+// TERRAIN-CONTROLMAP-ALBEDO-1
+void gos_SetTerrainControlAlbedoStrength(float s) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainControlAlbedoStrength(s);
+}
+float gos_GetTerrainControlAlbedoStrength() {
+    return g_gos_renderer ? g_gos_renderer->getTerrainControlAlbedoStrength() : 0.0f;
 }
 // TERRAIN-MATERIAL-LIB-1
 void gos_SetTerrainSnowBrightnessDampen(float v) {

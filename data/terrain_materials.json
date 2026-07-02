@@ -32,6 +32,8 @@
   "tintStrengthScale": 1.0,
   "snow_brightnessDampen": 0.78,
 
+  "controlAlbedoStrength": 0.7,
+
   "classify_grass_gMinusRLo": -0.02,
   "classify_grass_gMinusRHi": 0.06,
   "classify_grass_gBrightLo": 0.22,
