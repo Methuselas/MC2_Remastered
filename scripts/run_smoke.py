@@ -240,6 +240,33 @@ def _running_mc2(target_exe: Path) -> list[tuple[int, str]]:
     return _same_path_mc2(_enum_mc2_processes(), target_exe)
 
 
+def _lane_lock_token(lease_folder: str | None, exe_path: str,
+                     short_name_fn) -> str:
+    """PURE: derive the filesystem-safe lane token used to name the per-lane
+    smoke.<token>.lock file (SMOKE-LATENCY-WINS-1 win #2).
+
+    lease_folder: the folder path we hold a lease on, or None (no lease --
+      --no-lease or lease system unavailable).
+    exe_path: args.exe (used as the fallback lane identity when there's no
+      lease, so two --no-lease invocations pointed at the SAME exe still
+      serialize against each other).
+    short_name_fn: deploy_lease._short_name (injected so this can be unit
+      tested without importing the real deploy_lease module's DEPLOY_FOLDERS
+      global state).
+
+    Two invocations resolving to the SAME lane token must serialize (same
+    lock file); two resolving to DIFFERENT tokens must run concurrently
+    (different lock files). Sanitizes to [A-Za-z0-9_-] so short names
+    containing '.' (e.g. "0.4") or an arbitrary directory name can't break
+    the lock filename.
+    """
+    if lease_folder is not None:
+        lane_key = short_name_fn(lease_folder)
+    else:
+        lane_key = Path(exe_path).resolve().parent.name or "default"
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in lane_key)
+
+
 def _taskkill_mc2(pids: list[int]):
     """Kill ONLY the given PIDs (never /IM image-name kill, which would also
     nuke foreign mc2.exe from a different deploy path)."""
@@ -509,9 +536,43 @@ def main():
                          "debug_state/latest_render_state.json; exits non-zero if "
                          "counter is 0). Repeatable. Known gates: "
                          "MC2_FRAMEGRAPH_EXECUTOR, MC2_FRAMEGRAPH_DRYRUN.")
+    ap.add_argument("--skip-preflight-cache", action="store_true",
+                    help="SMOKE-LATENCY-WINS-1: skip the preflight result "
+                         "cache and always re-run the coherence/BOM checks "
+                         "(default: cache hit replays their prior output and "
+                         "skips both subprocesses when the deploy manifest + "
+                         "shader tree + HEAD are unchanged since the last "
+                         "cached run; the staleness check always runs fresh)")
     args = ap.parse_args()
     if args.gl_debug_fatal:
         os.environ["MC2_GL_DEBUG_FATAL"] = "1"
+
+    # SMOKE-LATENCY-WINS-1 win #1: --duration hard cap + quick-tier banner.
+    # CLAUDE.md rule: NEVER --duration > 30 (soak/parity tier is 30s fixed).
+    # 15s is a valid opt-in "does it still boot+run+not crash" inner-loop tier
+    # (see .claude/SMOKE-LATENCY-1-RECON.md §4) -- all duration-independent
+    # gates (crash_silent, crash_no_summary, engine_reported_fail, gl_error,
+    # pool_null, asset_oob, shader_error, missing_file) and the play-heartbeat
+    # freeze gate (3s threshold) are satisfied well within 15s. It intentionally
+    # loses soak coverage (mid-mission combat/FX/leak/hitch observation), so it
+    # must stay opt-in and never silently replace the 30s default.
+    if args.duration is not None:
+        if args.duration > 30:
+            print(f"[runner] ERROR: --duration {args.duration} exceeds the hard "
+                  f"cap of 30s. The 30s window is the soak/parity tier and must "
+                  f"never be exceeded (CLAUDE.md). Use the default (30) or a "
+                  f"shorter --duration for a quick inner-loop tier.",
+                  file=sys.stderr)
+            sys.exit(2)
+        if args.duration < 30:
+            print(f"[runner] [QUICK-TIER] --duration {args.duration} < 30s "
+                  f"default: this run has REDUCED SOAK COVERAGE (mid-mission "
+                  f"combat/FX/AI divergence, slow leaks, and late hitches get "
+                  f"a shorter observation window). Crash/heartbeat/summary "
+                  f"gates are still fully valid at this duration. Use for "
+                  f"inner-loop iteration only -- NOT a substitute for the 30s "
+                  f"soak/parity tier before landing a change.",
+                  file=sys.stderr)
 
     # ----- Deploy-folder lease / auto-selection --------------------------
     # Must run before any code that uses args.exe (coherence check, lock, etc.)
@@ -692,37 +753,100 @@ def main():
         except Exception as _ge:
             print(f"[runner] [DEPLOY_GUARD] check skipped: {_ge}", file=sys.stderr)
 
-    # Deploy-coherence advisory (scripts/check-deploy-coherence.py): detects
-    # a stale deployed exe (fix built but never copied to the run dir).
-    # STRICTLY advisory: never changes verdict, exit code, or gate behavior.
-    try:
-        _coh = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "check-deploy-coherence.py"),
-             str(Path(args.exe).resolve().parent), "--worktree", str(ROOT)],
-            capture_output=True, text=True, timeout=30)
-        for _line in ((_coh.stdout or "") + (_coh.stderr or "")).splitlines():
+    # SMOKE-LATENCY-WINS-1 win #4: amortize the coherence + BOM preflights.
+    # Both re-hash/re-read the full deploy manifest / shader tree every
+    # invocation even though neither can change between two back-to-back
+    # `run_smoke` calls unless the deploy dir or worktree HEAD actually
+    # changed. Cache their (stdout, stderr, returncode) keyed on a cheap
+    # fingerprint (HEAD sha + manifest mtime/size + shader dir count/max-mtime;
+    # see scripts/smoke_lib/preflight_cache.py). A hit replays the prior
+    # output verbatim and skips both subprocesses; a miss (or
+    # --skip-preflight-cache) re-runs them and refreshes the cache. Purely an
+    # advisory-tier latency win -- BOM-check's hard sys.exit(2) on FAIL still
+    # fires identically whether the result came from cache or a fresh run.
+    from scripts.smoke_lib import preflight_cache as _pfcache
+    _pfcache_path = ARTIFACT_ROOT / ".preflight_cache.json"
+    _pfcache_fp = None
+    _pfcache_hit = None
+    if not args.skip_preflight_cache:
+        try:
+            _pfcache_fp = _pfcache.compute_fingerprint(
+                Path(args.exe).resolve().parent, ROOT)
+            _pfcache_hit = _pfcache.check_cache_hit(_pfcache_path, _pfcache_fp)
+        except Exception as _pce:
+            print(f"[runner] [PREFLIGHT-CACHE] lookup skipped: {_pce}",
+                  file=sys.stderr)
+
+    if _pfcache_hit is not None:
+        print("[runner] [PREFLIGHT-CACHE] HIT -- deploy manifest + shader tree "
+              "+ HEAD unchanged since last cached run; replaying coherence/BOM "
+              "results (pass --skip-preflight-cache to force a fresh check).",
+              file=sys.stderr)
+        _coh_out = _pfcache_hit.get("coherence", {})
+        for _line in (_coh_out.get("text") or "").splitlines():
             if _line.strip():
                 print(f"[runner] {_line}", file=sys.stderr)
-    except Exception as _e:
-        print(f"[runner] [DEPLOY_COHERENCE] check skipped: {_e}", file=sys.stderr)
-
-    # Shader BOM preflight: UTF-8 BOM in any shader = silent compile death
-    # (driver reports "unexpected token '€'" with no file name). Hard-fail
-    # so a BOM-infected deploy never silently passes the smoke gate.
-    try:
-        _bom = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "check_shader_bom.py")],
-            capture_output=True, text=True, timeout=15)
-        for _line in ((_bom.stdout or "") + (_bom.stderr or "")).splitlines():
+        _bom_out = _pfcache_hit.get("bom", {})
+        for _line in (_bom_out.get("text") or "").splitlines():
             if _line.strip():
                 print(f"[runner] [BOM-CHECK] {_line}", file=sys.stderr)
-        if _bom.returncode != 0:
-            print("[runner] [BOM-CHECK] FATAL: BOM detected in shader source(s). "
-                  "Run `py -3 scripts/check_shader_bom.py --fix` to strip.",
-                  file=sys.stderr)
+        if _bom_out.get("returncode", 0) != 0:
+            print("[runner] [BOM-CHECK] FATAL (cached): BOM detected in shader "
+                  "source(s). Run `py -3 scripts/check_shader_bom.py --fix` "
+                  "to strip.", file=sys.stderr)
             sys.exit(2)
-    except Exception as _e:
-        print(f"[runner] [BOM-CHECK] check skipped: {_e}", file=sys.stderr)
+    else:
+        # Deploy-coherence advisory (scripts/check-deploy-coherence.py): detects
+        # a stale deployed exe (fix built but never copied to the run dir).
+        # STRICTLY advisory: never changes verdict, exit code, or gate behavior.
+        _coh_text = ""
+        try:
+            _coh = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "check-deploy-coherence.py"),
+                 str(Path(args.exe).resolve().parent), "--worktree", str(ROOT)],
+                capture_output=True, text=True, timeout=30)
+            _coh_text = (_coh.stdout or "") + (_coh.stderr or "")
+            for _line in _coh_text.splitlines():
+                if _line.strip():
+                    print(f"[runner] {_line}", file=sys.stderr)
+        except Exception as _e:
+            print(f"[runner] [DEPLOY_COHERENCE] check skipped: {_e}", file=sys.stderr)
+
+        # Shader BOM preflight: UTF-8 BOM in any shader = silent compile death
+        # (driver reports "unexpected token '€'" with no file name). Hard-fail
+        # so a BOM-infected deploy never silently passes the smoke gate.
+        _bom_text = ""
+        _bom_rc = 0
+        try:
+            _bom = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "check_shader_bom.py")],
+                capture_output=True, text=True, timeout=15)
+            _bom_text = (_bom.stdout or "") + (_bom.stderr or "")
+            _bom_rc = _bom.returncode
+            for _line in _bom_text.splitlines():
+                if _line.strip():
+                    print(f"[runner] [BOM-CHECK] {_line}", file=sys.stderr)
+            if _bom_rc != 0:
+                print("[runner] [BOM-CHECK] FATAL: BOM detected in shader source(s). "
+                      "Run `py -3 scripts/check_shader_bom.py --fix` to strip.",
+                      file=sys.stderr)
+                sys.exit(2)
+        except Exception as _e:
+            print(f"[runner] [BOM-CHECK] check skipped: {_e}", file=sys.stderr)
+        finally:
+            # Cache even a BOM-FAIL result: a real BOM defect stays cached as a
+            # fail until the shader tree's fingerprint changes (e.g. --fix
+            # strips it, which changes shaders_fingerprint), so a cache HIT can
+            # never mask a genuine, still-present BOM defect.
+            if _pfcache_fp is not None:
+                try:
+                    _pfcache.save_cache(_pfcache_path, _pfcache_fp, {
+                        "coherence": {"text": _coh_text},
+                        "bom": {"text": _bom_text, "returncode": _bom_rc},
+                    })
+                except Exception as _pse:
+                    print(f"[runner] [PREFLIGHT-CACHE] save skipped: {_pse}",
+                          file=sys.stderr)
 
     # F1 unified-projection: forbid MC2_DISABLE_GOSFX=0 in smoke runs.
     # Visual regression accepted only in dev-override sessions; smoke must
@@ -738,7 +862,29 @@ def main():
     # owned mc2.exe (image-name kill, not PID-specific), producing crash_silent
     # for whichever mission was in flight.  The lock is a flat file next to the
     # artifact root; open(..., 'x') is atomic on Windows (CreateFile CREATE_NEW).
-    _LOCK_PATH = ARTIFACT_ROOT / "smoke.lock"
+    #
+    # SMOKE-LATENCY-WINS-1 win #2: PER-LANE locking. The old lock was a single
+    # global smoke.lock, serializing ALL smoke runs regardless of deploy
+    # folder even though the lease system (scripts/smoke_lib/deploy_lease.py)
+    # already isolates concurrent runs onto distinct deploy folders (0.4,
+    # 0.4c, 0.4d-rc1, 0.5.0, 0.5-testing) and --kill-existing is already
+    # path-scoped (_same_path_mc2 above never cross-kills a different lane's
+    # exe). The lease itself would be a sufficient sole mutex EXCEPT it does
+    # not protect --no-lease callers or two --exe invocations pointed at the
+    # SAME folder without going through the lease at all -- so we still keep a
+    # lock file, just keyed per-lane instead of one file for the whole
+    # ARTIFACT_ROOT. Two runs on DIFFERENT lanes now take DIFFERENT lock files
+    # and never collide; two runs on the SAME lane still serialize exactly as
+    # before (same protection, narrower scope).
+    #
+    # Lane key: the leased folder's short name (e.g. "0.4", "0.5-testing") when
+    # a lease is held; otherwise the resolved exe's parent dir name (covers
+    # --no-lease / lease-unavailable, where no folder name is known but two
+    # invocations pointed at the same exe path should still serialize). Pure
+    # derivation lives in _lane_lock_token so it's unit-testable in isolation.
+    _short_name_fn = _deploy_lease._short_name if _lease_folder is not None else (lambda f: f)
+    _lane_token = _lane_lock_token(_lease_folder, args.exe, _short_name_fn)
+    _LOCK_PATH = ARTIFACT_ROOT / f"smoke.{_lane_token}.lock"
     _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     try:
         _lf = open(_LOCK_PATH, 'x')
@@ -765,8 +911,11 @@ def main():
             _still_alive = False
         if _still_alive:
             print(f"[runner] ERROR: another smoke run is already in progress "
-                  f"(PID {_stale_pid}); wait for it to finish or remove "
-                  f"{_LOCK_PATH} if it is stale.", file=sys.stderr)
+                  f"on lane '{_lane_token}' (PID {_stale_pid}); wait for it to "
+                  f"finish or remove {_LOCK_PATH} if it is stale. A different "
+                  f"lane (--deploy <name> or a distinct --exe) can run "
+                  f"concurrently -- this lock only serializes runs on the "
+                  f"SAME lane.", file=sys.stderr)
             sys.exit(5)
         # Stale lock — re-acquire.
         _LOCK_PATH.unlink(missing_ok=True)
@@ -896,6 +1045,14 @@ def main():
     # MC2_SMOKE_REQUIRE_FRESH=1 gates it to a hard pre-mission abort. Reuses
     # deploy_payload.staleness_report (single-source sha256 — no reimplemented
     # hashing).
+    #
+    # SMOKE-LATENCY-WINS-1 win #4 scope note: this check is deliberately NOT
+    # cached (unlike coherence/BOM above). It's an in-process function call
+    # (no subprocess spawn), so it's cheaper per-run than the two subprocess
+    # checks, and it has a live hard-fail path (MC2_SMOKE_REQUIRE_FRESH=1 ->
+    # sys.exit(7)) rather than being purely advisory -- keeping it always-fresh
+    # avoids any cache-staleness risk on the one check that can actually abort
+    # the run.
     _fresh_require = os.environ.get("MC2_SMOKE_REQUIRE_FRESH") == "1"
     try:
         from scripts import deploy_payload as _dp
