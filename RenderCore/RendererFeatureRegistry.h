@@ -1030,6 +1030,36 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "Emits [FX_FORCE_SPAWN v1] event=mech_fire (stdout -> needs MC2_LOG=1 to see). "
         "=0/unset disables; zero cost unset."
     },
+    // FX-DEFS-SIDECAR-1: EffectDef JSON overlay (VFX-MODERNIZATION-PROPOSAL-1 slice 1)
+    {
+        "MC2_FX_DEFS",
+        "MC2_FX_DEFS",
+        EnvVarKind::Feature,
+        false,
+        "FX-DEFS-SIDECAR-1: per-effect JSON sidecar overlay for the gosFX spec catalog "
+        "(mc2::particles::SpecLibrary). Default-OFF; when unset, code/mechcmd2.cpp skips "
+        "the overlay entirely and the loaded mc2.fx blob is byte-identical to stock. "
+        "When =1, after gosFX::EffectLibrary::Instance->Load() completes, "
+        "mc2fxdefs::EffectDefRegistry::instance().applyAll() overlays every "
+        "data/effects/defs/<EffectName>.fxdef.json (+ the active mod's own "
+        "data/effects/defs/, MC2_ACTIVE_MOD, mod wins on dup key -- mclib/fx_def_registry."
+        "{h,cpp}) onto the matching spec found via SpecLibrary::Find (case-insensitive "
+        "name match, same as EffectLibrary::Find). v1 overlay fields: disabled (forces "
+        "lifeSpan to 0, functional no-op -- SpecLibrary's array has no public remove), "
+        "texture (rebinds spec->m_state via MLRTexturePool::Add/lookup, the exact call "
+        "MLRState::Load itself makes when parsing a texture name off the stream), blend "
+        "(additive=OneOneMode / alpha=AlphaInvAlphaMode via MLRState::SetAlphaMode), and "
+        "curves.{alpha,red,green,blue,scale,lifeSpan} (constant-only overrides, collapses "
+        "the age curve to a flat value -- mirrors tools/mc2fx's patch.json 'constant' "
+        "tier). Unknown top-level JSON keys and reserved v2 keys (flipbook/erosion/"
+        "distortion/light) are tolerated for forward-compat; unrecognized 'curves' "
+        "sub-keys and unresolved effect names are logged [FXDEF]-prefixed to stderr and "
+        "skipped, never fatal. Per-effect failure never blocks other defs or blocks the "
+        "level load. No gameplay/emission/lifetime/timing semantics change beyond the "
+        "authored curve values themselves (same knobs tools/mc2fx already edits offline); "
+        "this just moves the sparse named-effect override in-engine and per-mod-additive. "
+        "See docs/modding-effects.md and .claude/VFX-MODERNIZATION-PROPOSAL-1.md §3.1."
+    },
     // PPC / direct-fire projectile knobs (gameplay; launcher-toggleable)
     {
         "MC2_PROJECTILE_SPEED_MULT",

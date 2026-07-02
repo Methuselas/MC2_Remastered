@@ -1320,6 +1320,11 @@ def main():
                             # them and the fixture never fires.
                             "MC2_FX_FORCE_SPAWN",
                             "MC2_LOG",
+                            # FX-DEFS-SIDECAR-1: EffectDef JSON overlay master gate
+                            # (mclib/fx_def_registry.{h,cpp}, code/mechcmd2.cpp).
+                            # Must be allowlisted or Popen drops it and the gate-ON
+                            # smoke pass silently re-runs the gate-OFF path.
+                            "MC2_FX_DEFS",
                             # ABL-BAD-NATIVE-ARG-REPRO-1 gates — must be allowlisted so
                             # the repro hook and guard fire when set by the caller.
                             "MC2_ABL_ARG_GUARD",
