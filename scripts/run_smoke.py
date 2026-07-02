@@ -1220,6 +1220,10 @@ def main():
                             # or Popen drops it and the fatal-mode soak leg
                             # silently runs in default log mode.
                             "MC2_VERIFY_MODE",
+                            # OVERLAY-TILE-HIRES-1 -- hi-res overlay tile loader
+                            # (default OFF). Must be allowlisted or Popen drops it
+                            # and the gate-ON smoke runs the legacy 64px path.
+                            "MC2_OVERLAY_TILE_HIRES",
                             # FRAME-CURRENTNESS-GUARDS-1 gates
                             "MC2_REGFLUSH_GUARD2",
                             "MC2_TARGETING_GUARD",

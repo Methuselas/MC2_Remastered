@@ -583,6 +583,14 @@ static_assert(
 // The enforcement script greps BOTH tables for "MC2_" string literals.
 
 static constexpr EnvVarDesc kAuxEnvVars[] = {
+    // OVERLAY-TILE-HIRES-1: high-resolution terrain overlay tiles.
+    {
+        "MC2_OVERLAY_TILE_HIRES",
+        "MC2_OVERLAY_TILE_HIRES",
+        EnvVarKind::Feature,
+        false,
+        "OVERLAY-TILE-HIRES-1: honor the overlay tile TGA's actual dimensions instead of the legacy hard-assumed 64px (initOverlay header resync mirrors initTexture), probing data/textures/<N>Overlays/ first with per-file fallback to 64Overlays/. =1 selects 256; other pow2 values in [128,1024] select that folder/edge. Also derives the overlay emit half-texel UV inset from the actual tile edge (quad.cpp + decal static VBO). Default-OFF: exact legacy 64px path, byte-identical."
+    },
     // GOSFX-TUBE-RIBBON-1: gosFX Tube swept-quad ribbon oracle.
     {
         "MC2_VFX_ORACLE_TUBE",
