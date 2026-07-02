@@ -4584,6 +4584,27 @@ void BuildDecalStaticVBO() {
             const DWORD overlayTexId = tex_resolve(overlayHandle);
             if (overlayTexId == 0) continue;
 
+            // OVERLAY-TILE-HIRES-1 (gated, default OFF => kOld* constants used
+            // verbatim). Mirror quad.cpp's per-overlay half-texel inset: a
+            // resynced hi-res overlay tile sampled with the 64px inset (0.5/64)
+            // crops its outer texel ring and breaks road continuity at seams.
+            // physical edge = logical * uvScale (disk 4x-upscale TGA convention).
+            float tileMinU = kOldMinU, tileMaxU = kOldMaxU;
+            float tileMinV = kOldMinV, tileMaxV = kOldMaxV;
+            if (MC2_OverlayTileHiresSize() > 0)
+            {
+                DWORD ovLogicalW = 0, ovLogicalH = 0;
+                if (mcTextureManager->tryGetTextureLogicalSize(overlayHandle, ovLogicalW, ovLogicalH))
+                {
+                    const DWORD ovEdge = ovLogicalW * mcTextureManager->getUVScale(overlayHandle);
+                    if (ovEdge > 0)
+                    {
+                        tileMinU = tileMinV = 0.5f / (float)ovEdge;
+                        tileMaxU = tileMaxV = 1.0f - 0.5f / (float)ovEdge;
+                    }
+                }
+            }
+
             // 4 corners — mirror buildTerrainFaceCache (mapdata.cpp:266-275)
             // and fillWorldCacheVertex (mapdata.cpp:125-132). Quad
             // vertices[0..3] == cache worldVertices[0..3] (verified vs
@@ -4694,24 +4715,25 @@ void BuildDecalStaticVBO() {
 
             // EXACT reproduction of M2d's per-uvMode tri emit
             // (quad.cpp:2412-2443), but UNCONDITIONAL (no pzTri1/pzTri2).
+            // tileMin/Max == kOld* constants unless OVERLAY-TILE-HIRES is on.
             if (uvMode == BOTTOMLEFT) {
                 // tri1: corners 0,1,3
-                emit(c[0], kOldMinU, kOldMinV,
-                     c[1], kOldMaxU, kOldMinV,
-                     c[3], kOldMinU, kOldMaxV);
+                emit(c[0], tileMinU, tileMinV,
+                     c[1], tileMaxU, tileMinV,
+                     c[3], tileMinU, tileMaxV);
                 // tri2: corners 1,2,3
-                emit(c[1], kOldMaxU, kOldMinV,
-                     c[2], kOldMaxU, kOldMaxV,
-                     c[3], kOldMinU, kOldMaxV);
+                emit(c[1], tileMaxU, tileMinV,
+                     c[2], tileMaxU, tileMaxV,
+                     c[3], tileMinU, tileMaxV);
             } else {
                 // BOTTOMRIGHT — tri1: corners 0,1,2
-                emit(c[0], kOldMinU, kOldMinV,
-                     c[1], kOldMaxU, kOldMinV,
-                     c[2], kOldMaxU, kOldMaxV);
+                emit(c[0], tileMinU, tileMinV,
+                     c[1], tileMaxU, tileMinV,
+                     c[2], tileMaxU, tileMaxV);
                 // tri2: corners 0,2,3
-                emit(c[0], kOldMinU, kOldMinV,
-                     c[2], kOldMaxU, kOldMaxV,
-                     c[3], kOldMinU, kOldMaxV);
+                emit(c[0], tileMinU, tileMinV,
+                     c[2], tileMaxU, tileMaxV,
+                     c[3], tileMinU, tileMaxV);
             }
         }
     }
