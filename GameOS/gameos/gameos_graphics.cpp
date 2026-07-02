@@ -3624,12 +3624,29 @@ void gosRenderer::renderWaterFastPath(
         // WATER-HDRI-REFL-1: bind HDRI equirect on unit 3 for direct specular
         // sampling (sun disk + sky color, LOD-filtered via mipmaps added in gos_hdri.cpp).
         // u_waterHdriLod < 0 signals no HDRI -> FS falls back to SH-L2.
-        // MC2_WATER_HDRI_LOD env (float) overrides default 2.5 (1024x512 for 4K HDRI).
+        // MC2_WATER_HDRI_LOD env (float) overrides the default.
+        //
+        // WATER-HDRI-REFL-PERF-1: the per-fragment HDRI path (waterEvalHdri:
+        // atan2+asin + textureLod against the live equirect) measured ~10ms/frame
+        // GPU at LOD 1.0 (2K mip of the 4K source) across a full-map water quad
+        // (451c9e49). The HDRI reflection is a heavily blurred, low-frequency sky
+        // read by design (Reinhard-toned broad color, not a sharp sun disk) — a
+        // much coarser mip costs the same ALU per fragment but a fraction of the
+        // texture bandwidth/cache pressure, with no visible quality loss at the
+        // gameplay camera. Default bumped 1.0 -> 4.0 (256x128 mip of a 4K source;
+        // recon's own "keep-cheap" recommendation). MC2_WATER_HDRI_REFL_FULL=1
+        // restores the old full-rate LOD 1.0 for A/B or regression checks.
         {
             static float s_waterHdriLod = -999.0f;
             if (s_waterHdriLod < -1.0f) {
                 const char* lv = getenv("MC2_WATER_HDRI_LOD");
-                s_waterHdriLod = (lv && lv[0]) ? (float)atof(lv) : 1.0f;
+                if (lv && lv[0]) {
+                    s_waterHdriLod = (float)atof(lv);
+                } else {
+                    const char* full = getenv("MC2_WATER_HDRI_REFL_FULL");
+                    const bool fullRate = (full && full[0] && full[0] != '0');
+                    s_waterHdriLod = fullRate ? 1.0f : 4.0f;
+                }
             }
             const bool hdriAvail = (ppRefl && ppRefl->isHdriReady());
             setMI("u_hdri", 3);

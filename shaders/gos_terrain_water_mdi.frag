@@ -195,9 +195,13 @@ void main(void)
                        + waterCol * SKY_AMBIENT * 0.5;
         // Camera-INDEPENDENT granular wave detail (dual counter-scroll fBm).
         // BRIGHTEN-only (no darkening) + sharpened reflective crest shimmer ->
-        // reads as light catching the ripples. No Fresnel/specular: MC2 has no
-        // sun "for now"; the ONLY camera-dependent term will be S3 terrain
-        // planar reflection (deferred).
+        // reads as light catching the ripples. STALE NOTE (superseded, kept for
+        // history): this comment used to say "no Fresnel/specular... camera-
+        // dependent term deferred to S3." That is no longer true — camera-
+        // dependent SH-sky + HDRI + terrain-RT reflection (Fresnel-mixed) is
+        // implemented and live below (WATER-SKY-REFLECTION-1 / WATER-HDRI-REFL-1 /
+        // WATER-REFLECTION-SAMPLE-1). Don't trust this block's wording over the
+        // code that follows it.
         PREC float crest = max(nz, 0.0);                       // troughs stay at base
         col *= 1.0 + RIPPLE_GAIN * waveLOD * crest;            // brighten only
         PREC float glint = smoothstep(GLINT_THRESH, 0.80, nz); // sharp crest sparkle
