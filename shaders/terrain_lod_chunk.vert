@@ -36,8 +36,13 @@ layout(binding = 24, std430) readonly buffer TerrainTypeBuf {
 layout(binding = 26, std430) readonly buffer TerrainVisualHeightBuf {
     float heightsFine[];
 };
-uniform int u_visualDisplace;  // 0 = off (byte-identical); 1 = corner-pinned interior displace
+uniform int u_visualDisplace;  // 0=off (byte-identical); 1=LOD0 corner-pinned 4x-fine displace;
+                                // 2=coarser-band displace at EXISTING (unsubdivided) vertex density
 uniform int u_visualSide;      // V = (mapSide-1)*4+1
+// TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: far-band fade knob. 1.0 = full bake displacement
+// (default); 0.0 = coarse heightfield only (mode-2 verts fall back to `h`, matching
+// the byte-identical coarse path's Z). Only affects u_visualDisplace==2 verts.
+uniform float u_visualDisplaceFar;
 out vec3  v_worldPos;
 out float v_terrainType;
 
@@ -133,6 +138,59 @@ void main() {
             }
             h = mix(h0, h1, t);
         }
+    }
+
+    // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: coarser-band (LOD1+) displacement at the
+    // SAME (unsubdivided) vertex density as the coarse path above -- no new verts.
+    // Every coarse/LOD vertex (mapX,mapY) lands EXACTLY on a bake grid point
+    // (fx=mapX*4, fy=mapY*4 are always integers, since the bake is a uniform 4x
+    // subdivision of the SAME map grid) -- no interpolation needed, so this is a
+    // pure Z-swap at the existing sample point, byte-stable wherever the fade is 0.
+    // Stitch/skirt correctness: this branch runs AFTER the coarse stitch above, so
+    // `h`/`mapX`/`mapY` are already the (possibly-stitched) coarse-line values;
+    // stitched edge verts (T-junctions against a coarser neighbour) mix two coarse
+    // bake samples exactly like the coarse-heightfield stitch does (h0/h1 from
+    // sampleH -> here from heightsFine at the corresponding integer bake index),
+    // so shared edges with ANY neighbour band (LOD0 fine-corner-pinned or another
+    // coarse band) still agree by construction -- zero new crack risk introduced.
+    if (u_visualDisplace == 2 && isSkirtFlag == 0) {
+        float hv;
+        int fxV, fyV;
+        // Re-derive the same edge-stitch decision to pick between a single bake
+        // sample (interior / non-stitched) and a bake-based mix (stitched edge),
+        // mirroring the coarse block above exactly but reading heightsFine.
+        int  Sc2 = 0, along2 = 0; bool alongX2 = true;
+        if      (localOffset.y == 0            && ((u_edgeStitch)       & 0xFF) > 0) { Sc2 = (u_edgeStitch)       & 0xFF; along2 = localOffset.x; alongX2 = true;  }
+        else if (localOffset.y == u_quadCountY && ((u_edgeStitch >> 8)  & 0xFF) > 0) { Sc2 = (u_edgeStitch >> 8)  & 0xFF; along2 = localOffset.x; alongX2 = true;  }
+        else if (localOffset.x == 0            && ((u_edgeStitch >> 16) & 0xFF) > 0) { Sc2 = (u_edgeStitch >> 16) & 0xFF; along2 = localOffset.y; alongX2 = false; }
+        else if (localOffset.x == u_quadCountX && ((u_edgeStitch >> 24) & 0xFF) > 0) { Sc2 = (u_edgeStitch >> 24) & 0xFF; along2 = localOffset.y; alongX2 = false; }
+        if (Sc2 > 0 && (along2 % Sc2) != 0) {
+            int c0 = (along2 / Sc2) * Sc2;
+            int c1 = c0 + Sc2;
+            float t2 = float(along2 - c0) / float(Sc2);
+            float hv0, hv1;
+            if (alongX2) {
+                int fyC = u_blockOriginY + localOffset.y;
+                fxV = clamp((u_blockOriginX + c0) * 4, 0, u_visualSide - 1);
+                int fyVc = clamp(fyC * 4, 0, u_visualSide - 1);
+                hv0 = heightsFine[fxV + fyVc * u_visualSide];
+                int fxV1 = clamp((u_blockOriginX + c1) * 4, 0, u_visualSide - 1);
+                hv1 = heightsFine[fxV1 + fyVc * u_visualSide];
+            } else {
+                int fxC = u_blockOriginX + localOffset.x;
+                int fxVc = clamp(fxC * 4, 0, u_visualSide - 1);
+                int fyV0 = clamp((u_blockOriginY + c0) * 4, 0, u_visualSide - 1);
+                hv0 = heightsFine[fxVc + fyV0 * u_visualSide];
+                int fyV1 = clamp((u_blockOriginY + c1) * 4, 0, u_visualSide - 1);
+                hv1 = heightsFine[fxVc + fyV1 * u_visualSide];
+            }
+            hv = mix(hv0, hv1, t2);
+        } else {
+            fxV = clamp(mapX * 4, 0, u_visualSide - 1);
+            fyV = clamp(mapY * 4, 0, u_visualSide - 1);
+            hv = heightsFine[fxV + fyV * u_visualSide];
+        }
+        h = mix(h, hv, clamp(u_visualDisplaceFar, 0.0, 1.0));
     }
 
     // Phase 6: skirt bottom verts are pulled below the (possibly stitched) surface.

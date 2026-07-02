@@ -34,6 +34,11 @@ static bool glStateGuardTerrainEnabled() {
 
 // Terrain MVP matrix — exposed by gameos_graphics.cpp for all terrain draw paths.
 extern const float* gos_GetTerrainMVPMat4();
+// TERRAIN-SHORELINE-MASK-1: shared render-shader clock (SmokeMode fixed-
+// timestep override, same computation as the water fast-path's "time"
+// uniform) — exposed by gameos_graphics.cpp. f(worldPos,time)-ONLY foam
+// animation; never fed by anything camera-dependent.
+extern float gos_GetShaderClockSeconds();
 // Fix-B frame-of-reference: the GPU water cull and DrawDecalStatic project with
 // the PREVIOUS-frame dispatch MVP (baked in Terrain::geometry()) when armed, NOT
 // the live current-frame MVP. The legacy terrain draw also uses that baked MVP,
@@ -73,6 +78,10 @@ static RenderCore::GpuBufferOwner s_visualHeightSsbo{ // TERRAIN-VISUAL-HEIGHT-S
     "TerrainVisualHeightSsbo",
     0u};
 static int    s_visualSide       = 0; // V = (mapSide-1)*4+1, fine grid side (0 = bake not loaded)
+// TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: per-LOD-band displaced-chunk counters, reset
+// and logged once per submit alongside [TerrainLOD v1] so acceptance has hard
+// per-band numbers. Index = LOD level (0..5), same mapping as [TerrainLOD v1].
+static int s_visualDisplacedCounts[6] = {0, 0, 0, 0, 0, 0};
 // TERRAIN-LODCHUNK-SSBO-OWNER-1: the LOD-chunk type/cement SSBOs are no longer
 // bare GLuints. Each is narrowed behind a GpuBufferOwner identity record (logical
 // id + lifetime + debug name + GLuint value). GL calls still happen at the same
@@ -104,6 +113,14 @@ static int    s_controlMapSide = 0;
 // loaded (gate off or no sidecar) -> u_useOverlaySidecar uploads 0 at draw.
 static GLuint s_overlaySidecarTex = 0;
 static float  s_overlayBounds[4]  = {0.0f, 0.0f, 0.0f, 0.0f};  // topLeftX,topLeftY(=maxY),sizeX,sizeY
+
+// TERRAIN-SHORELINE-MASK-1: authored land-side wet/foam shoreline mask sidecar
+// texture (unit TERRAIN_SHORELINE_TEXUNIT). Plain GLuint, same self-contained
+// single-owner pattern as s_overlaySidecarTex. glName 0 = not loaded (gate off
+// or no mask) -> u_useShorelineMask uploads 0 at draw (byte-identical -- no
+// wet/foam band, legacy screen runShoreline() stays active).
+static GLuint s_shorelineMaskTex   = 0;
+static float  s_shorelineBounds[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // topLeftX,topLeftY(=maxY),sizeX,sizeY
 
 // ---------------------------------------------------------------------------
 // Shader program + uniform locations (Phase 4).
@@ -197,6 +214,7 @@ static GLint s_locEdgeFeather        = -1; // TERRAIN-EDGE-FEATHER-1
 static GLint s_locEdgeFeatherStr     = -1;
 static GLint s_locVisualDisplace     = -1; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1
 static GLint s_locVisualSide         = -1;
+static GLint s_locVisualDisplaceFar  = -1; // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD
 static GLint s_locPomParams      = -1;
 static GLint s_locMatProfile     = -1;
 static GLint s_locControlMap     = -1;  // TERRAIN-CONTROLMAP-SAMPLE-1: u_controlMap sampler
@@ -205,6 +223,11 @@ static GLint s_locUseControlMap  = -1;  // u_useControlMap gate uniform
 static GLint s_locOverlaySidecar    = -1;  // u_overlaySidecar sampler
 static GLint s_locUseOverlaySidecar = -1;  // u_useOverlaySidecar gate uniform
 static GLint s_locOverlayBounds     = -1;  // u_overlayBounds (vec4 minX,minY,sizeX,sizeY)
+// TERRAIN-SHORELINE-MASK-1: authored land-side wet/foam shoreline mask.
+static GLint s_locShorelineMask     = -1;  // u_shorelineMask sampler
+static GLint s_locUseShorelineMask  = -1;  // u_useShorelineMask gate uniform
+static GLint s_locShorelineBounds   = -1;  // u_shorelineBounds (vec4 minX,minY,sizeX,sizeY)
+static GLint s_locShaderTime        = -1;  // u_shaderTime (f(worldPos,time)-only foam animation clock)
 // Step 5c: cement catalog atlas (tex3) accessors from gos_terrain_indirect.cpp.
 extern unsigned int gos_terrain_indirect_getCementAtlasGLTex();
 extern int          gos_terrain_indirect_getCementAtlasGridSide();
@@ -597,6 +620,7 @@ void gos_TerrainLodChunk_Init()
             s_locEdgeFeatherStr    = glGetUniformLocation(s_terrainProgram, "u_edgeFeatherStrength");
             s_locVisualDisplace    = glGetUniformLocation(s_terrainProgram, "u_visualDisplace");
             s_locVisualSide        = glGetUniformLocation(s_terrainProgram, "u_visualSide");
+            s_locVisualDisplaceFar = glGetUniformLocation(s_terrainProgram, "u_visualDisplaceFar");
             s_locPomParams   = glGetUniformLocation(s_terrainProgram, "pomParams");
             s_locMatProfile  = glGetUniformLocation(s_terrainProgram, "g_terrainMaterialProfile");
             s_locCementAtlas    = glGetUniformLocation(s_terrainProgram, "u_cementAtlas");
@@ -611,6 +635,10 @@ void gos_TerrainLodChunk_Init()
             s_locOverlaySidecar    = glGetUniformLocation(s_terrainProgram, "u_overlaySidecar");    // TERRAIN-OVERLAY-V2-PARITY-1
             s_locUseOverlaySidecar = glGetUniformLocation(s_terrainProgram, "u_useOverlaySidecar");
             s_locOverlayBounds     = glGetUniformLocation(s_terrainProgram, "u_overlayBounds");
+            s_locShorelineMask     = glGetUniformLocation(s_terrainProgram, "u_shorelineMask");    // TERRAIN-SHORELINE-MASK-1
+            s_locUseShorelineMask  = glGetUniformLocation(s_terrainProgram, "u_useShorelineMask");
+            s_locShorelineBounds   = glGetUniformLocation(s_terrainProgram, "u_shorelineBounds");
+            s_locShaderTime        = glGetUniformLocation(s_terrainProgram, "u_shaderTime");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -663,6 +691,13 @@ void gos_TerrainLodChunk_Destroy()
         glDeleteTextures(1, &s_controlMapTex);
         s_controlMapTex  = 0;
         s_controlMapSide = 0;
+    }
+
+    // TERRAIN-SHORELINE-MASK-1: free the authored shoreline mask texture (if loaded).
+    if (s_shorelineMaskTex != 0)
+    {
+        glDeleteTextures(1, &s_shorelineMaskTex);
+        s_shorelineMaskTex = 0;
     }
 
     if (s_visualHeightSsbo.glName != 0)
@@ -867,6 +902,19 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, static_cast<GLuint>(s_visualHeightSsbo.glName));
     if (s_locVisualSide >= 0)
         glUniform1i(s_locVisualSide, s_visualSide);
+    // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: far-band displacement fade, 0..1, default 1
+    // (full displacement). Only scales the coarser-band (u_visualDisplace==2) verts;
+    // LOD0 (mode 1) is untouched by this knob.
+    static const float s_visualDisplaceFar = []() {
+        const char* v = getenv("MC2_TERRAIN_VISUAL_DISPLACE_FAR");
+        if (!v || !v[0]) return 1.0f;
+        float f = (float)atof(v);
+        if (f < 0.0f) f = 0.0f;
+        if (f > 1.0f) f = 1.0f;
+        return f;
+    }();
+    if (s_locVisualDisplaceFar >= 0)
+        glUniform1f(s_locVisualDisplaceFar, s_visualDisplaceFar);
 
     // Upload per-frame uniforms (same for every patch).
     if (s_locMapSide >= 0)
@@ -1081,6 +1129,33 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         }
     }
 
+    // TERRAIN-SHORELINE-MASK-1: authored land-side wet/foam shoreline mask at
+    // unit TERRAIN_SHORELINE_TEXUNIT. Only bound when a mask was actually
+    // loaded (s_shorelineMaskTex != 0); u_useShorelineMask uploads 0 otherwise
+    // (gate off / no mask) -> frag skips the whole wet/foam block -> byte-
+    // identical (no band; legacy screen runShoreline() stays active per its
+    // own gate). u_shaderTime is uploaded unconditionally (cheap scalar); the
+    // frag only reads it inside the gated shoreline block, so this is
+    // render-invariant when the gate is off.
+    {
+        const bool shorelineMaskReady = (s_shorelineMaskTex != 0);
+        if (s_locUseShorelineMask >= 0)
+            glUniform1i(s_locUseShorelineMask, shorelineMaskReady ? 1 : 0);
+        if (shorelineMaskReady) {
+            if (s_locShorelineMask >= 0) {
+                glUniform1i(s_locShorelineMask, TERRAIN_SHORELINE_TEXUNIT);
+                glActiveTexture(GL_TEXTURE0 + TERRAIN_SHORELINE_TEXUNIT);
+                glBindTexture(GL_TEXTURE_2D, s_shorelineMaskTex);
+                glActiveTexture(GL_TEXTURE0);
+            }
+            if (s_locShorelineBounds >= 0)
+                glUniform4f(s_locShorelineBounds, s_shorelineBounds[0], s_shorelineBounds[1],
+                            s_shorelineBounds[2], s_shorelineBounds[3]);
+            if (s_locShaderTime >= 0)
+                glUniform1f(s_locShaderTime, gos_GetShaderClockSeconds());
+        }
+    }
+
     // Step 5a: upload the live material tunables (driven by the ImGui terrain
     // panel via the same gosRenderer members the legacy terrain reads).
     {
@@ -1215,6 +1290,10 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         fflush(stdout);
     }
 
+    // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: reset per-band displaced-chunk counters
+    // for this submit; populated per-command below, printed after the loop.
+    for (int lvl = 0; lvl < 6; ++lvl) s_visualDisplacedCounts[lvl] = 0;
+
     for (int i = 0; i < count; ++i)
     {
         const TerrainDrawCommand& cmd = cmds[i];
@@ -1223,24 +1302,39 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
 
         if (qcX <= 0 || qcY <= 0) continue;
 
-        // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: displace only the near (LOD0) band. The
-        // displaced patch is the SAME builder requested at 4x finer stride (1x over
-        // 4*qc cells) -> fine grid + skirts for free; the vert reinterprets
-        // localOffset as fine units and corner-pins the edges. Default OFF path uses
-        // the original coarse patch (byte-identical).
-        const bool displaceThis = visualDisplaceActive && cmd.lodStep == 1;
+        // TERRAIN-VISUAL-HEIGHT-SAMPLE-1 (LOD0) + TERRAIN-VISUAL-HEIGHT-S2-ALLLOD
+        // (LOD1+): displace every band. LOD0 uses the 4x-finer builder (mode 1,
+        // unchanged from S1: fine grid + skirts, corner-pinned edges). Coarser
+        // bands (lodStep>1) reuse the EXISTING coarse-density patch unmodified
+        // (mode 2: no new vertices — the vert shader Z-swaps each existing sample
+        // point to its coincident bake index, sec vert comment for stitch proof).
+        const bool displaceLod0  = visualDisplaceActive && cmd.lodStep == 1;
+        const bool displaceFar   = visualDisplaceActive && cmd.lodStep != 1;
+        const int  visualMode    = displaceLod0 ? 1 : (displaceFar ? 2 : 0);
         // Checkerboard diagonal applies ONLY to lodStep==1 fine cells on the
         // normal (non-4x-displace) path — coarse LOD (lodStep>1) per-cell parity
         // is ill-defined and the 4x heightsFine path is a separate follow-up;
-        // both keep the existing fixed TL-BR diagonal.
+        // both keep the existing fixed TL-BR diagonal. Mode 2 does NOT change the
+        // patch builder at all (same qcX/qcY/lodStep/checkerDiag as the
+        // non-displaced path), so this is unaffected by S2.
         const bool checkerDiag = terrainLodCheckerDiagEnabled()
-                                 && !displaceThis && cmd.lodStep == 1;
-        const PatchShape& patch = displaceThis
+                                 && !displaceLod0 && cmd.lodStep == 1;
+        const PatchShape& patch = displaceLod0
             ? getOrBuildPatch(qcX * 4, qcY * 4, 1, /*checkerDiag*/false, 0, 0)
             : getOrBuildPatch(qcX, qcY, cmd.lodStep, checkerDiag,
                               cmd.blockOriginX & 1, cmd.blockOriginY & 1);
         if (s_locVisualDisplace >= 0)
-            glUniform1i(s_locVisualDisplace, displaceThis ? 1 : 0);
+            glUniform1i(s_locVisualDisplace, visualMode);
+
+        // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: per-LOD-band displaced-chunk counters,
+        // logged alongside the existing [TerrainLOD v1] telemetry so the crack /
+        // silhouette acceptance pass has hard numbers per band.
+        if (visualDisplaceActive) {
+            int lvl = (cmd.lodStep == 1) ? 0 : (cmd.lodStep == 2) ? 1
+                    : (cmd.lodStep == 4) ? 2 : (cmd.lodStep == 5) ? 3
+                    : (cmd.lodStep == 10) ? 4 : 5;
+            ++s_visualDisplacedCounts[lvl];
+        }
 
         // Per-block uniforms (shared by main patch and skirt).
         if (s_locBlockOriginX >= 0)
@@ -1309,6 +1403,21 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
 
                 glDisableVertexAttribArray(1);
             }
+        }
+    }
+
+    // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: per-band displaced-chunk-count telemetry.
+    // Same cadence as [TerrainLOD v1] (every frame for the first 60, then every
+    // 180th submit) so the acceptance pass has hard numbers per LOD band without
+    // spamming the log. Only fires when the displace gate is actually active.
+    if (visualDisplaceActive) {
+        static unsigned long s_visFrame = 0;
+        ++s_visFrame;
+        if (s_visFrame <= 60 || (s_visFrame % 180) == 0) {
+            printf("[TerrainLOD] visualDisplace band-counts LOD0=%d LOD1=%d LOD2=%d LOD3=%d LOD4=%d LOD5=%d\n",
+                   s_visualDisplacedCounts[0], s_visualDisplacedCounts[1], s_visualDisplacedCounts[2],
+                   s_visualDisplacedCounts[3], s_visualDisplacedCounts[4], s_visualDisplacedCounts[5]);
+            fflush(stdout);
         }
     }
 
