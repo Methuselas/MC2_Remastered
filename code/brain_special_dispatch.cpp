@@ -205,6 +205,22 @@ static bool s_brainFsmGate() {
 }
 
 // ---------------------------------------------------------------------------
+// Gate helper for MC2_BRAIN_FLOW (BRAINSPECIAL-FLOW-WAIT-1).
+// Default OFF. When ON:
+//   - the raw scanner collects WAIT / WAIT_UNTIL lines as verbs and keeps STOP as a
+//     verb (gate OFF: WAIT lines are not DO-prefixed and STOP is a skipped sentinel —
+//     pre-slice parse behavior, byte-identical);
+//   - executeSpecialBody_Apply gates verbs after an unsatisfied WAIT/WAIT_UNTIL and
+//     terminates the tick's body execution at STOP.
+static bool s_brainFlowGate() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_FLOW");
+        return v && std::atoi(v) != 0;
+    })();
+    return kGate;
+}
+
+// ---------------------------------------------------------------------------
 // Gate helper for MC2_BRAIN_PATROL (BRAIN-OPORD-COREPATROL-1).
 // Default OFF. When ON, OPORD.CorePatrol parse + per-tick advance are active.
 // NOTE: reads MC2_BRAIN_PATROL fresh per call (not cached) so harness _putenv works.
@@ -269,6 +285,11 @@ static const char* const kRecognizedVerbs[] = {
     "Unit.NotInState",
     // BRAIN-FSM-1K-B: conditional FSM transition (gate MC2_BRAIN_FSM, requires MC2_BRAIN_DISPATCH_VAR)
     "Unit.SetStateIf",
+    // BRAINSPECIAL-FLOW-WAIT-1: flow-control verbs (gate MC2_BRAIN_FLOW; the scanner
+    // only emits them when the gate is ON, so gate-OFF dispatch never sees them).
+    "WAIT_UNTIL",
+    "WAIT",
+    "STOP",
     nullptr  // sentinel
 };
 
@@ -749,6 +770,126 @@ bool bodyHasEffect(const BrainSpecialBody& body) {
 }
 
 // ---------------------------------------------------------------------------
+// BRAINSPECIAL-FLOW-WAIT-1 helpers.
+//
+// FORBIDDEN-CALL CONTRACT (all four helpers): string ops + runtime-field writes +
+// fprintf only. NO order functions, NO warrior mutation beyond MechBrainRuntime
+// wait/flow bookkeeping fields.
+
+// True if the verb token is a flow-control verb (WAIT / WAIT_UNTIL / STOP).
+static bool isFlowControlVerbToken(const char* v) {
+    if (std::strncmp(v, "WAIT_UNTIL", 10) == 0 && (v[10] == ' ' || v[10] == '\t' || v[10] == '\0'))
+        return true;
+    if (std::strncmp(v, "WAIT", 4) == 0 && (v[4] == ' ' || v[4] == '\t' || v[4] == '\0'))
+        return true;
+    if (std::strcmp(v, "STOP") == 0)
+        return true;
+    return false;
+}
+
+// bodyHasFlowControl — true if the body carries any WAIT/WAIT_UNTIL/STOP verb.
+// (The scanner only emits these when MC2_BRAIN_FLOW=1, so gate-OFF bodies never match.)
+bool bodyHasFlowControl(const BrainSpecialBody& body) {
+    for (const std::string& verb : body.verbs)
+        if (isFlowControlVerbToken(verb.c_str()))
+            return true;
+    return false;
+}
+
+// brainFlowActiveForBody — warrior.cpp's per-tick decision helper: flow gating applies
+// to this body (gate ON + body carries flow verbs). Callers switch to every-tick
+// re-dispatch and skip the class-level once-guard pre-set when this returns true.
+bool brainFlowActiveForBody(const BrainSpecialBody& body) {
+    return s_brainFlowGate() && bodyHasFlowControl(body);
+}
+
+// True if vpCanon is one of the GENERAL-slot effect verbs (the once-per-mission orders).
+// Used for the per-verb-index refire guard while flow gating is active.
+// OPORD.CorePatrol is intentionally excluded — patrolActive is its own re-emit guard.
+static bool isGeneralEffectVerbToken(const char* v) {
+    if (std::strcmp(v, "Brain.CorePower false") == 0) return true;
+    if (std::strcmp(v, "Unit.Eject") == 0)            return true;
+    if (std::strcmp(v, "OPORD.CoreGuard") == 0)       return true;
+    if (std::strcmp(v, "Unit.Retreat") == 0)          return true;
+    if ((std::strncmp(v, "OPORD.CoreMoveTo", 16) == 0
+         || std::strncmp(v, "OPORD.CoreAttack", 16) == 0
+         || std::strncmp(v, "Brain.CoreAttack", 16) == 0)
+        && (v[16] == ' ' || v[16] == '\0'))
+        return true;
+    return false;
+}
+
+// Find (or create) the wait-state slot for a verb index. Returns nullptr on cap
+// overflow (soft-fail: caller traces and does NOT gate — the WAIT is skipped so a
+// runaway fixture cannot wedge the body forever).
+static BrainWaitState* flowFindOrCreateWaitState(MechBrainRuntime* rt, uint16_t verbIdx) {
+    for (int i = 0; i < rt->waitStateCount; ++i)
+        if (rt->waitStates[i].verbIndex == verbIdx)
+            return &rt->waitStates[i];
+    if (rt->waitStateCount >= MechBrainRuntime::kBrainWaitCap)
+        return nullptr;
+    BrainWaitState& ws = rt->waitStates[rt->waitStateCount++];
+    ws.verbIndex  = verbIdx;
+    ws.armed      = 0;
+    ws.satisfied  = 0;
+    ws.deadlineMs = 0;
+    return &ws;
+}
+
+// Per-verb-index effect refire guard (flow-active bodies re-dispatch every tick).
+static bool flowVerbFired(const MechBrainRuntime* rt, uint16_t verbIdx) {
+    for (int i = 0; i < rt->flowFiredCount; ++i)
+        if (rt->flowFiredIdx[i] == verbIdx)
+            return true;
+    return false;
+}
+
+static void flowMarkFired(MechBrainRuntime* rt, uint16_t verbIdx) {
+    if (flowVerbFired(rt, verbIdx)) return;
+    if (rt->flowFiredCount >= MechBrainRuntime::kBrainFlowFiredCap) {
+        std::fprintf(stderr, "[BRAIN_FLOW_FIRED_OVERFLOW] idx=%u cap=%d\n",
+                     (unsigned)verbIdx, MechBrainRuntime::kBrainFlowFiredCap);
+        std::fflush(stderr);
+        return;
+    }
+    rt->flowFiredIdx[rt->flowFiredCount++] = verbIdx;
+}
+
+// Parse the WAIT_UNTIL condition:  WAIT_UNTIL Var "<key>" == <value> [scope=Mission]
+// (key accepts "..." or [...] delimiters — same FIT-safe forms as Var.Set).
+// Returns false on malformed input.
+static bool parseWaitUntilCondition(const char* verbStr, char outKey[32], char outValue[32],
+                                     bool* outMissionScope) {
+    outKey[0] = '\0'; outValue[0] = '\0'; *outMissionScope = false;
+    const char* p = verbStr + 10;  // past "WAIT_UNTIL"
+    while (*p == ' ' || *p == '\t') ++p;
+    if (std::strncmp(p, "Var", 3) != 0) return false;
+    p += 3;
+    while (*p == ' ' || *p == '\t') ++p;
+    char close = '\0';
+    if (*p == '"')      close = '"';
+    else if (*p == '[') close = ']';
+    else                 return false;
+    ++p;
+    const char* ke = std::strchr(p, close);
+    if (!ke || ke == p) return false;
+    size_t kl = (size_t)(ke - p);
+    if (kl > 31) kl = 31;
+    std::memcpy(outKey, p, kl); outKey[kl] = '\0';
+    p = ke + 1;
+    while (*p == ' ' || *p == '\t') ++p;
+    if (p[0] != '=' || p[1] != '=') return false;
+    p += 2;
+    while (*p == ' ' || *p == '\t') ++p;
+    int vi = 0;
+    while (*p && *p != ' ' && *p != '\t' && vi < 31) outValue[vi++] = *p++;
+    outValue[vi] = '\0';
+    if (vi == 0) return false;
+    if (std::strstr(p, "scope=Mission") != nullptr) *outMissionScope = true;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // BRAIN-DECISION-INTENT-QUEUE-1: MC2_BRAIN_INTENT_QUEUE gate + emit helper.
 //
 // When gate ON, the 6 verb handlers in executeSpecialBody_Apply push a BrainOrderIntent
@@ -915,6 +1056,16 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
     const bool fsmGate = s_brainFsmGate();
     bool stateGateOpen = true;
 
+    // BRAINSPECIAL-FLOW-WAIT-1: flow gating locals.
+    // flowGateOpen closes at an unsatisfied WAIT/WAIT_UNTIL (verbs after it skip this
+    // tick) and re-opens on the next body dispatch (re-execution model). flowRt holds
+    // the wait latches + per-verb-index refire guard. Gate OFF: all of this is inert
+    // (the scanner never emits flow verbs, bodyHasFlowControl is false).
+    MechBrainRuntime* flowRt = warrior ? warrior->getBrainRuntime() : nullptr;
+    const bool flowActive = s_brainFlowGate() && (flowRt != nullptr) && bodyHasFlowControl(body);
+    bool flowGateOpen = true;
+    int  verbIdx = -1;
+
     // Per-tick visited set for cycle guard.
     std::vector<std::string> visited;
     if (callerKey && callerKey[0] != '\0')
@@ -922,15 +1073,24 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
 
     for (const std::string& verb : body.verbs) {
         const char* vp = verb.c_str();
+        ++verbIdx;  // BRAINSPECIAL-FLOW-WAIT-1: root-body verb position (wait-state key)
 
         // BRAIN-FSM-1K-A: gate check — skip effect verbs after a failed InState/NotInState.
         if (!stateGateOpen) continue;
+
+        // BRAINSPECIAL-FLOW-WAIT-1: sequence gate — skip verbs after an unsatisfied WAIT.
+        if (!flowGateOpen) continue;
 
         // BRAINSPECIAL-ALIAS-1: registry/shorthand resolution for the whole handler
         // chain below (Call/Var/effects/FSM all see the canonical spelling).
         // No-op when MC2_BRAIN_ALIAS is OFF (returns vp unchanged).
         char aliasBuf[256];
         vp = resolveVerbAliasToken(vp, aliasBuf);
+
+        // BRAINSPECIAL-FLOW-WAIT-1: per-verb-index refire guard — an effect verb that
+        // already fired under flow gating is skipped on subsequent re-dispatches
+        // (only effect indexes are ever marked).
+        if (flowActive && flowVerbFired(flowRt, (uint16_t)verbIdx)) continue;
 
         // CALL-CHAIN-1A: TechSpecial.Call handling (trace only — no chained effects in 1A).
         if (callGate && std::strncmp(vp, "TechSpecial.Call", 16) == 0 &&
@@ -997,6 +1157,98 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
         }
         // DISPATCH-EFFECT-UNITEJECT-1: alias resolution before effect dispatch.
         const char* vpCanon = aliasToCanonical(vp);
+
+        // BRAINSPECIAL-FLOW-WAIT-1: flow verbs (WAIT / WAIT_UNTIL / STOP).
+        // SPEC-DELTA (documented in .claude/TECHSCRIPT-GAP-CLOSURE-1.md #7/#8): WAIT is
+        // NOT VM-blocking — the body re-executes every deterministic brain tick; an
+        // unsatisfied WAIT closes the sequence gate for the verbs after it, then latches
+        // open. WAIT_UNTIL gates on a Var condition. STOP ends this tick's execution.
+        // ROOT BODY ONLY (chained bodies via TechSpecial.Call are trace-only anyway).
+        if (flowActive) {
+            if (std::strncmp(vpCanon, "WAIT_UNTIL", 10) == 0 &&
+                (vpCanon[10] == ' ' || vpCanon[10] == '\t' || vpCanon[10] == '\0')) {
+                BrainWaitState* ws = flowFindOrCreateWaitState(flowRt, (uint16_t)verbIdx);
+                if (!ws) {
+                    std::fprintf(stderr, "[BRAIN_FLOW_WAIT_OVERFLOW] idx=%d cap=%d wid=%d (WAIT_UNTIL skipped)\n",
+                                 verbIdx, MechBrainRuntime::kBrainWaitCap, wid);
+                    std::fflush(stderr);
+                    continue;
+                }
+                if (ws->satisfied) continue;   // latched open — sequence proceeds
+                char wKey[32], wVal[32];
+                bool missionScope = false;
+                if (!parseWaitUntilCondition(vpCanon, wKey, wVal, &missionScope)) {
+                    std::fprintf(stderr, "[BRAIN_FLOW_WAIT_UNTIL_PARSE_FAIL] verb=%s wid=%d (opens; malformed)\n",
+                                 vp, wid);
+                    std::fflush(stderr);
+                    ws->satisfied = 1;   // soft-fail OPEN: a malformed WAIT_UNTIL must not wedge the body
+                    continue;
+                }
+                const char* cur = missionScope
+                    ? (s_missionVarGate() ? g_missionVarStore.get(wKey) : "0")
+                    : (varStore ? varStore->get(wKey, VarScope::Unit) : "0");
+                if (std::strcmp(cur, wVal) == 0) {
+                    ws->satisfied = 1;
+                    std::fprintf(stderr, "[BRAIN_FLOW_WAIT_UNTIL_DONE] idx=%d key=%s val=%s wid=%d\n",
+                                 verbIdx, wKey, cur, wid);
+                    std::fflush(stderr);
+                    continue;            // gate stays open — verbs after run THIS tick
+                }
+                if (!ws->armed) {
+                    ws->armed = 1;       // one-time gated trace
+                    std::fprintf(stderr, "[BRAIN_FLOW_WAIT_UNTIL_GATED] idx=%d key=%s want=%s cur=%s wid=%d\n",
+                                 verbIdx, wKey, wVal, cur, wid);
+                    std::fflush(stderr);
+                }
+                flowGateOpen = false;
+                continue;
+            }
+            if (std::strncmp(vpCanon, "WAIT", 4) == 0 &&
+                (vpCanon[4] == ' ' || vpCanon[4] == '\t' || vpCanon[4] == '\0')) {
+                BrainWaitState* ws = flowFindOrCreateWaitState(flowRt, (uint16_t)verbIdx);
+                if (!ws) {
+                    std::fprintf(stderr, "[BRAIN_FLOW_WAIT_OVERFLOW] idx=%d cap=%d wid=%d (WAIT skipped)\n",
+                                 verbIdx, MechBrainRuntime::kBrainWaitCap, wid);
+                    std::fflush(stderr);
+                    continue;
+                }
+                if (ws->satisfied) continue;   // latched open
+                if (!ws->armed) {
+                    const char* wargs = vpCanon + 4;
+                    while (*wargs == ' ' || *wargs == '\t') ++wargs;
+                    char* wend = nullptr;
+                    float sec = std::strtof(wargs, &wend);
+                    if (wend == wargs || sec < 0.0f || std::isnan(sec)) {
+                        std::fprintf(stderr, "[BRAIN_FLOW_WAIT_PARSE_FAIL] verb=%s wid=%d (opens; malformed)\n",
+                                     vp, wid);
+                        std::fflush(stderr);
+                        ws->satisfied = 1;   // soft-fail OPEN
+                        continue;
+                    }
+                    ws->armed      = 1;
+                    ws->deadlineMs = getBrainTimeMs() + (uint32_t)(sec * 1000.0f);
+                    std::fprintf(stderr, "[BRAIN_FLOW_WAIT_ARM] idx=%d sec=%g deadline=%u now=%u wid=%d\n",
+                                 verbIdx, sec, ws->deadlineMs, getBrainTimeMs(), wid);
+                    std::fflush(stderr);
+                    flowGateOpen = false;
+                    continue;
+                }
+                if (getBrainTimeMs() >= ws->deadlineMs) {
+                    ws->satisfied = 1;
+                    std::fprintf(stderr, "[BRAIN_FLOW_WAIT_DONE] idx=%d deadline=%u now=%u wid=%d\n",
+                                 verbIdx, ws->deadlineMs, getBrainTimeMs(), wid);
+                    std::fflush(stderr);
+                    continue;            // gate stays open — verbs after run THIS tick
+                }
+                flowGateOpen = false;
+                continue;
+            }
+            if (std::strcmp(vpCanon, "STOP") == 0) {
+                std::fprintf(stderr, "[BRAIN_FLOW_STOP] idx=%d wid=%d\n", verbIdx, wid);
+                std::fflush(stderr);
+                break;                   // end this tick's body execution
+            }
+        }
 
         // BRAINSPECIAL-ALIAS-1: compare via vpCanon (== verb text when no alias
         // resolution occurred — behavior-identical to the previous `verb ==` form).
@@ -1538,6 +1790,14 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
             std::fprintf(stderr, "[BRAIN_DISPATCH_UNKNOWN] verb=%s wid=%d\n", vp, wid);
             std::fflush(stderr);
         }
+
+        // BRAINSPECIAL-FLOW-WAIT-1: mark GENERAL-slot effect verbs fired (per-verb-index
+        // refire guard for the every-tick re-dispatch under flow gating). Marked whether
+        // or not the order soft-failed — matching the class-level once-guard semantics
+        // (warrior.cpp pre-sets its flags before Apply on the non-flow path too).
+        // Verbs that `continue` above (Call/Var/flow) never reach here — none are effects.
+        if (flowActive && isGeneralEffectVerbToken(vpCanon))
+            flowMarkFired(flowRt, (uint16_t)verbIdx);
     }
 
     return appliedEffect;
@@ -2267,7 +2527,33 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                 state = IN_SPECIAL;   // still inside TechSpecial; look for its closing '}'
             } else if (std::strncmp(p, "STOP", 4) == 0 &&
                        (p[4] == '\0' || p[4] == ' ' || p[4] == '\t' || p[4] == ';')) {
-                // STOP — skip (sentinel only, not a verb).
+                // STOP — BRAINSPECIAL-FLOW-WAIT-1: with MC2_BRAIN_FLOW=1 STOP is a real
+                // verb (this tick's execution terminator). Gate OFF: skipped sentinel —
+                // pre-slice behavior, byte-identical.
+                if (s_brainFlowGate()) {
+                    if (verbsThisBody < kMaxVerbsPerBody) {
+                        currentVerbs.push_back("STOP");
+                        ++verbsThisBody;
+                    }
+                }
+            } else if (s_brainFlowGate() &&
+                       (std::strncmp(p, "WAIT_UNTIL", 10) == 0 || std::strncmp(p, "WAIT", 4) == 0) &&
+                       (std::strncmp(p, "WAIT_UNTIL", 10) == 0
+                            ? (p[10] == '\0' || p[10] == ' ' || p[10] == '\t')
+                            : (p[4]  == '\0' || p[4]  == ' ' || p[4]  == '\t'))) {
+                // BRAINSPECIAL-FLOW-WAIT-1: WAIT / WAIT_UNTIL flow lines (bare — not
+                // DO-prefixed, per the spec's flow-control grammar). Only collected when
+                // the flow gate is ON; gate OFF these lines never matched anything and
+                // were dropped — pre-slice behavior, byte-identical.
+                if (verbsThisBody < kMaxVerbsPerBody) {
+                    std::string fv(p);
+                    while (!fv.empty() && (fv.back() == ' ' || fv.back() == '\t' || fv.back() == ';'))
+                        fv.pop_back();
+                    if (!fv.empty()) {
+                        currentVerbs.push_back(std::move(fv));
+                        ++verbsThisBody;
+                    }
+                }
             } else if (std::strncmp(p, "DO ", 3) == 0 || std::strncmp(p, "DO\t", 3) == 0) {
                 if (verbsThisBody >= kMaxVerbsPerBody) {
                     std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] WARN: verb cap (%d) per-body reached in %s — skipping rest of body\n",

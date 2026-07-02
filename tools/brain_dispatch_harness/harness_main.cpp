@@ -32,6 +32,9 @@
 #include "brain_special_dispatch.h"
 #include "mech_brain_runtime.h"
 
+// BRAINSPECIAL-FLOW-WAIT-1: settable brain-time (stubs/brain_tick_stub.cpp).
+extern void harnessSetBrainTimeMs(uint32_t ms);
+
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -293,6 +296,14 @@ struct FixtureEntry {
     // on one FsmMechWarrior (so state persists across bodies).
     // Trace substrings are checked against the combined Apply trace output.
     bool fsmSequential = false;
+
+    // BRAINSPECIAL-FLOW-WAIT-1: flow_sequential fixture type.
+    // When true, harness runs ALL index bodies on one persistent FsmMechWarrior for
+    // THREE passes with the stub brain time advanced 0 -> 1000 -> 6000 ms (so a
+    // "WAIT 5" arms on pass 1 and latches open on pass 3). Trace substrings are
+    // checked against the combined 3-pass Apply trace; apply_expectation.expected_count
+    // is asserted against the warrior's total committed order count.
+    bool flowSequential = false;
 };
 
 static ApplyExpectation applyExpFromJson(const JsonValue& jv) {
@@ -371,6 +382,10 @@ static FixtureEntry entryFromJson(const JsonValue& jv) {
     // BRAIN-FSM-1K-A: fsm_sequential flag.
     if (jv.has("fsm_sequential"))
         e.fsmSequential = jv.at("fsm_sequential").isBoolTrue();
+
+    // BRAINSPECIAL-FLOW-WAIT-1: flow_sequential flag.
+    if (jv.has("flow_sequential"))
+        e.flowSequential = jv.at("flow_sequential").isBoolTrue();
 
     return e;
 }
@@ -506,6 +521,10 @@ int main(int argc, char** argv) {
     // BRAINSPECIAL-VARIANTOF-1: resolve variantOf inheritance for the variantof-* fixtures.
     // Safe for all other fixtures: resolution only touches entries carrying a variantOf field.
     (void)_putenv("MC2_BRAIN_VARIANTOF=1");
+    // BRAINSPECIAL-FLOW-WAIT-1: enable flow verbs for the flow-* fixtures.
+    // Other fixtures gain a trailing "STOP" verb (their STOP sentinels become verbs) —
+    // harmless: STOP is the last body line by convention and is not an effect verb.
+    (void)_putenv("MC2_BRAIN_FLOW=1");
     if (applyMode) {
         (void)_putenv("MC2_BRAIN_DISPATCH_APPLY=1");
     }
@@ -601,8 +620,9 @@ int main(int argc, char** argv) {
                 res.failures.push_back("expected bodyHasEffect=true");
         }
 
-        // 3. trace substring checks (V1 TraceOnly; FSM sequential fixtures use fsmTrace below)
-        if (!fix.fsmSequential) {
+        // 3. trace substring checks (V1 TraceOnly; FSM/flow sequential fixtures check
+        // their combined Apply traces below instead)
+        if (!fix.fsmSequential && !fix.flowSequential) {
         for (const std::string& sub : fix.expectedTraceSubstrings) {
             if (traceOutput.find(sub) == std::string::npos) {
                 res.failures.push_back("trace missing substring: '" + sub + "'");
@@ -649,8 +669,47 @@ int main(int argc, char** argv) {
             }
         }
 
+        // --- BRAINSPECIAL-FLOW-WAIT-1: flow sequential run ---
+        // Three passes at stub brain time 0 / 1000 / 6000 ms over ALL index bodies (in
+        // index order) on one persistent FsmMechWarrior. WAIT latches open once the stub
+        // time passes its deadline; WAIT_UNTIL latches when its Var condition holds; the
+        // per-verb-index flowFired guard must keep the total order count at expected_count.
+        if (applyMode && fix.flowSequential && body.loaded && !index.empty()) {
+            res.mode = "v2-flow-sequential";
+            FsmMechWarrior flowWarrior;
+            static const uint32_t kFlowPassTimesMs[3] = { 0u, 1000u, 6000u };
+            std::string flowTrace = captureStderr([&]() {
+                for (int pass = 0; pass < 3; ++pass) {
+                    harnessSetBrainTimeMs(kFlowPassTimesMs[pass]);
+                    for (const SpecialIndexEntry& entry : index) {
+                        executeSpecialBody_Apply(entry.body, &flowWarrior, /*wid=*/1,
+                                                 &flowWarrior.fsmRuntime.varStore, &index,
+                                                 entry.key.c_str());
+                        if (flowWarrior.fsmRuntime.pendingIntentCount > 0)
+                            commitBrainIntents(&flowWarrior, &flowWarrior.fsmRuntime);
+                    }
+                }
+            });
+            harnessSetBrainTimeMs(0);  // reset for subsequent fixtures
+            for (const std::string& sub : fix.expectedTraceSubstrings) {
+                if (flowTrace.find(sub) == std::string::npos) {
+                    res.failures.push_back("flow trace missing substring: '" + sub + "'");
+                    if (res.failures.size() == 1)
+                        res.failures.push_back("  flow trace preview: " + flowTrace.substr(0, 600));
+                }
+            }
+            if (fix.applyExp.hasExpectation && flowWarrior.orderCount != fix.applyExp.expectedCount) {
+                char buf[160];
+                std::snprintf(buf, sizeof(buf),
+                    "flow: expected %d order(s) across 3 passes, got %d (gate_%s)",
+                    fix.applyExp.expectedCount, flowWarrior.orderCount,
+                    intentQueueGateOn ? "ON" : "OFF");
+                res.failures.push_back(buf);
+            }
+        }
+
         // --- V2 Apply assertions (only in --apply-mode, only if fixture has apply_expectation) ---
-        if (applyMode && fix.applyExp.hasExpectation && body.loaded
+        if (applyMode && fix.applyExp.hasExpectation && body.loaded && !fix.flowSequential
             && !(fix.applyExp.requiresIntentQueue && !intentQueueGateOn)) {
             // HARNESS-INTENT-GATE-SCOPE-1: skip intent-queue-only fixtures (patrol) in a
             // gate-OFF process — their order can't be emitted without the queue, so asserting

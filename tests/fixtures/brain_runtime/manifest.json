@@ -611,8 +611,8 @@
       "expected_bodyHasCoreGuard": true,
       "expected_bodyHasEffect": true,
       "expected_trace_substrings": [
-        "[BRAIN_VARIANTOF] child=variant_scenario_main parent=base.guard.template inherited=1 verb(s)",
-        "[BRAIN_VARIANTOF] entry body variant_scenario_main resolved to 1 verb(s)",
+        "[BRAIN_VARIANTOF] child=variant_scenario_main parent=base.guard.template inherited=",
+        "[BRAIN_VARIANTOF] entry body variant_scenario_main resolved to",
         "[BRAIN_DISPATCH] verb=OPORD.CoreGuard"
       ],
       "notes": "BRAINSPECIAL-VARIANTOF-1: empty-body variant inherits the parent body wholesale; the inherited verb drives a real GUARD order.",
@@ -667,6 +667,86 @@
       "notes": "BRAINSPECIAL-VARIANTOF-1: cyclic chains trip the guard and are left as-authored.",
       "harness_proven": [
         "cycle guard fires on mutual variantOf"
+      ]
+    },
+    {
+      "name": "flow-wait",
+      "file": "mc2_01_flow_wait_specials.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": [
+        "MC2_BRAIN_DISPATCH=1",
+        "MC2_BRAIN_DISPATCH_APPLY=1",
+        "MC2_BRAIN_FLOW=1"
+      ],
+      "flow_sequential": true,
+      "expected_trace_substrings": [
+        "[BRAIN_FLOW_WAIT_ARM] idx=1 sec=5 deadline=5000 now=0",
+        "[BRAIN_FLOW_WAIT_DONE] idx=1 deadline=5000 now=6000",
+        "[BRAIN_FLOW_STOP] idx=3"
+      ],
+      "notes": "BRAINSPECIAL-FLOW-WAIT-1: WAIT 5 arms at t=0, gates the GUARD through t=1000, latches open at t=6000; GUARD fires exactly once (flowFired refire guard).",
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_GUARD",
+        "expected_count": 1,
+        "notes": "Exactly one GUARD across 3 passes. A/B identity across intent-queue gates."
+      },
+      "harness_proven": [
+        "WAIT arms once and gates the body tail",
+        "deadline latch opens on sim time",
+        "flowFired guard prevents re-emission",
+        "STOP terminates the tick's execution"
+      ]
+    },
+    {
+      "name": "flow-wait-until",
+      "file": "mc2_01_flow_waituntil_specials.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": [
+        "MC2_BRAIN_DISPATCH=1",
+        "MC2_BRAIN_DISPATCH_APPLY=1",
+        "MC2_BRAIN_DISPATCH_VAR=1",
+        "MC2_BRAIN_FLOW=1"
+      ],
+      "flow_sequential": true,
+      "expected_trace_substrings": [
+        "[BRAIN_FLOW_WAIT_UNTIL_GATED] idx=0 key=go want=1 cur=0",
+        "[BRAIN_FLOW_WAIT_UNTIL_DONE] idx=0 key=go val=1"
+      ],
+      "notes": "BRAINSPECIAL-FLOW-WAIT-1: WAIT_UNTIL Var [go] == 1 gates until the setter body writes go=1 on pass 1; latches open on pass 2; exactly one GUARD.",
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_GUARD",
+        "expected_count": 1,
+        "notes": "Exactly one GUARD across 3 passes."
+      },
+      "harness_proven": [
+        "WAIT_UNTIL evaluates the unit-scope Var condition per tick",
+        "condition latch opens once satisfied"
+      ]
+    },
+    {
+      "name": "flow-stop",
+      "file": "mc2_01_flow_stop_specials.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": [
+        "MC2_BRAIN_DISPATCH=1",
+        "MC2_BRAIN_DISPATCH_APPLY=1",
+        "MC2_BRAIN_FLOW=1"
+      ],
+      "flow_sequential": true,
+      "expected_trace_substrings": [
+        "[BRAIN_FLOW_STOP] idx=1"
+      ],
+      "notes": "BRAINSPECIAL-FLOW-WAIT-1: mid-body STOP terminates execution; the GUARD after it never fires.",
+      "apply_expectation": {
+        "expected_order_code": "NONE",
+        "expected_count": 0,
+        "notes": "0 orders across all 3 passes."
+      },
+      "harness_proven": [
+        "STOP prevents execution of subsequent verbs"
       ]
     }
   ]

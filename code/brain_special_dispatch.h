@@ -43,6 +43,16 @@
 //       a re-declared Body overrides (Body-level override; spec-delta documented in
 //       .claude/TECHSCRIPT-GAP-CLOSURE-1.md #14). Depth<=8 + cycle guard.
 //       OFF (default): variantOf fields parsed but ignored — byte-identical.
+//   MC2_BRAIN_FLOW=1 (BRAINSPECIAL-FLOW-WAIT-1) → WAIT / WAIT_UNTIL / STOP flow verbs.
+//       SPEC-DELTA: WAIT is a LATCHED SEQUENCE GATE, not VM blocking — the body
+//       re-executes every deterministic brain tick; verbs after an unsatisfied
+//       WAIT (sim-time deadline) / WAIT_UNTIL (Var == value condition) are skipped
+//       until it latches open. STOP ends the tick's body execution. Root body only.
+//       Flow-bearing bodies re-dispatch every tick (warrior.cpp skips the class-level
+//       once-guard pre-set); per-verb-index flowFired guards prevent order re-emission.
+//       GOTO/LABEL are NOT implemented (determinism ruling — see gap ledger #9).
+//       OFF (default): scanner drops WAIT lines + STOP stays a skipped sentinel —
+//       byte-identical.
 //
 // FORBIDDEN-CALL GUARD (1A — executeSpecialBody_TraceOnly / executeSpecialBody_TraceOnlyChained):
 //   MUST NOT call ANY of: setGeneralTacOrder, setPlayerTacOrder, setAlarmTacOrder,
@@ -167,6 +177,14 @@ bool bodyHasUnitRetreat(const BrainSpecialBody& body);
 // DISPATCH-EFFECT-UNITRETREAT-1: Returns true if body has ANY GENERAL-slot-claiming effect verb.
 // (currently: POWERDOWN || EJECT || GUARD || MOVETO || ATTACK || RETREAT)
 bool bodyHasEffect(const BrainSpecialBody& body);
+
+// BRAINSPECIAL-FLOW-WAIT-1: Returns true if the body carries WAIT/WAIT_UNTIL/STOP verbs.
+// (The scanner only emits these when MC2_BRAIN_FLOW=1.)
+bool bodyHasFlowControl(const BrainSpecialBody& body);
+
+// BRAINSPECIAL-FLOW-WAIT-1: gate + flow-verb check combined — warrior.cpp switches to
+// every-tick re-dispatch (skipping the class-level once-guard pre-set) when true.
+bool brainFlowActiveForBody(const BrainSpecialBody& body);
 
 // TRACE ONLY. Zero effects. No orders. No state writes.
 // Gate: MC2_BRAIN_DISPATCH=1.
