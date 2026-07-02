@@ -196,6 +196,21 @@ extern void  gos_GetTerrainTintGrass(float*, float*, float*);
 extern void  gos_GetTerrainTintDirt(float*, float*, float*);
 extern float gos_GetTerrainTintStrengthScale();
 extern float gos_GetTerrainControlAlbedoStrength();  // TERRAIN-CONTROLMAP-ALBEDO-1
+// TERRAIN-MATERIAL-LIB-1: promoted frag-literal tints + per-layer roughness/AO
+// scalars + the u_useMaterialLib gate. These were previously only wired to the
+// legacy tessellated patch-stream path (terrainBindUniformsForPatchStream) --
+// the live chunk binder never fetched these locs or uploaded them, so JSON-
+// authored terrain_materials.json values never reached this shader in practice.
+extern void  gos_GetTerrainTintConcrete(float*, float*, float*);
+extern void  gos_GetTerrainTintSnow(float*, float*, float*);
+extern void  gos_GetTerrainMatRoughness(float*, float*, float*, float*);
+extern void  gos_GetTerrainMatAO(float*, float*, float*, float*);
+extern bool  gos_TerrainMaterialLibEnabled();
+static GLint    s_locTintConcrete   = -1;
+static GLint    s_locTintSnow       = -1;
+static GLint    s_locMatRoughness   = -1;
+static GLint    s_locMatAO          = -1;
+static GLint    s_locUseMaterialLib = -1;
 // Remaining legacy tunables (env gates replicated in the upload so default==legacy).
 extern float gos_GetTerrainLightingV1Strength();
 extern float gos_GetTerrainLightingV2Floor();
@@ -608,6 +623,12 @@ void gos_TerrainLodChunk_Init()
             s_locTintStrengthScale = glGetUniformLocation(s_terrainProgram, "tintStrengthScale");
             s_locSnowBrightnessDampen = glGetUniformLocation(s_terrainProgram, "snowBrightnessDampen");
             s_locControlAlbedoStrength = glGetUniformLocation(s_terrainProgram, "u_controlAlbedoStrength");  // TERRAIN-CONTROLMAP-ALBEDO-1
+            // TERRAIN-MATERIAL-LIB-1: wire the live chunk binder (was dead-bridge-only).
+            s_locTintConcrete   = glGetUniformLocation(s_terrainProgram, "tintConcrete");
+            s_locTintSnow       = glGetUniformLocation(s_terrainProgram, "tintSnow");
+            s_locMatRoughness   = glGetUniformLocation(s_terrainProgram, "matRoughness");
+            s_locMatAO          = glGetUniformLocation(s_terrainProgram, "matAO");
+            s_locUseMaterialLib = glGetUniformLocation(s_terrainProgram, "u_useMaterialLib");
             s_locLightingV1  = glGetUniformLocation(s_terrainProgram, "terrainLightingV1Strength");
             s_locLightingV2  = glGetUniformLocation(s_terrainProgram, "terrainLightingV2ShadowFillFloor");
             s_locNfhStrength = glGetUniformLocation(s_terrainProgram, "terrainNormalsFromHeightStrength");
@@ -1190,6 +1211,39 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         // -> frag's mix(x,1.0,0.0)==x (byte-identical) when gate is OFF.
         if (s_locControlAlbedoStrength >= 0)
             glUniform1f(s_locControlAlbedoStrength, gos_GetTerrainControlAlbedoStrength());
+
+        // TERRAIN-MATERIAL-LIB-1: promoted tints always upload (no gate -- they
+        // replace former frag literals; default member values are the exact
+        // former literals, so this is byte-identical when no JSON was loaded).
+        // Roughness/AO + the branch flag ARE gated: u_useMaterialLib defaults to
+        // 0 so the frag's roughness/AO branch is never taken unless the env gate
+        // is on, matching the legacy patch-stream path's byte-identity contract.
+        {
+            float tc[3]={0.55f,0.53f,0.50f}; gos_GetTerrainTintConcrete(&tc[0],&tc[1],&tc[2]);
+            float tsn[3]={0.75f,0.78f,0.84f}; gos_GetTerrainTintSnow(&tsn[0],&tsn[1],&tsn[2]);
+            float mr[4]={1,1,1,1}; gos_GetTerrainMatRoughness(&mr[0],&mr[1],&mr[2],&mr[3]);
+            float ma[4]={1,1,1,1}; gos_GetTerrainMatAO(&ma[0],&ma[1],&ma[2],&ma[3]);
+            if (s_locTintConcrete >= 0) glUniform3f(s_locTintConcrete, tc[0], tc[1], tc[2]);
+            if (s_locTintSnow     >= 0) glUniform3f(s_locTintSnow,     tsn[0], tsn[1], tsn[2]);
+            if (s_locMatRoughness >= 0) glUniform4f(s_locMatRoughness, mr[0], mr[1], mr[2], mr[3]);
+            if (s_locMatAO        >= 0) glUniform4f(s_locMatAO,        ma[0], ma[1], ma[2], ma[3]);
+            const bool matLibOn = gos_TerrainMaterialLibEnabled();
+            if (s_locUseMaterialLib >= 0) glUniform1i(s_locUseMaterialLib, matLibOn ? 1 : 0);
+            static const bool s_matLibTrace = (getenv("MC2_MATERIALLIB_TRACE") != nullptr);
+            if (s_matLibTrace) {
+                static bool s_matLibLogged = false;
+                if (!s_matLibLogged) {
+                    s_matLibLogged = true;
+                    printf("[MaterialLib] chunk-binder upload useMaterialLib=%d "
+                           "tintConcrete=(%.3f,%.3f,%.3f) tintSnow=(%.3f,%.3f,%.3f) "
+                           "matRoughness=(%.3f,%.3f,%.3f,%.3f) matAO=(%.3f,%.3f,%.3f,%.3f)\n",
+                           matLibOn ? 1 : 0,
+                           tc[0], tc[1], tc[2], tsn[0], tsn[1], tsn[2],
+                           mr[0], mr[1], mr[2], mr[3], ma[0], ma[1], ma[2], ma[3]);
+                    fflush(stdout);
+                }
+            }
+        }
 
         // Remaining tunables. Hemisphere V1/V2 are env-gated OFF by default (match
         // legacy: force-zeroed unless MC2_TERRAIN_LIGHTING_V1/V2 set). NFH strength

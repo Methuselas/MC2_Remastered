@@ -9834,6 +9834,13 @@ void gos_GetTerrainMatAO(float* rock, float* grass, float* dirt, float* concrete
     if (g_gos_renderer) g_gos_renderer->getTerrainMatAO(rock, grass, dirt, concrete);
     else { *rock = 1.0f; *grass = 1.0f; *dirt = 1.0f; *concrete = 1.0f; }
 }
+// TERRAIN-MATERIAL-LIB-1: public wrapper -- terrainMaterialLibEnabled() above is
+// file-static (TU-local); the live chunk binder (gos_terrain_lod_chunk.cpp) is a
+// separate TU and needs the same MC2_TERRAIN_MATERIAL_LIB gate value to drive its
+// own u_useMaterialLib upload. Same cached-static evaluation as the bridge path.
+bool gos_TerrainMaterialLibEnabled() {
+    return terrainMaterialLibEnabled();
+}
 // TERRAIN-TUNING-UI-1
 void gos_SetTerrainNormalsFromHeightStrength(float s) {
     if (g_gos_renderer) g_gos_renderer->setTerrainNormalsFromHeightStrength(s);
