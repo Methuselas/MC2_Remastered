@@ -64,6 +64,10 @@ ALLOWLIST=(
     MC2_ASSET_SCALE_TRACE       # trace
     MC2_BATCHER_FLUSH_TIMING    # trace
     MC2_BLOCK_FRUSTUM_FALLBACK  # feature -- promote-to-registry
+    MC2_BRAIN_ALIAS             # feature -- TECHSCRIPT ALIAS-1 (default OFF)
+    MC2_BRAIN_FLOW              # feature -- TECHSCRIPT FLOW-WAIT-1 (default OFF)
+    MC2_BRAIN_SCOPE_GLOBAL      # feature -- TECHSCRIPT SCOPE-GLOBAL-1 (default OFF)
+    MC2_BRAIN_VARIANTOF         # feature -- TECHSCRIPT VARIANTOF-1 (default OFF)
     MC2_BLDG_DIAG_TRACE         # trace
     MC2_BLDG_REG_TRACE          # trace
     MC2_BLKIDX_TRACE            # trace
@@ -108,6 +112,10 @@ ALLOWLIST=(
     MC2_GLTF_AXIS               # override -- glTF import axis mapping select (orientation dial)
     MC2_GLTF_GROUND             # override -- glTF import auto-ground end select (1=base,2=opp,0=off)
     MC2_GLTF_YOFF               # override -- glTF import up-offset (un-bury)
+    MC2_GPU_GROUND_PICK_PARITY  # parity -- GPU-GROUND-PICK-PARITY-1 oracle (default OFF)
+    MC2_GPU_GROUND_PICK_PARITY_CENTER  # override -- parity center-probe mode
+    MC2_GPU_GROUND_PICK_PARITY_SAMPLE  # override -- parity sample stride (default 30)
+    MC2_GPU_GROUND_PICK_PARITY_TAG     # trace -- parity log tag suffix
     MC2_GPU_CULL                # feature -- promote-to-registry
     MC2_GPU_CULL_AABB_PARITY    # parity
     MC2_GPU_CULL_COMPUTE_TRACE  # trace
@@ -136,6 +144,7 @@ ALLOWLIST=(
     MC2_INVIEW_CONFLATION_TRACE # trace
     MC2_IMPOSTOR_DIST           # override -- tree impostor far-LOD distance (world units)
     MC2_LEGACY_INSTANCE_POOLS   # override -- dev testing (revert pool-skip)
+    MC2_MISSION_CYCLE_TEST      # fixture -- TEAM-COMMANDER-OWNERSHIP-1 in-process reset probe (default OFF)
     MC2_LIGHT_COST_SPLIT        # feature -- promote-to-registry
     MC2_LIGHT_DEDUP_TRACE       # trace
     MC2_LIGHTBAKE               # feature -- promote-to-registry
