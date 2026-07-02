@@ -41,8 +41,10 @@ from mission_terrain_analyzer import (  # noqa: E402
     detect_pyramid_islands, read_object_footprints, read_water_elevation,
     _dilate, WORLD_UNITS_PER_VERTEX, CLIFF_SLOPE_DEG,
 )
+from mission_terrain_analyzer import label_components  # noqa: E402
 from visual_heightfield import (  # noqa: E402  TERRAIN-REAUTH-UNPIN-1 gates
     upsample_corner_pinned, detect_coarse_extrema, mountain_rock_mask, _box3,
+    coarse_cliff_mask, onesided_step, _bilinear_sample,  # CLIFF-SMOOTH-1
 )
 
 PANEL = 220   # panel pixel size
@@ -142,6 +144,83 @@ def blockiness(elev):
     return float((sr * sr + sc * sc).mean())
 
 
+# --- CLIFF-SMOOTH-1: reference-cliff cross-section ----------------------------
+def cliff_reference_section(elev, water, protect=None,
+                            cliff_slope_deg=30.0, half_len=10.0):
+    """Slope census -> reference cliff cross-section.
+
+    Largest connected component of the DILATED one-sided cliff mask = the
+    mission's reference cliff feature (mc2_17's big water-facing bluff class;
+    dilation matters — on a terraced staircase every riser is a separate
+    undilated component, the ring joins the bluff into one). Inside it, the
+    section is anchored at the STEEPEST riser and runs along the LOCAL (9x9)
+    downhill direction with a fixed +/- half_len coarse-cell span: a section
+    through a known cliff FACE, not a transect of the whole mountain range
+    (mc2_24's range is one ~3000-cell component — its centroid/mean-gradient
+    line would measure valley terrain, not the staircase).
+
+    `protect` (roads/footprints, structural pin): protected cells are pinned
+    to the bilinear baseline BY CONTRACT and can never melt — a building-
+    pedestal mesa edge is not a fair reference cliff. Components are ranked
+    and anchored by their UNPROTECTED cells only."""
+    mask = coarse_cliff_mask(elev, water_coarse=water,
+                             cliff_slope_deg=cliff_slope_deg, dilate_iters=1)
+    if not mask.any():
+        return None
+    meltable = mask if protect is None else (mask & ~protect)
+    if not meltable.any():
+        return None
+    labels, count = label_components(mask)
+    best, best_n = 0, 0
+    for lid in range(1, count + 1):
+        n = int(((labels == lid) & meltable).sum())
+        if n > best_n:
+            best, best_n = lid, n
+    comp = labels == best
+    step = np.where(comp & meltable, onesided_step(elev), -1.0)
+    ar, ac = np.unravel_index(int(np.argmax(step)), step.shape)
+    n = elev.shape[0]
+    r0, r1 = max(0, ar - 4), min(n, ar + 5)
+    c0, c1 = max(0, ac - 4), min(n, ac + 5)
+    gy, gx = np.gradient(elev)
+    vy, vx = float(gy[r0:r1, c0:c1].mean()), float(gx[r0:r1, c0:c1].mean())
+    nrm = float(np.hypot(vy, vx))
+    vy, vx = (1.0, 0.0) if nrm < 1e-9 else (vy / nrm, vx / nrm)
+    return {"component_cells": best_n, "total_cliff_cells": int(mask.sum()),
+            "center_rc": (float(ar), float(ac)), "dir_rc": (vy, vx),
+            "half_len": float(half_len),
+            "anchor_step_wu": float(step[ar, ac]),
+            "water_facing": bool((_dilate(comp) & water).any())}
+
+
+def profile_step_metrics(prof, ds_wu, tread_deg=12.0):
+    """Terrace metrics along a cliff profile: tread count (near-flat runs >= 3
+    samples), step heights between consecutive treads, and second-difference
+    energy (staircase concentrates curvature at step edges; a melted face
+    spreads and shrinks it)."""
+    g = np.gradient(prof) / ds_wu
+    deg = np.degrees(np.arctan(np.abs(g)))
+    is_tread = deg < tread_deg
+    treads = []
+    i, n = 0, len(prof)
+    while i < n:
+        if is_tread[i]:
+            j = i
+            while j + 1 < n and is_tread[j + 1]:
+                j += 1
+            if j - i + 1 >= 3:
+                treads.append(float(prof[i:j + 1].mean()))
+            i = j + 1
+        else:
+            i += 1
+    steps = [abs(treads[k + 1] - treads[k]) for k in range(len(treads) - 1)]
+    s = prof[2:] - 2 * prof[1:-1] + prof[:-2]
+    return {"tread_count": len(treads),
+            "max_step_wu": (float(max(steps)) if steps else 0.0),
+            "mean_step_wu": (float(np.mean(steps)) if steps else 0.0),
+            "second_diff_energy": float((s * s).mean())}
+
+
 def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> dict:
     pak = missions_dir / f"{mission}.pak"
     if not pak.is_file():
@@ -178,6 +257,7 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
 
     # --- visual heightfield (visual_height_<F>x.r32), if present ---
     visual = None; factor = None
+    cliff_prof_img = None; cliff_metrics = None    # CLIFF-SMOOTH-1
     rep = bdir / "visual_height_report.json"
     if rep.is_file():
         vmeta = json.loads(rep.read_text())
@@ -193,26 +273,60 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
                 # TERRAIN-REAUTH-UNPIN-1: corners are intentionally UNpinned;
                 # the guarantee flips to landform fidelity. All gates below are
                 # RECOMPUTED from the .r32 (report values not trusted).
-                md = float(reauth.get("max_drift_wu", 24.0))
+                # CLIFF-SMOOTH-1 recalibration (documented): on the cliff mask
+                # the drift ceiling is cliff_drift, terrace-step (non-regional)
+                # extrema are exempt, and shape fidelity gates OFF-cliff; the
+                # on-cliff relaxation is the slice working as designed.
+                cliff_meta = reauth.get("cliff") or {}
+                cliff_on = float(cliff_meta.get("cliff_drift_wu", 0.0)) > 0.0 \
+                    and int(cliff_meta.get("coarse_cliff_cells", 0)) > 0
+                cliff_deg = float(cliff_meta.get("cliff_slope_deg", 30.0))
+                cliff_coarse = None
+                if cliff_on:
+                    cliff_coarse = coarse_cliff_mask(
+                        elev, water_coarse=layers["water"],
+                        cliff_slope_deg=cliff_deg)  # dilate=1, same as bake
+                md = float(reauth.get("effective_max_drift_wu",
+                                      reauth.get("max_drift_wu", 24.0)))
                 chk("corner_unpinned",
                     "PASS" if (0.05 < cerr <= md * 1.25) else "FAIL",
                     f"max corner move = {cerr:.2f}wu (want >0.05 and <= {md * 1.25:.1f} "
-                    f"= 1.25*max_drift)")
+                    f"= 1.25*effective_max_drift"
+                    + (f"; cliff mask allows {cliff_meta['cliff_drift_wu']:.0f}wu"
+                       if cliff_on else ""))
                 corr = float(np.corrcoef(elev.ravel(), cs.ravel())[0, 1])
-                chk("shape_fidelity_corr", "PASS" if corr >= 0.99 else "FAIL",
-                    f"coarse landform correlation before/after = {corr:.4f} (want >= 0.99)")
+                if cliff_on:
+                    off = ~cliff_coarse
+                    corr_off = float(np.corrcoef(elev[off].ravel(),
+                                                 cs[off].ravel())[0, 1])
+                    chk("shape_fidelity_corr",
+                        "PASS" if corr_off >= 0.99 else "FAIL",
+                        f"off-cliff landform correlation = {corr_off:.4f} "
+                        f"(gate, cliff mask relaxed per CLIFF-SMOOTH-1; "
+                        f"global incl. melted cliffs = {corr:.4f})")
+                else:
+                    chk("shape_fidelity_corr", "PASS" if corr >= 0.99 else "FAIL",
+                        f"coarse landform correlation before/after = {corr:.4f} (want >= 0.99)")
                 tol_frac = float(reauth.get("shape_tolerance", 0.10))
                 extrema = detect_coarse_extrema(elev)
-                viol, worst = 0, 0.0
+                viol, worst, relaxed, enforced = 0, 0.0, 0, 0
                 for e in extrema:
+                    if (cliff_coarse is not None and cliff_coarse[e["r"], e["c"]]
+                            and not e["is_regional"]):
+                        relaxed += 1     # terrace-step extremum on the cliff mask
+                        continue
+                    enforced += 1
                     tol = max(0.5, tol_frac * e["relief"])
                     mv = abs(float(visual[e["r"] * factor, e["c"] * factor]) - e["h0"])
                     worst = max(worst, mv / max(1e-9, e["relief"]))
                     if mv > tol + 1e-6:
                         viol += 1
                 chk("extrema_preserved", "PASS" if viol == 0 else "FAIL",
-                    f"{viol}/{len(extrema)} peaks/pits moved past "
-                    f"{100 * tol_frac:.0f}% of local relief (worst {100 * worst:.1f}%)")
+                    f"{viol}/{enforced} enforced peaks/pits moved past "
+                    f"{100 * tol_frac:.0f}% of local relief (worst {100 * worst:.1f}%)"
+                    + (f"; {relaxed} terrace extrema relaxed on the cliff mask "
+                       f"(CLIFF-SMOOTH-1, true peaks stay pinned)"
+                       if relaxed else ""))
                 # facet-flattening proof (pyramid edges become curves): the
                 # SMOOTH-stage crease energy from the bake report must beat the
                 # bilinear baseline (final surface may legitimately add ridge
@@ -236,7 +350,12 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
                         shape_tolerance=tol_frac,
                         max_drift=float(reauth.get("max_drift_wu", 24.0)),
                         passes=int(reauth.get("passes", 150)),
-                        water_coarse=layers["water"])
+                        water_coarse=layers["water"],
+                        # CLIFF-SMOOTH-1: the smooth-only reference must melt
+                        # the same cliffs, so the diff isolates ADDED detail.
+                        cliff_drift=float(cliff_meta.get("cliff_drift_wu", 0.0)),
+                        cliff_slope_deg=cliff_deg,
+                        cliff_melt_passes=int(cliff_meta.get("melt_passes", 300)))
                     rockw = mountain_rock_mask(plain, elev, factor,
                                                water_coarse=layers["water"])
                     rock = rockw > 0.35
@@ -252,6 +371,72 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
                             f"(calm {rms_calm:.2f}wu; want >=0.8wu and >=2x calm)")
                     else:
                         chk("mountain_detail_present", "WARN", "no rock-channel cells found")
+                # CLIFF-SMOOTH-1: reference-cliff cross-section (slope census
+                # picks the largest cliff component — mc2_17's big water-facing
+                # bluff class). The user-visible deliverable: terraced steps
+                # must melt into a continuous face.
+                sec = cliff_reference_section(elev, layers["water"],
+                                              protect=protect_struct,
+                                              cliff_slope_deg=cliff_deg)
+                if sec is not None and sec["component_cells"] >= 8:
+                    bf = upsample_corner_pinned(elev, factor)
+                    cy, cx = sec["center_rc"]
+                    vy, vx = sec["dir_rc"]
+                    half = sec["half_len"]
+                    npts = int(2 * half * factor) + 1
+                    ts = np.linspace(-half, half, npts)
+                    rr = np.clip(cy + ts * vy, 0, side - 1)
+                    cc = np.clip(cx + ts * vx, 0, side - 1)
+                    prof_b = _bilinear_sample(bf, rr * factor, cc * factor)
+                    prof_a = _bilinear_sample(visual, rr * factor, cc * factor)
+                    ds_wu = (ts[1] - ts[0]) * WORLD_UNITS_PER_VERTEX
+                    # metrics on the face span only (where the BEFORE profile
+                    # is steep) so the flat approach on both ends doesn't
+                    # dilute the staircase signal.
+                    gdeg = np.degrees(np.arctan(np.abs(np.gradient(prof_b)) / ds_wu))
+                    steep = np.where(gdeg > 25.0)[0]
+                    if steep.size:
+                        s0 = max(0, int(steep[0]) - factor)
+                        s1 = min(npts, int(steep[-1]) + factor + 1)
+                        mb = profile_step_metrics(prof_b[s0:s1], ds_wu)
+                        ma = profile_step_metrics(prof_a[s0:s1], ds_wu)
+                        crease_cut = 1.0 - ma["second_diff_energy"] / (
+                            mb["second_diff_energy"] + 1e-9)
+                        tread_ok = (ma["tread_count"] <= max(1, mb["tread_count"] // 2)
+                                    or ma["mean_step_wu"] <= 0.5 * mb["mean_step_wu"] + 1e-9)
+                        detail = (
+                            f"ref cliff {sec['component_cells']} cells"
+                            f"{' water-facing' if sec['water_facing'] else ''}: "
+                            f"treads {mb['tread_count']}->{ma['tread_count']}, "
+                            f"step mean {mb['mean_step_wu']:.0f}->{ma['mean_step_wu']:.0f}wu"
+                            f" max {mb['max_step_wu']:.0f}->{ma['max_step_wu']:.0f}wu, "
+                            f"profile curvature energy -{100 * crease_cut:.0f}%")
+                        if not cliff_on:
+                            chk("cliff_steps_melted", "WARN",
+                                detail + " (bake has CLIFF-SMOOTH-1 disabled)")
+                        elif crease_cut >= 0.40 or tread_ok:
+                            chk("cliff_steps_melted", "PASS", detail)
+                        elif crease_cut >= 0.15:
+                            chk("cliff_steps_melted", "WARN", detail)
+                        else:
+                            chk("cliff_steps_melted", "FAIL", detail)
+                        cliff_prof_img = profile_plot(
+                            760, 300,
+                            f"reference cliff x-section ({sec['component_cells']} cells"
+                            f"{', water-facing' if sec['water_facing'] else ''}) "
+                            f"treads {mb['tread_count']}->{ma['tread_count']} "
+                            f"step max {mb['max_step_wu']:.0f}->{ma['max_step_wu']:.0f}wu",
+                            np.arange(npts),
+                            [("before (bilinear bake)", prof_b, (110, 110, 120)),
+                             ("after (CLIFF-SMOOTH-1)", prof_a, (255, 150, 80))])
+                        cliff_metrics = {
+                            "component_cells": sec["component_cells"],
+                            "total_cliff_cells": sec["total_cliff_cells"],
+                            "water_facing": sec["water_facing"],
+                            "center_rc": [round(cy, 1), round(cx, 1)],
+                            "anchor_step_wu": sec["anchor_step_wu"],
+                            "before": mb, "after": ma,
+                            "curvature_energy_cut_frac": crease_cut}
             else:
                 # Reshaped bakes intentionally move corners up to corner_clamp;
                 # bilinear bakes must be exact. Read the bound from the report.
@@ -330,6 +515,8 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
     sheet.save(out / "contact_sheet.png")
     if profiles is not None:
         profiles.save(out / "profiles.png")
+    if cliff_prof_img is not None:
+        cliff_prof_img.save(out / "cliff_profile.png")
 
     # summary status
     has_fail = any(c["status"] == "FAIL" for c in checks)
@@ -341,6 +528,7 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
         "summary": summary, "checks": checks,
         "pyramid_count": len(pyramids),
         "blockiness_orig": blockiness(elev),
+        "cliff_section": cliff_metrics,     # CLIFF-SMOOTH-1 reference cliff
     }
     (out / "workbench_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 
@@ -356,6 +544,7 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
 <table border=1 cellpadding=4 style='border-collapse:collapse'>{rows}</table>
 <h3>contact sheet</h3><img src='data:image/png;base64,{b64('contact_sheet.png')}'>
 <h3>profiles</h3><img src='data:image/png;base64,{b64('profiles.png')}'>
+{("<h3>reference cliff cross-section (CLIFF-SMOOTH-1)</h3><img src='data:image/png;base64," + b64('cliff_profile.png') + "'>") if cliff_prof_img is not None else ""}
 </body>"""
     (out / "workbench.html").write_text(html, encoding="utf-8")
     return report

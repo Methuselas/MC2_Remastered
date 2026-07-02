@@ -43,11 +43,31 @@ MC2_TERRAIN_VISUAL_DISPLACE consumer. The companion visual_damp.r32 is the engin
 Half-B seed: static object-proximity displacement fade (units/buildings stand on
 true gameplay height).
 
+CLIFF-SMOOTH-1 extends --reauth for giant TERRACED cliff faces (hard 100wu+
+steps in silhouette, mc2_17-class). Two problems block the base recipe there:
+(a) --max-drift 24 << step size, and (b) extrema-preservation pins the
+staircase (every terrace edge is a coarse extremum). Fixes, all render-only:
+  - SLOPE-ADAPTIVE DRIFT: max-drift becomes a FIELD. Flats keep the scalar
+    --max-drift; the cliff mask (one-sided coarse slope > --cliff-slope-deg,
+    dilated one ring, feathered on the fine grid) allows --cliff-drift.
+  - CLIFF MELT: Taubin is band-pass BY DESIGN (the landform band passes), so
+    terrace treads survive it. On the cliff weight only, plain weighted
+    diffusion (--cliff-melt-passes) relaxes the staircase toward the harmonic
+    (continuous-face) surface; flats stay calm (weight ~ 0).
+  - EXTREMA RELAXATION (documented): extrema ON the cliff mask that are NOT
+    regional summits/pits (7x7 window) are exempted from re-injection — it is
+    the STEPS between peaks that melt; true peaks stay pinned.
+  - CLIFF-NESS: under --mountainify, detail on the cliff mask is biased toward
+    gradient-aligned striation (value noise directionally blurred ALONG the
+    downhill direction, then ridged) — erosion runs DOWN the face instead of
+    isotropic bumps. Modest amplitude, still drift-bounded + water-excluded.
+
 Run:
   python visual_heightfield.py <mission> [--missions-dir DIR] [--out DIR] [--factor 4]
   python visual_heightfield.py mc2_17 --reauth [--shape-tolerance 0.10]
          [--max-drift 24] [--reauth-passes 150] [--objfade-radius-wu 256]
          [--mountainify] [--mountainify-amp 14] [--seed 1337]
+         [--cliff-drift 112] [--cliff-slope-deg 30] [--cliff-melt-passes 300]
 """
 from __future__ import annotations
 
@@ -180,7 +200,11 @@ def detect_coarse_extrema(elev: np.ndarray, min_prominence: float = 4.0,
     Flat-top mesas / terraces satisfy `elev >= nmax` for MANY connected cells; a
     representative-per-connected-component dedup keeps ONE guard point per
     feature (the raw per-cell mask floods terrace edges and makes the Gaussian
-    corrections fight each other). Returns [{r, c, kind, h0, relief}]."""
+    corrections fight each other). Returns [{r, c, kind, h0, relief,
+    is_regional}] — is_regional = the extremum is ALSO the extreme of its 7x7
+    relief window (a true summit / basin floor, not a terrace-step edge with
+    higher/lower ground a few cells away). CLIFF-SMOOTH-1 uses this to relax
+    terrace-step extrema on the cliff mask while keeping real peaks pinned."""
     from mission_terrain_analyzer import label_components
     n = elev.shape[0]
     p = np.pad(elev, 1, mode="edge")
@@ -201,8 +225,10 @@ def detect_coarse_extrema(elev: np.ndarray, min_prominence: float = 4.0,
             comp = elev[ys, xs]
             i = int(np.argmax(comp)) if kind == "peak" else int(np.argmin(comp))
             r, c = int(ys[i]), int(xs[i])
+            regional = (bool(elev[r, c] >= rmax[r, c] - 1e-6) if kind == "peak"
+                        else bool(elev[r, c] <= rmin[r, c] + 1e-6))
             out.append({"r": r, "c": c, "kind": kind, "h0": float(elev[r, c]),
-                        "relief": float(relief[r, c])})
+                        "relief": float(relief[r, c]), "is_regional": regional})
     return out
 
 
@@ -251,12 +277,105 @@ def mountain_rock_mask(work: np.ndarray, elev: np.ndarray, factor: int,
     return rock
 
 
+# --- CLIFF-SMOOTH-1: terraced-cliff melting + gradient-aligned striation -----
+
+def onesided_step(elev: np.ndarray) -> np.ndarray:
+    """Per-cell max |elevation jump| to any 4-neighbor (wu). The true riser
+    height of a 1-cell terrace step (central differences halve it)."""
+    d_r = np.abs(np.diff(elev, axis=0))          # (N-1, N) riser between rows
+    d_c = np.abs(np.diff(elev, axis=1))          # (N, N-1)
+    step = np.zeros_like(elev)
+    step[:-1, :] = np.maximum(step[:-1, :], d_r)
+    step[1:, :] = np.maximum(step[1:, :], d_r)
+    step[:, :-1] = np.maximum(step[:, :-1], d_c)
+    step[:, 1:] = np.maximum(step[:, 1:], d_c)
+    return step
+
+
+def coarse_cliff_mask(elev: np.ndarray, water_coarse=None,
+                      cliff_slope_deg: float = 30.0,
+                      dilate_iters: int = 1) -> np.ndarray:
+    """Cliff mask on the coarse grid from ONE-SIDED max slope.
+
+    np.gradient central differences HALVE the apparent slope of a single-cell
+    100wu riser (50wu/cell = 21deg -> invisible to a 30deg threshold), which is
+    exactly the terraced-staircase geometry this slice targets. One-sided
+    forward diffs see the true 100/128 = 38deg step. Water is excluded both
+    before and after the ring dilation (the melt must never touch the water
+    plane)."""
+    slope_deg = np.degrees(np.arctan(onesided_step(elev) / WORLD_UNITS_PER_VERTEX))
+    m = slope_deg > cliff_slope_deg
+    if water_coarse is not None:
+        m &= ~water_coarse
+    for _ in range(dilate_iters):
+        m = _dilate(m)
+    if water_coarse is not None:
+        m &= ~water_coarse
+    return m
+
+
+def cliff_weight_fine(cliff_coarse: np.ndarray, factor: int) -> np.ndarray:
+    """Feathered [0,1] cliff weight on the fine grid: 1.0 on the (dilated)
+    coarse cliff mask, box-feathered ~2 coarse cells wide so the slope-adaptive
+    drift cap has no crease at the mask boundary (same pattern as the
+    structural-pin feather)."""
+    w = _fine_mask(cliff_coarse, factor).astype(np.float64)
+    for _ in range(2 * factor):
+        w = _box3(w)
+    w = np.clip(w, 0.0, 1.0)
+    w[_fine_mask(cliff_coarse, factor)] = 1.0
+    return w
+
+
+def _bilinear_sample(a: np.ndarray, r: np.ndarray, c: np.ndarray) -> np.ndarray:
+    """Bilinear gather at fractional (row, col) positions (edge-clamped)."""
+    r = np.clip(r, 0.0, a.shape[0] - 1.0)
+    c = np.clip(c, 0.0, a.shape[1] - 1.0)
+    r0 = np.floor(r).astype(np.int64)
+    c0 = np.floor(c).astype(np.int64)
+    r1 = np.minimum(r0 + 1, a.shape[0] - 1)
+    c1 = np.minimum(c0 + 1, a.shape[1] - 1)
+    fr = r - r0
+    fc = c - c0
+    return (a[r0, c0] * (1 - fr) * (1 - fc) + a[r1, c0] * fr * (1 - fc)
+            + a[r0, c1] * (1 - fr) * fc + a[r1, c1] * fr * fc)
+
+
+def striation_field(surface: np.ndarray, seed: int, iters: int = 24,
+                    blur_step: float = 1.5) -> np.ndarray:
+    """Gradient-aligned ridged striation, zero-centered ~[-1,1].
+
+    Erosion runs DOWN a cliff face: gullies/spurs are elongated along the fall
+    line and vary ACROSS it. Build: high-frequency value noise, directionally
+    blurred ALONG the local downhill direction of `surface` (features smear
+    downslope), then ridged ((1-|n|)^2 -> crests at zero crossings). Tuning
+    (iters=24, step=1.5, lattice V/4) gives ~6.6x across/down gradient-energy
+    anisotropy on a uniform ramp. Deterministic from `seed` (offset so it
+    never aliases the isotropic mountainify octaves)."""
+    V = surface.shape[0]
+    gy, gx = np.gradient(surface)
+    mag = np.hypot(gx, gy) + 1e-9
+    dy, dx = gy / mag * blur_step, gx / mag * blur_step
+    n = _value_noise(V, max(8, V // 4), seed + 9001)
+    rr, cc = np.mgrid[0:V, 0:V].astype(np.float64)
+    rp, cp = rr + dy, cc + dx
+    rm, cm = rr - dy, cc - dx
+    for _ in range(iters):
+        n = 0.5 * n + 0.25 * (_bilinear_sample(n, rp, cp)
+                              + _bilinear_sample(n, rm, cm))
+    n = n / (np.abs(n).max() + 1e-9)
+    r = (1.0 - np.abs(n)) ** 2
+    return (r - r.mean()) * 2.0
+
+
 def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
                   shape_tolerance: float = 0.10, max_drift: float = 24.0,
                   passes: int = 60, lam: float = 0.5, mu: float = -0.52,
                   min_prominence: float = 4.0,
                   mountainify_amp: float = 0.0, seed: int = 1337,
-                  water_coarse=None):
+                  water_coarse=None,
+                  cliff_drift: float = 0.0, cliff_slope_deg: float = 30.0,
+                  cliff_melt_passes: int = 300):
     """Corner-UNpinned, landform-preserving re-authoring of the visual surface.
 
     1) Taubin lambda|mu smoothing on the fine grid: a volume-preserving BAND-PASS
@@ -282,6 +401,12 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
     Still bounded by max_drift (re-limited) and still subject to the extrema
     guarantee + structural pin ("same mountain, more mountain-like").
 
+    CLIFF-SMOOTH-1 (cliff_drift > 0): terraced-cliff melting. See module
+    docstring — cliff-weighted diffusion between (1) and (2), a slope-adaptive
+    drift FIELD in (2)/(2b), non-regional extrema on the cliff mask exempted
+    from re-injection in (3), and gradient-aligned striation blended into the
+    mountainify detail on the cliff weight.
+
     Returns (work, info) — info carries the shape-fidelity metrics."""
     base = upsample_corner_pinned(elev, factor)
     V = base.shape[0]
@@ -292,10 +417,35 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
         work += lam * (_box3(work) - work)
         work += mu * (_box3(work) - work)
 
-    # 2) soft drift bound.
+    # 1b) CLIFF-SMOOTH-1 melt: Taubin is band-pass BY DESIGN (the landform band
+    #     passes ~unchanged), so a giant terraced face — whose treads live in
+    #     the landform band — survives it. On the cliff weight only, run plain
+    #     weighted diffusion: the staircase relaxes toward the harmonic
+    #     (continuous-face) surface. Flats have weight ~0 and stay calm.
+    cliff_mask = None
+    cliff_w = None
+    if cliff_drift > 0.0:
+        cliff_mask = coarse_cliff_mask(elev, water_coarse=water_coarse,
+                                       cliff_slope_deg=cliff_slope_deg)
+        if cliff_mask.any():
+            cliff_w = cliff_weight_fine(cliff_mask, factor)
+            melt_step = 0.55 * cliff_w
+            for _ in range(cliff_melt_passes):
+                work += melt_step * (_box3(work) - work)
+
+    # 2) soft drift bound. With CLIFF-SMOOTH-1 the bound is a FIELD: scalar
+    #    max_drift on flats, ramping (feathered) to cliff_drift on the cliff
+    #    mask so the melt can actually move terrace treads ~half a step.
+    drift_cap = None
+    eff_drift = max_drift
     if max_drift > 0:
-        dev = work - base
-        work = base + max_drift * np.tanh(dev / max_drift)
+        if cliff_w is not None and cliff_drift > max_drift:
+            drift_cap = max_drift + (cliff_drift - max_drift) * cliff_w
+            eff_drift = cliff_drift
+            work = base + drift_cap * np.tanh((work - base) / drift_cap)
+        else:
+            dev = work - base
+            work = base + max_drift * np.tanh(dev / max_drift)
 
     # facet-flattening proof point: crease energy of the SMOOTHED surface,
     # before any feature-ADDING detail (ridges are legitimate new curvature and
@@ -308,24 +458,50 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
     if mountainify_amp > 0.0:
         rock = mountain_rock_mask(work, elev, factor, water_coarse=water_coarse)
         detail = (_ridged_fbm(V, max(6, V // 16), seed) - 0.5) * 2.0  # [-1,1]
+        stria_rms_on_cliff = None
+        if cliff_w is not None:
+            # CLIFF-SMOOTH-1 cliff-ness: on the cliff weight, bias the synthesis
+            # toward gradient-aligned striation (erosion runs DOWN the face)
+            # instead of isotropic bumps; modest amplitude (0.75x).
+            stria = striation_field(work, seed)
+            detail = (1.0 - cliff_w) * detail + (0.75 * cliff_w) * stria
         add = mountainify_amp * rock * detail
         work += add
         if max_drift > 0:
-            dev = work - base
-            work = base + max_drift * np.tanh(dev / max_drift)
+            cap = drift_cap if drift_cap is not None else max_drift
+            work = base + cap * np.tanh((work - base) / cap)
         rock_cells = rock > 0.35
+        if cliff_w is not None:
+            cliff_cells = cliff_w > 0.5
+            if cliff_cells.any():
+                stria_rms_on_cliff = float(np.sqrt((add[cliff_cells] ** 2).mean()))
         minfo = {
             "seed": seed,
             "amp_wu": mountainify_amp,
             "rock_area_frac": float(rock_cells.mean()),
             "detail_rms_on_rock_wu": (float(np.sqrt((add[rock_cells] ** 2).mean()))
                                       if rock_cells.any() else 0.0),
+            "striation_rms_on_cliff_wu": stria_rms_on_cliff,
         }
 
     # 3) extrema re-injection: shrinking-sigma rounds so nearby guard points stop
     #    fighting (a wide correction for A can push neighbour B out of ITS budget;
     #    each round narrows the support and re-measures honestly).
-    extrema = detect_coarse_extrema(elev, min_prominence=min_prominence)
+    #    CLIFF-SMOOTH-1 relaxation (documented): extrema ON the cliff mask that
+    #    are NOT regional summits/pits are terrace-step edges — re-injecting
+    #    them would rebuild the exact staircase the melt removed. They are
+    #    exempted; true peaks/pits (is_regional) stay pinned everywhere.
+    all_extrema = detect_coarse_extrema(elev, min_prominence=min_prominence)
+    relaxed = []
+    if cliff_mask is not None and cliff_mask.any():
+        extrema = []
+        for e in all_extrema:
+            if cliff_mask[e["r"], e["c"]] and not e["is_regional"]:
+                relaxed.append(e)
+            else:
+                extrema.append(e)
+    else:
+        extrema = all_extrema
     for sigma in (1.25 * factor, 0.9 * factor, 0.6 * factor, 0.4 * factor):
         win = max(2, int(3 * sigma))
         yy, xx = np.mgrid[-win:win + 1, -win:win + 1]
@@ -373,18 +549,41 @@ def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
         if mv > tol + 1e-6:
             viol += 1
     drift = np.abs(work - base)
+    cliff_info = None
+    if cliff_drift > 0.0:
+        cliff_info = {
+            "cliff_drift_wu": cliff_drift,
+            "cliff_slope_deg": cliff_slope_deg,
+            "melt_passes": cliff_melt_passes,
+            "coarse_cliff_cells": (int(cliff_mask.sum())
+                                   if cliff_mask is not None else 0),
+            "coarse_cliff_frac": (float(cliff_mask.mean())
+                                  if cliff_mask is not None else 0.0),
+            "relaxed_extrema": len(relaxed),
+        }
+        if cliff_w is not None:
+            core = cliff_w > 0.5
+            if core.any():
+                dcl = drift[core]
+                cliff_info["drift_on_cliff_wu"] = {
+                    "mean": float(dcl.mean()),
+                    "p99": float(np.percentile(dcl, 99)),
+                    "max": float(dcl.max())}
     info = {
         "mode": "reauth",
         "shape_tolerance": shape_tolerance,
         "max_drift_wu": max_drift,
+        "effective_max_drift_wu": eff_drift,
         "passes": passes,
         "taubin_lambda": lam,
         "taubin_mu": mu,
         "min_prominence_wu": min_prominence,
         "landform_correlation": corr,
-        "extrema": {"count": len(extrema), "violations": viol,
+        "extrema": {"count": len(all_extrema), "enforced": len(extrema),
+                    "relaxed_on_cliff": len(relaxed), "violations": viol,
                     "worst_move_frac_of_relief": worst_frac,
                     "max_move_wu": max_move},
+        "cliff": cliff_info,
         "corner_move_wu": {"max": float(corner_move.max()),
                            "mean": float(corner_move.mean())},
         "facet_crease_energy": {"bilinear_base": _crease_energy(base),
@@ -491,7 +690,9 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
          max_drift: float = 24.0, reauth_passes: int = 60,
          objfade_radius_wu: float = 256.0,
          mountainify_amp: float = 0.0, seed: int = 1337,
-         mips: bool = True) -> dict:
+         mips: bool = True,
+         cliff_drift: float = 0.0, cliff_slope_deg: float = 30.0,
+         cliff_melt_passes: int = 300) -> dict:
     pak = missions_dir / f"{mission}.pak"
     if not pak.is_file():
         return {"mission": mission, "error": f"not found: {pak}"}
@@ -517,7 +718,9 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
             elev, factor, protect, shape_tolerance=shape_tolerance,
             max_drift=max_drift, passes=reauth_passes,
             mountainify_amp=mountainify_amp, seed=seed,
-            water_coarse=layers["water"])
+            water_coarse=layers["water"],
+            cliff_drift=cliff_drift, cliff_slope_deg=cliff_slope_deg,
+            cliff_melt_passes=cliff_melt_passes)
         # pyramid score before/after on the coarse-sampled landform (same metric
         # the reshape path reports; reauth should LOWER it a bit -- rounded facets
         # weaken the radial-monotonic pyramid signature -- while corr stays high).
@@ -587,6 +790,11 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
                 "smoothing; landform kept (extrema within shape_tolerance of local "
                 "relief, drift tanh-bounded); overlay/footprints feather-pinned; "
                 "visual_damp.r32 = static object displacement fade; render-only.")
+        if reauth_info.get("cliff"):
+            note += (" CLIFF-SMOOTH-1: slope-adaptive drift field (cliff mask "
+                     "allows cliff_drift), terrace melt diffusion, non-regional "
+                     "cliff extrema relaxed (true peaks pinned), gradient-aligned "
+                     "striation under mountainify.")
     elif reshape:
         note = ("reshaped (de-pyramid) visual height; coarse corners clamped to "
                 "corner_clamp; protected pinned; render-only.")
@@ -642,6 +850,14 @@ def main() -> int:
     ap.add_argument("--mountainify-amp", type=float, default=14.0,
                     help="mountainify detail amplitude (wu) at full rock weight")
     ap.add_argument("--seed", type=int, default=1337, help="mountainify noise seed")
+    # CLIFF-SMOOTH-1 knobs (active with --reauth; 0 disables)
+    ap.add_argument("--cliff-drift", type=float, default=112.0,
+                    help="drift bound ON the cliff mask (wu); flats keep "
+                         "--max-drift. 0 disables CLIFF-SMOOTH-1 entirely")
+    ap.add_argument("--cliff-slope-deg", type=float, default=30.0,
+                    help="one-sided coarse slope threshold for the cliff mask")
+    ap.add_argument("--cliff-melt-passes", type=int, default=300,
+                    help="cliff-weighted diffusion passes (terrace melt)")
     # TERRAIN-LOD-GEOMORPH-1 knob
     ap.add_argument("--no-mips", action="store_true",
                     help="skip TERRAIN-LOD-GEOMORPH-1 max-mip sidecar emission")
@@ -661,7 +877,10 @@ def main() -> int:
                    max_drift=args.max_drift, reauth_passes=args.reauth_passes,
                    objfade_radius_wu=args.objfade_radius_wu,
                    mountainify_amp=(args.mountainify_amp if args.mountainify else 0.0),
-                   seed=args.seed, mips=not args.no_mips)
+                   seed=args.seed, mips=not args.no_mips,
+                   cliff_drift=args.cliff_drift,
+                   cliff_slope_deg=args.cliff_slope_deg,
+                   cliff_melt_passes=args.cliff_melt_passes)
         if rep.get("error"):
             print(f"[visual-bake] {m}: ERROR {rep['error']}", file=sys.stderr); rc = 1; continue
         extra = ""
@@ -671,18 +890,27 @@ def main() -> int:
             # unpinned AND drift inside the soft bound (+tanh slack).
             # corner cap: extrema re-injection may locally exceed the tanh soft
             # bound while restoring a peak (that is the guarantee WORKING) ->
-            # allow 25% headroom over max_drift; p99 drift stays well inside.
+            # allow 25% headroom over the EFFECTIVE drift (CLIFF-SMOOTH-1: the
+            # cliff mask allows cliff_drift; flats keep max_drift).
+            eff = float(ra.get("effective_max_drift_wu", args.max_drift))
             ok = (ra["extrema"]["violations"] == 0
                   and ra["landform_correlation"] >= 0.99
-                  and rep["max_corner_error_wu"] <= args.max_drift * 1.25
+                  and rep["max_corner_error_wu"] <= eff * 1.25
                   and rep["max_corner_error_wu"] > 0.05)
             ce = ra["facet_crease_energy"]
+            n_enf = ra["extrema"].get("enforced", ra["extrema"]["count"])
             extra = (f" corr={ra['landform_correlation']:.4f}"
-                     f" extrema_viol={ra['extrema']['violations']}/{ra['extrema']['count']}"
+                     f" extrema_viol={ra['extrema']['violations']}/{n_enf}"
                      f" crease {ce['bilinear_base']:.2f}->{ce['smoothed']:.2f}"
                      f" drift mean={ra['drift_vs_bilinear_wu']['mean']:.2f}"
                      f"/p99={ra['drift_vs_bilinear_wu']['p99']:.1f}wu"
                      f" pyr {ra['pyramid_top_score_before']:.2f}->{ra['pyramid_top_score_after']:.2f}")
+            if ra.get("cliff"):
+                ci = ra["cliff"]
+                dcl = ci.get("drift_on_cliff_wu") or {}
+                extra += (f" cliff[{100*ci['coarse_cliff_frac']:.1f}%"
+                          f" relaxed={ci['relaxed_extrema']}"
+                          f" drift_p99={dcl.get('p99', 0.0):.1f}wu]")
             if ra.get("mountainify"):
                 mi = ra["mountainify"]
                 extra += (f" mtn[seed={mi['seed']} rock={100*mi['rock_area_frac']:.0f}%"
