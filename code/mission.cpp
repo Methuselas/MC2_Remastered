@@ -135,6 +135,7 @@ extern void terrainMaterials_apply(const char*);     // TERRAIN-MATERIAL-LIB-1
 #include "../resource.h"
 
 #include<gameos.hpp>
+#include "mc2_verify.h"  // MC2-VERIFY-LIVE-1: live data-contract guards
 #include "../GameOS/gameos/gpu_cull_substrate.h"  // C0-3: GPU cull substrate init/shutdown
 #include "../GameOS/gameos/gpu_cull_compute.h"   // C1a: GPU visibility compute dispatch
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C2: async readback ring buffer
@@ -2666,29 +2667,37 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		}
 	else {
 		result = missionFile->seekBlock("Parts");
-		gosASSERT(result == NO_ERR);
+		// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1)
+		MC2_VERIFY(result == NO_ERR, "Mission::init: no [Parts] block in mission .fit: %s",
+			missionName ? missionName : "(null)");
 		result = missionFile->readIdULong("NumParts",numParts);
-		gosASSERT(result == NO_ERR);
+		// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1)
+		if (!MC2_VERIFY(result == NO_ERR, "Mission::init: [Parts] NumParts read failed"))
+			numParts = 0;	// log mode: degrade to no parts instead of iterating garbage
 		if (numParts)
 			for (int i = 1; i < long(numParts + 1); i++) {
 				char partName[12];
 				sprintf(partName,"Part%d",i);
-				
+
 				//------------------------------------------------------------------
 				// Find the object to load
 				result = missionFile->seekBlock(partName);
-				gosASSERT(result == NO_ERR);
+				// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1)
+				if (!MC2_VERIFY(result == NO_ERR, "Mission::init: missing [%s] block", partName))
+					continue;	// log mode: skip the absent part
 
 				char teamID = -1;
 				result = missionFile->readIdChar("TeamId", teamID);
-				gosASSERT(result == NO_ERR);
+				// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1)
+				MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing TeamId", partName);
 
 				char commanderID = -1;
 				result = missionFile->readIdChar("CommanderId", commanderID);
 				if (result != NO_ERR) {
 					long cID;
 					result = missionFile->readIdLong("CommanderId", cID);
-					gosASSERT(result == NO_ERR);
+					// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1)
+					MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing CommanderId", partName);
 					commanderID = (char)cID;
 				}
 
@@ -2701,6 +2710,21 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 					teamID = commandersToLoad[origCommanderID][1];
 				}
 
+				// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1):
+				// file-supplied TeamId/CommanderId (chars, up to 127) feed
+				// maxTeamID/maxCommanderID unchecked; ids > 7 overflow the
+				// static Team::teams[MAX_TEAMS]/Commander::commanders[
+				// MAX_COMMANDERS] init-loop WRITES below (adversarial A5, the
+				// SP-reachable landmine). Verify at the read site + bound.
+				if (!MC2_VERIFY((long)teamID < MAX_TEAMS,
+						"Mission::init: [%s] TeamId %d exceeds MAX_TEAMS-1 (%d) -- bounding",
+						partName, (int)teamID, MAX_TEAMS - 1))
+					teamID = MAX_TEAMS - 1;
+				if (!MC2_VERIFY((long)commanderID < MAX_COMMANDERS,
+						"Mission::init: [%s] CommanderId %d exceeds MAX_COMMANDERS-1 (%d) -- bounding",
+						partName, (int)commanderID, MAX_COMMANDERS - 1))
+					commanderID = MAX_COMMANDERS - 1;
+
 				if (commanderID > maxCommanderID)
 					maxCommanderID = commanderID;
 				if (teamID > maxTeamID)
@@ -2710,6 +2734,18 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 
 	//----------------------------------------------
 	// Now, init the teams and commanders we need...
+	// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1):
+	// write-side guard for the marquee static-array overflow -- covers ALL
+	// sources of maxTeamID/maxCommanderID (file parts above, MP_LOGISTICS
+	// playerInfo branch), not just the SP read site.
+	if (!MC2_VERIFY(maxTeamID < MAX_TEAMS,
+			"Mission::init: maxTeamID %ld >= MAX_TEAMS %d -- bounding (Team::teams[] write overflow)",
+			maxTeamID, MAX_TEAMS))
+		maxTeamID = MAX_TEAMS - 1;
+	if (!MC2_VERIFY(maxCommanderID < MAX_COMMANDERS,
+			"Mission::init: maxCommanderID %ld >= MAX_COMMANDERS %d -- bounding (Commander::commanders[] write overflow)",
+			maxCommanderID, MAX_COMMANDERS))
+		maxCommanderID = MAX_COMMANDERS - 1;
 	for (int i = 0; i <= maxTeamID; i++) {
 		Team::teams[i] = new Team;
 		Team::teams[i]->init(i);
@@ -2735,14 +2771,36 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		// upstream are no-ops in RelWithDebInfo, so this is reachable with any
 		// hand-made/imported map (e.g. terrain-gen imports that only wrote
 		// [ColorMap]/[Terrain]). Fail with a clear fatal instead of the AV.
+		// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1):
+		// aligned with the existing CRASH-HARDEN STOP (b71702ba) below -- in
+		// fatal mode the verify stops first with the same message; in log/off
+		// mode the legacy STOP path is preserved unchanged.
+		MC2_VERIFY((Team::teams[0] != NULL) && (Commander::commanders[0] != NULL),
+			"mission has no commanders -- invalid mission data (no [Parts] with TeamId/CommanderId): %s",
+			missionName ? missionName : "(null)");
 		if ((Team::teams[0] == NULL) || (Commander::commanders[0] == NULL))
 			STOP(("mission has no commanders -- invalid mission data (no [Parts] with TeamId/CommanderId): %s",
 			      missionName ? missionName : "(null)"));
 		Team::home = Team::teams[0];
 		Commander::home = Commander::commanders[0];
 		for (long i = 0; i <= maxCommanderID; i++) {
-			if (commandersToLoad[i][0] > -1)
-				Commander::commanders[commandersToLoad[i][0]]->setTeam(Team::teams[commandersToLoad[i][1]]);
+			// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1):
+			// caller-supplied commandersToLoad[8][3] is read up to
+			// maxCommanderID (now bounded above) and its commander/team ids
+			// index the static arrays -- verify both ids + that the referenced
+			// slots were actually created before the setTeam deref
+			// (adversarial A5: the :2744 read-overflow companion).
+			long ctlCommander = commandersToLoad[i][0];
+			long ctlTeam = commandersToLoad[i][1];
+			if (ctlCommander > -1) {
+				if (!MC2_VERIFY_BOUNDS(ctlCommander, MAX_COMMANDERS, "Mission::init commandersToLoad commander") ||
+					!MC2_VERIFY_BOUNDS(ctlTeam, MAX_TEAMS, "Mission::init commandersToLoad team") ||
+					!MC2_VERIFY((Commander::commanders[ctlCommander] != NULL) && (Team::teams[ctlTeam] != NULL),
+						"Mission::init: commandersToLoad[%ld] names uninitialized commander %ld / team %ld",
+						i, ctlCommander, ctlTeam))
+					continue;	// log mode: skip the malformed entry
+				Commander::commanders[ctlCommander]->setTeam(Team::teams[ctlTeam]);
+			}
 		}
 		Commander::commanders[0]->setTeam(Team::home);
 	}
@@ -3050,11 +3108,22 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	MechWarrior::setup();
 
 	result = missionFile->seekBlock("Warriors");
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1)
+	MC2_VERIFY(result == NO_ERR, "Mission::init: no [Warriors] block in mission .fit: %s",
+		missionName ? missionName : "(null)");
 
 	unsigned long numWarriors;
 	result = missionFile->readIdULong("NumWarriors",numWarriors);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1)
+	if (!MC2_VERIFY(result == NO_ERR, "Mission::init: [Warriors] NumWarriors read failed"))
+		numWarriors = 0;	// log mode: degrade instead of looping over an uninitialized count
+	// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1): the
+	// 1-based warrior loops below index warriorList[numWarriors] -- a
+	// file-supplied count >= MAX_WARRIORS reads past the static array.
+	if (!MC2_VERIFY((long)numWarriors < MAX_WARRIORS,
+			"Mission::init: NumWarriors %lu exceeds MAX_WARRIORS-1 (%d) -- bounding",
+			numWarriors, MAX_WARRIORS - 1))
+		numWarriors = MAX_WARRIORS - 1;
 
 	bool loadBrainParameters = (result == NO_ERR);
 	// CRASH-SOAK harness: tally how many mission AI brains (e.g. "magicx" on
@@ -3090,9 +3159,13 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			gosASSERT(pilotFile != NULL);
 		
 			long result = pilotFile->open(pilotFullFileName);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: warrior profile open failed: %s",
+				(const char*)pilotFullFileName);
 			result = pilot->init(pilotFile);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: warrior init failed: %s",
+				(const char*)pilotFullFileName);
 			
 			pilotFile->close();
 			delete pilotFile;
@@ -3102,7 +3175,8 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			// Read in the Brain module...
 			char moduleName[128];
 			result = missionFile->readIdString("Brain", moduleName, 127);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: %s missing Brain key", warriorName);
 			
 			//------------------------------------------------------------
 			// For now, all mplayer brains are pbrain. Need to change when
@@ -3173,6 +3247,12 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			if (inlineEmptySkipParams && MechWarrior::warriorList[i] &&
 			    !MechWarrior::warriorList[i]->getBrain())
 				continue;
+			// MC2_VERIFY reclassified from gosASSERT (slice MC2-VERIFY-LIVE-1):
+			// warriorList[i] is NULL when newWarrior() ran out of slots above
+			// (the "Too many pilots" STOP continues in release) -- null-deref.
+			if (!MC2_VERIFY(MechWarrior::warriorList[i] != NULL,
+					"Mission::init: warriorList[%lu] is NULL (loadBrainParameters)", i))
+				continue;	// log mode: skip the missing warrior
 			result = MechWarrior::warriorList[i]->loadBrainParameters(missionFile, i);
 			//Assert(result == NO_ERR, result, " Could not load Warrior Brain Parameters ");
 		}
@@ -4428,6 +4508,10 @@ void Mission::initTGLForMission()
 //----------------------------------------------------------------------------------
 void Mission::destroy (bool initLogistics)
 {
+	// MC2-VERIFY-LIVE-1: [VERIFY] counter line at mission end (soak evidence:
+	// fires=0 expected on stock missions). Silent when MC2_VERIFY_MODE=off.
+	mc2verify::MissionSummary(missionFileName);
+
 	gos_SetHudScaleActive(false);  // back to 100% for menus/logistics
 
 	// C2: release async readback ring buffer at mission teardown.
