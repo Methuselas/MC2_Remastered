@@ -419,6 +419,7 @@ set(SOURCES
     "code/gameobj.cpp"
     "code/gate.cpp"
     "code/goal.cpp"
+    "code/ground_contact_blob.cpp"
     "code/group.cpp"
     "code/gvehicl.cpp"
     "code/light.cpp"

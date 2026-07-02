@@ -1105,6 +1105,12 @@ def main():
                             # smoke does nothing.
                             "MC2_TERRAIN_OVERLAY_V2",
                             "MC2_TERRAIN_OVERLAY_V2_FILE",
+                            # TERRAIN-SHORELINE-MASK-1 -- authored land-side wet/foam
+                            # shoreline mask sidecar override (default OFF). Must be
+                            # allowlisted or Popen drops it and the gate-ON smoke
+                            # does nothing.
+                            "MC2_TERRAIN_SHORELINE",
+                            "MC2_TERRAIN_SHORELINE_FILE",
                             # TERRAIN-MATERIAL-LIB-1 — data-defined terrain material
                             # tuning (default OFF). Must be allowlisted or Popen
                             # drops it and the gate-ON smoke does nothing.
@@ -1116,6 +1122,11 @@ def main():
                             # smoke does nothing.
                             "MC2_TERRAIN_CONTROLMAP_ALBEDO",
                             "MC2_TERRAIN_CONTROLMAP_ALBEDO_STRENGTH",
+                            # GROUND-CONTACT-BLOB-1 -- per-mover contact-darkening
+                            # disc under mechs/vehicles (default OFF). Must be
+                            # allowlisted or Popen drops it and the gate-ON smoke
+                            # does nothing.
+                            "MC2_GROUND_CONTACT_BLOB",
                             # Mask-dispatch (pre-bake-terrain merge)
                             "MC2_TERRAIN_MASK_DISPATCH",
                             "MC2_TERRAIN_MASK_DISPATCH_PARITY",

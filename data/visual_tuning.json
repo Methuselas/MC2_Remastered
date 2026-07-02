@@ -21,6 +21,9 @@
     "mc2_10": {
     },
     "mc2_17": {
+      "terrainLightingV2Floor": 0.45,
+      "mechAmbientStrength": 0.28,
+      "shadowSoftness": 1.4
     }
   }
 }
