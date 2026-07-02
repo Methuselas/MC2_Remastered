@@ -31,10 +31,28 @@ import cook_pbr_maps as pbr          # noqa: E402
 import cook_terrain_layers as ctl    # noqa: E402
 
 MANIFEST_PATH = _TOOLS_DIR / 'terrain_layer_manifest.json'
+_REPO_ROOT = _TOOLS_DIR.parent.parent
+FRAG_HEADER_PATH = _REPO_ROOT / 'shaders' / 'include' / 'terrain_mat_layers.hglsl'
+LOADER_CPP_PATH = _REPO_ROOT / 'GameOS' / 'gameos' / 'gos_terrain_lod_chunk.cpp'
 
 KTX2_MAGIC = b"\xabKTX 20\xbb\r\n\x1a\n"
 REQUIRED_CHANNELS = ('rock', 'grass', 'dirt', 'concrete', 'snow', 'cliff')
 OPTIONAL_CHANNELS = ('shore_sand', 'wet_rock')
+
+# TERRAIN-MATERIAL-TEXTURES-1-FIX (fix A): the canonical channel->layer order the
+# albedo array is built and sampled in. Index i = layer i in the GL_TEXTURE_2D_ARRAY;
+# the value is the frag MAT_LAYER_* constant name. This test module asserts the frag
+# header, the C++ loader name table, and the manifest all agree with THIS list --
+# the shared-source-of-truth guard against the "dirt renders with road albedo"
+# weight-channel -> array-layer index mismatch.
+CANONICAL_LAYER_ORDER = (
+    ('rock', 'MAT_LAYER_ROCK', 0),
+    ('grass', 'MAT_LAYER_GRASS', 1),
+    ('dirt', 'MAT_LAYER_DIRT', 2),
+    ('concrete', 'MAT_LAYER_CONCRETE', 3),
+    ('snow', 'MAT_LAYER_SNOW', 4),
+    ('cliff', 'MAT_LAYER_MARBLE_CLIFF', 5),
+)
 
 
 def _make_test_image(width=8, height=8, mode='RGB'):
@@ -99,6 +117,87 @@ class TestManifestSchema(unittest.TestCase):
         # Sanity: driver writes "<channel>_<map>.ktx2" -- confirm the manifest
         # documents the same convention it's actually consumed with.
         self.assertIn('<channel>_<map>.ktx2', self.manifest['naming_convention'])
+
+
+# ---------------------------------------------------------------------------
+# 1b. INDEX ORACLE: channel -> array-layer order agreement across the three
+#     sources of truth (frag MAT_LAYER_* header, C++ loader name table, manifest).
+#     TERRAIN-MATERIAL-TEXTURES-1-FIX (fix A).
+# ---------------------------------------------------------------------------
+
+class TestChannelLayerIndexAgreement(unittest.TestCase):
+
+    def _parse_frag_mat_layers(self):
+        """Parse `#define MAT_LAYER_<NAME>  <int>` from the frag header."""
+        import re
+        text = FRAG_HEADER_PATH.read_text(encoding='utf-8')
+        out = {}
+        for m in re.finditer(r'#define\s+(MAT_LAYER_\w+)\s+(\d+)', text):
+            out[m.group(1)] = int(m.group(2))
+        return out
+
+    def _parse_loader_channel_names(self):
+        """Extract the kMatAlbedoChannelNames[] string list order from the loader."""
+        import re
+        text = LOADER_CPP_PATH.read_text(encoding='utf-8')
+        m = re.search(r'kMatAlbedoChannelNames\[kMatAlbedoLayerCount\]\s*=\s*\{(.*?)\}',
+                      text, re.DOTALL)
+        self.assertIsNotNone(m, 'could not find kMatAlbedoChannelNames[] in loader')
+        return [s for s in re.findall(r'"([^"]+)"', m.group(1))]
+
+    def _parse_loader_expected_layers(self):
+        """Extract kMatAlbedoExpectedLayer[] integer order from the loader."""
+        import re
+        text = LOADER_CPP_PATH.read_text(encoding='utf-8')
+        m = re.search(r'kMatAlbedoExpectedLayer\[kMatAlbedoLayerCount\]\s*=\s*\{(.*?)\}',
+                      text, re.DOTALL)
+        self.assertIsNotNone(m, 'could not find kMatAlbedoExpectedLayer[] in loader')
+        # first integer on each populated line
+        return [int(x) for x in re.findall(r'(\d+)\s*,', m.group(1))]
+
+    def test_frag_constants_match_canonical(self):
+        frag = self._parse_frag_mat_layers()
+        for channel, const_name, idx in CANONICAL_LAYER_ORDER:
+            self.assertIn(const_name, frag, f'frag header missing {const_name}')
+            self.assertEqual(frag[const_name], idx,
+                             f'{const_name} = {frag[const_name]} in frag header, expected {idx}')
+
+    def test_loader_channel_name_order_matches_canonical(self):
+        names = self._parse_loader_channel_names()
+        expected = [c for c, _, _ in CANONICAL_LAYER_ORDER]
+        self.assertEqual(names, expected,
+                         f'loader kMatAlbedoChannelNames order {names} != canonical {expected}')
+
+    def test_loader_expected_layer_table_is_identity(self):
+        # Each channel's array index must equal its frag MAT_LAYER constant, which
+        # (canonically) equals its position. kMatAlbedoExpectedLayer[i] must == i.
+        expected_layers = self._parse_loader_expected_layers()
+        self.assertEqual(expected_layers, [idx for _, _, idx in CANONICAL_LAYER_ORDER],
+                         f'loader kMatAlbedoExpectedLayer {expected_layers} disagrees with canonical')
+
+    def test_manifest_order_matches_canonical(self):
+        # The manifest layers dict preserves insertion order (json + py3.7+); the
+        # cook writes <channel>_albedo.ktx2 which the loader uploads in
+        # kMatAlbedoChannelNames order, so the manifest's required-channel order
+        # must equal the canonical order.
+        with open(MANIFEST_PATH, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+        manifest_required = [c for c in manifest['layers'].keys()
+                             if c in {ch for ch, _, _ in CANONICAL_LAYER_ORDER}]
+        self.assertEqual(manifest_required, [c for c, _, _ in CANONICAL_LAYER_ORDER],
+                         f'manifest channel order {manifest_required} != canonical')
+
+    def test_concrete_channel_has_no_lane_markings_source(self):
+        # fix B regression guard: the concrete channel must NOT point back at
+        # Road004 (lane-marking albedo). Any marking-free concrete source is fine.
+        with open(MANIFEST_PATH, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+        concrete = manifest['layers']['concrete']
+        albedo = concrete['maps']['albedo'].lower()
+        self.assertNotIn('road004', albedo,
+                         'concrete albedo still sources Road004 (lane markings) -- fix B regressed')
+        self.assertNotIn('road004', concrete.get('source_pack', '').lower(),
+                         'concrete source_pack still Road004 -- fix B regressed')
 
 
 # ---------------------------------------------------------------------------

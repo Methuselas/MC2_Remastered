@@ -1307,6 +1307,12 @@ def main():
                             # drops them and the gate-ON smoke does nothing.
                             "MC2_TERRAIN_MATERIAL_TEXTURES",
                             "MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH",
+                            # TERRAIN-MATERIAL-TEXTURES-1-FIX (fix A): the LOD-chunk
+                            # diag bitmask drives the u_diag debug views, incl. bit
+                            # 16384 = the INDEX ORACLE (each albedo array LAYER as a
+                            # flat colour by array index). Allowlisted so the oracle
+                            # capture reaches mc2.exe; 0/unset = no visual change.
+                            "MC2_TERRAIN_LOD_CHUNK_DIAG",
                             # TERRAIN-CHUNK-POM-1 -- real view-vector POM on the
                             # LOD-chunk terrain (default OFF) + tuning knobs.
                             # Must be allowlisted or Popen drops them and the
