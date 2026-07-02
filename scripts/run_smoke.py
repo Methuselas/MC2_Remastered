@@ -1386,6 +1386,14 @@ def main():
                             "MC2_LIGHT_COST_SPLIT",
                             "MC2_TOBJ_COST_SPLIT",
                             "MC2_STATIC_PROP_FLUSH_COST_SPLIT",
+                            # GOM-UPDATE-COST-1 / TXMMGR-PERF (framebudget lane):
+                            # coarse per-phase CPU cost-split emitters + perf gates.
+                            # Without these allowlisted, Popen drops them and the
+                            # gate-ON measurement smoke is inert (no [*_COST v1]).
+                            "MC2_GOM_UPDATE_COST_SPLIT",
+                            "MC2_RENDERLISTS_COST_SPLIT",
+                            "MC2_LIGHT_PREFIX_GPU_COPY",
+                            "MC2_SHADOW_CASTER_CULL_CACHE",
                             "MC2_STATIC_PROP_FLUSH_CACHED_BLOB",
                             "MC2_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE",
                             "MC2_STATIC_PROP_COLORS_FILL",
