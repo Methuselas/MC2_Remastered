@@ -1173,8 +1173,9 @@ void main() {
     //      thresholded into a coverage mask (wisps), not a smooth brighten.
     if (u_useShorelineMask != 0) {
         // Elevation-relative height above the water surface (can be negative
-        // = submerged; terrain under the water plane still shows here since
-        // this pass draws land, but the smoothstep clamps those to full wet).
+        // = submerged; terrain under the water plane still rasterizes here
+        // since this pass draws land. V4-STYLE: submerged fragments get ZERO
+        // band contribution -- see the aboveFade clamp below).
         float aboveWater = v_worldPos.z - u_waterElevation;
         // TERRAIN-SHORELINE-V3 FIX (measured): the band's ZERO crossing is at
         // the drawn waterline by construction (u_waterElevation == the water
@@ -1205,18 +1206,27 @@ void main() {
         // readable width instead of smearing 15m inland or vanishing.
         float wetHeight  = max(u_shorelineWetHeight,  1e-4);
         float foamHeight = max(u_shorelineFoamHeight,  1e-4);
-        // Wet lobe: 1.0 at/under the waterline, fading to 0.0 by wetHeight
-        // (horizontal wu) inland. Mirrors the mask's old G channel.
+        // Wet lobe: strongest just above the waterline, fading to 0.0 by
+        // wetHeight (horizontal wu) inland. Mirrors the mask's old G channel.
         float slWet  = 1.0 - smoothstep(0.0, wetHeight, horizDist);
-        // Foam rim: narrower band hugging the exact waterline.
+        // Foam rim: narrower band hugging the waterline.
         float slFoam = 1.0 - smoothstep(0.0, foamHeight, horizDist);
-        // Submerged land (aboveWater < 0) stays full-wet: force weight to 1.0
-        // there so the waterline edge is solid, not cut by the horizontal calc.
-        if (aboveWater <= 0.0) { slWet = 1.0; slFoam = 1.0; }
-        // Exclude fragments well inland (above the wet lobe entirely) and
-        // well below the surface (fully submerged land, if any is visible)
-        // from EITHER channel -- smoothstep already zeroes wet/foam there,
-        // so no extra branch is needed; this comment documents the bound.
+        // TERRAIN-SHORELINE-V4-STYLE (underwater-leak fix, user verdicts A+C):
+        // bands live STRICTLY ABOVE the drawn waterline. The V3 code FORCED
+        // slWet/slFoam to 1.0 on submerged land (aboveWater <= 0); the water
+        // pass is alpha-blended (WATER_MAX_ALPHA 0.87, transmittance-faded at
+        // the shore), so that painted the whole shallow shelf with white foam
+        // wisps + wet darken that ghosted through the teal water tint -- the
+        // "foam under the water surface" and the fluorescent green-teal rim
+        // hugging island edges (white foam under teal alpha = teal-green glow).
+        // horizDist is already 0 for all submerged fragments (max(aboveWater,0)),
+        // so a short fade-in over the first ~1.5 horizontal wu ABOVE the
+        // waterline zeroes both lobes at/below the water plane and feathers
+        // them in on land.
+        const float kShoreEdgeFeatherWu = 1.5;  // horizontal wu fade-in above the waterline
+        float aboveFade = smoothstep(0.0, kShoreEdgeFeatherWu, horizDist);
+        slWet  *= aboveFade;
+        slFoam *= aboveFade;
 
         // TERRAIN-SHORELINE-V3: optional mask MODULATOR. When a sidecar was
         // loaded (u_hasShorelineMask!=0), its G/B channels scale the elevation
@@ -1279,7 +1289,10 @@ void main() {
             // the lobe's edge and near-solid only at the exact waterline.
             float coverage  = smoothstep(1.0 - clamp(slFoam, 0.0, 1.0) * 0.85, 1.0, foamNoise + (1.0 - clamp(slFoam, 0.0, 1.0)) * 0.15);
             float foamAmt   = coverage * slopeAtten * u_shorelineFoamStrength;
-            lit = mix(lit, vec3(0.90, 0.93, 0.92), clamp(foamAmt, 0.0, 1.0) * (1.0 - pureConcrete));
+            // V4-STYLE (user verdict C): hue-NEUTRAL desaturated white. The old
+            // (0.90,0.93,0.92) carried a faint green cast that read teal when
+            // composited near the water tint; foam must not shift hue.
+            lit = mix(lit, vec3(0.92), clamp(foamAmt, 0.0, 1.0) * (1.0 - pureConcrete));
         }
     }
     // DIAG bit 2048: visualize the elevation-band weights as RGB (R=height
@@ -1292,12 +1305,15 @@ void main() {
         float nzcDbg        = clamp(abs(macroNDbg.z), 0.0, 0.9995);
         float sinSlopeDbg   = max(sqrt(max(1.0 - nzcDbg * nzcDbg, 1e-6)), 0.03);
         float horizDistDbg  = max(aboveWaterDbg, 0.0) * (nzcDbg / sinSlopeDbg);
+        // V4-STYLE: mirror the strictly-above-water fade so the debug view
+        // shows the weights the lit path actually applies.
+        float aboveFadeDbg  = smoothstep(0.0, 1.5, horizDistDbg);
         float wetHeightDbg  = max(u_shorelineWetHeight,  1e-4);
         float foamHeightDbg = max(u_shorelineFoamHeight, 1e-4);
         vec3 dbgCol = vec3(
             clamp(horizDistDbg / max(wetHeightDbg, 1e-4), 0.0, 1.0),
-            1.0 - smoothstep(0.0, wetHeightDbg,  horizDistDbg),
-            1.0 - smoothstep(0.0, foamHeightDbg, horizDistDbg));
+            (1.0 - smoothstep(0.0, wetHeightDbg,  horizDistDbg)) * aboveFadeDbg,
+            (1.0 - smoothstep(0.0, foamHeightDbg, horizDistDbg)) * aboveFadeDbg);
         fragColor = vec4(dbgCol, 1.0);
         if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
         return;
