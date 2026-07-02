@@ -1215,6 +1215,11 @@ def main():
                             # OMT-1-OVERLAY-MISSING-TEXTURE-GUARD: overlay/decal
                             # resolve-fail counters + fallback-bind trace.
                             "MC2_OVERLAY_TEXTURE_TRACE",
+                            # MC2-VERIFY-LIVE-1: live data-contract guard mode
+                            # (log/fatal/off; default log). Must be allowlisted
+                            # or Popen drops it and the fatal-mode soak leg
+                            # silently runs in default log mode.
+                            "MC2_VERIFY_MODE",
                             # FRAME-CURRENTNESS-GUARDS-1 gates
                             "MC2_REGFLUSH_GUARD2",
                             "MC2_TARGETING_GUARD",

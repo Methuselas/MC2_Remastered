@@ -39,6 +39,7 @@ set(SOURCES ${SOURCES}
     gos_visual_diff.cpp
     gos_rdoc_capture.cpp
     gos_crashbundle.cpp
+    mc2_verify.cpp
     gos_smoke.cpp
     debug_renderer.cpp
     gos_font.cpp
