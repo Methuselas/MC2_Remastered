@@ -512,6 +512,8 @@ void MissionInterfaceManager::setTutorialText(const char *text)
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
+#include <cmath>     // GPU-GROUND-PICK-PARITY-1: sqrt/fabs for delta magnitude
+#include <cstring>   // GPU-GROUND-PICK-PARITY-1: strcmp for lookupFailReason classify
 #include "../GameOS/gameos/diagnostic_trace.h"  // CURSOR_TARGET trace (offscreen-pick recon)
 namespace {
 	enum MifPhase { MF_TOTAL=0, MF_INVPROJ, MF_LOS, MF_CTRLGUI, MF_UPDTGT, MF_POSTTGT, MF_DRAWBARS, MF_COUNT };
@@ -540,6 +542,144 @@ namespace {
 		if (!s_mfAtexit) { s_mfAtexit=true; std::atexit(mfEmit); }
 		++s_mfFrames; s_mfFrameNs[MF_TOTAL]=totalNs;
 		for (int i=0;i<MF_COUNT;i++) { s_mfSum[i]+=s_mfFrameNs[i]; if(s_mfFrameNs[i]>s_mfMax[i]) s_mfMax[i]=s_mfFrameNs[i]; s_mfFrameNs[i]=0; }
+	}
+}
+
+// ---- GPU-GROUND-PICK-PARITY-1 (S1): GPU-vs-CPU ground-pick oracle ----------
+// Gate MC2_GPU_GROUND_PICK_PARITY (default OFF). Parity-ONLY: at each hover /
+// click site the CPU Camera::inverseProject already produced the authoritative
+// wPos; this oracle ALSO runs the GPU depth-unproject (lookupAtPixel) at the
+// same cursor pixel, times both paths, and records the world-space position
+// delta. The GPU result is NEVER consumed. Mirrors the MC2_MIF_SPLIT counter
+// idiom above and the MC2_TERRAIN_PICK_PARITY discipline the recon cites
+// (.claude/GPU-PICKING-RECON-1.md sec 6). Three measurements per the slice:
+//   (a) delta distribution (world units) + >2wu flag lines with context,
+//   (b) synchronous readback stall us vs the CPU quad-walk us (R1 verdict),
+//   (c) buffer-unavailable frame count (pause/menu/ortho fallback -> R3 data).
+namespace {
+	static const bool s_gpParityOn = RenderWorld::IsGpuGroundPickParityEnabled();
+	// Sample knob: run the GPU pick every Nth eligible site (default 1 = every
+	// site). MC2_GPU_GROUND_PICK_PARITY_SAMPLE=N caps the readback stall cost.
+	static int s_gpSampleN = []() {
+		const char* v = getenv("MC2_GPU_GROUND_PICK_PARITY_SAMPLE");
+		int n = (v && *v) ? atoi(v) : 1;
+		return n > 0 ? n : 1;
+	}();
+	static const char* s_gpMissionTag = []() {
+		const char* v = getenv("MC2_GPU_GROUND_PICK_PARITY_TAG");
+		return (v && *v) ? v : "?";
+	}();
+	// Counters (process-lifetime; atexit summary).
+	static unsigned long long s_gpSites=0;          // eligible parity sites seen
+	static unsigned long long s_gpCompared=0;        // both CPU+GPU produced a point
+	static unsigned long long s_gpGpuInvalid=0;      // GPU had no world pos (fallback)
+	static unsigned long long s_gpFbUnavail=0;       // buffer unavailable (R3)
+	static unsigned long long s_gpBg=0;              // background/sky pixel (no depth)
+	static unsigned long long s_gpOver2wu=0;         // delta > 2 wu
+	static double s_gpDeltaSum=0.0, s_gpDeltaMax=0.0; // horizontal (xy) delta wu
+	static double s_gpDeltaZSum=0.0, s_gpDeltaZMax=0.0; // vertical (z) delta wu
+	// Timing accumulators (ns).
+	static unsigned long long s_gpCpuNs=0, s_gpCpuMaxNs=0, s_gpCpuSamples=0;
+	static unsigned long long s_gpGpuNs=0, s_gpGpuMaxNs=0, s_gpGpuSamples=0;
+	// Histogram buckets for the horizontal delta distribution (wu).
+	// [0]<=0.5  [1]<=1  [2]<=2  [3]<=5  [4]<=20  [5]>20
+	static unsigned long long s_gpHist[6]={0};
+	static bool s_gpAtexit=false;
+	static void gpEmit() {
+		if (!s_gpParityOn) return;
+		const double cpuAvg = s_gpCpuSamples ? (double)s_gpCpuNs/s_gpCpuSamples/1000.0 : 0.0;
+		const double gpuAvg = s_gpGpuSamples ? (double)s_gpGpuNs/s_gpGpuSamples/1000.0 : 0.0;
+		const double dAvg   = s_gpCompared ? s_gpDeltaSum/(double)s_gpCompared : 0.0;
+		const double dzAvg  = s_gpCompared ? s_gpDeltaZSum/(double)s_gpCompared : 0.0;
+		std::fprintf(stderr,
+			"[GPU_PICK_PARITY] event=shutdown mission=%s sites=%llu compared=%llu "
+			"gpu_invalid=%llu buffer_unavailable=%llu background_px=%llu over_2wu=%llu\n",
+			s_gpMissionTag, s_gpSites, s_gpCompared, s_gpGpuInvalid,
+			s_gpFbUnavail, s_gpBg, s_gpOver2wu);
+		std::fprintf(stderr,
+			"[GPU_PICK_PARITY] delta_wu={xy_avg:%.3f,xy_max:%.3f,z_avg:%.3f,z_max:%.3f} "
+			"hist_xy_wu=[<=0.5:%llu,<=1:%llu,<=2:%llu,<=5:%llu,<=20:%llu,>20:%llu]\n",
+			dAvg, s_gpDeltaMax, dzAvg, s_gpDeltaZMax,
+			s_gpHist[0], s_gpHist[1], s_gpHist[2], s_gpHist[3], s_gpHist[4], s_gpHist[5]);
+		std::fprintf(stderr,
+			"[GPU_PICK_PARITY] timing_us={cpu_invproj_avg:%.1f,cpu_invproj_max:%.1f,"
+			"gpu_readback_avg:%.1f,gpu_readback_max:%.1f} cpu_samples=%llu gpu_samples=%llu\n",
+			cpuAvg, (double)s_gpCpuMaxNs/1000.0, gpuAvg, (double)s_gpGpuMaxNs/1000.0,
+			s_gpCpuSamples, s_gpGpuSamples);
+		std::fflush(stderr);
+	}
+	// Called at each ground-pick site. cpuNs = measured CPU inverseProject cost
+	// for this site; (cx,cy,cz) = the CPU wPos it produced. mouseX/Y = raw cursor.
+	// site = short label ("hover"/"Lmove"/"Rmove") for >2wu flag context.
+	static void gpParitySite(int mouseX, int mouseY, unsigned long long cpuNs,
+	                         float cx, float cy, float cz, const char* site) {
+		if (!s_gpParityOn) return;
+		if (!s_gpAtexit) { s_gpAtexit = true; std::atexit(gpEmit); }
+		++s_gpSites;
+		// CPU timing (always recorded when we have a measurement).
+		s_gpCpuNs += cpuNs; ++s_gpCpuSamples;
+		if (cpuNs > s_gpCpuMaxNs) s_gpCpuMaxNs = cpuNs;
+		// Sampling knob: skip the GPU readback on non-sampled sites.
+		if ((s_gpSites % (unsigned long long)s_gpSampleN) != 0) return;
+		if (!RenderWorld::IsObjectIdBufferEnabled()) { ++s_gpFbUnavail; return; }
+		// Viewport transform (same proven path as the GPU hover block).
+		float vMulX, vMulY, vAddX, vAddY;
+		gos_GetViewport(&vMulX, &vMulY, &vAddX, &vAddY);
+		if (!(vMulX > 0.0f && vMulY > 0.0f &&
+		      mouseX >= 0 && mouseY >= 0 &&
+		      mouseX < (int)vMulX && mouseY < (int)vMulY)) {
+			++s_gpFbUnavail; return;   // offscreen / no viewport -> R3 fallback
+		}
+		RenderWorld::ScreenPickContext ctx;
+		ctx.mouseX = mouseX; ctx.mouseY = mouseY;
+		ctx.vMulX  = vMulX;  ctx.vMulY  = vMulY;
+		ctx.vAddX  = vAddX;  ctx.vAddY  = vAddY;
+		ctx.drawableWidth  = Environment.drawableWidth;
+		ctx.drawableHeight = Environment.drawableHeight;
+		RenderWorld::screenPickCompute(&ctx);
+		const std::chrono::steady_clock::time_point g0 = std::chrono::steady_clock::now();
+		RenderWorld::LookupResult res = RenderWorld::lookupAtPixel(ctx.glX, ctx.glY);
+		const unsigned long long gpuNs = (unsigned long long)
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now() - g0).count();
+		s_gpGpuNs += gpuNs; ++s_gpGpuSamples;
+		if (gpuNs > s_gpGpuMaxNs) s_gpGpuMaxNs = gpuNs;
+		// Classify the GPU result. lookupFailReason distinguishes buffer-absent
+		// (NO_FBO_OR_TEX / NO_POSTPROCESS -> R3) from an in-scene sky/far pixel.
+		if (!res.worldPosValid) {
+			const char* r = res.lookupFailReason ? res.lookupFailReason : "NO_WORLD_POS";
+			if (std::strcmp(r, "NO_FBO_OR_TEX") == 0 ||
+			    std::strcmp(r, "NO_POSTPROCESS") == 0 ||
+			    std::strcmp(r, "OID_BUFFER_DISABLED") == 0) {
+				++s_gpFbUnavail;
+			} else if (std::strcmp(r, "BACKGROUND_PIXEL") == 0) {
+				++s_gpBg;           // sky / far plane under cursor (depth==0)
+			} else {
+				++s_gpGpuInvalid;   // index/gen/dead -> object w/o depth; rare
+			}
+			return;
+		}
+		// Both paths produced a world point: record the delta. MC2 world convention
+		// (matches EditorInspector consumer): x/y horizontal plane, z elevation.
+		const float dx = res.worldX - cx;
+		const float dy = res.worldY - cy;
+		const float dz = res.worldZ - cz;
+		const double dHoriz = std::sqrt((double)dx*dx + (double)dy*dy);
+		const double dVert  = std::fabs((double)dz);
+		++s_gpCompared;
+		s_gpDeltaSum += dHoriz; if (dHoriz > s_gpDeltaMax) s_gpDeltaMax = dHoriz;
+		s_gpDeltaZSum += dVert; if (dVert  > s_gpDeltaZMax) s_gpDeltaZMax = dVert;
+		int b = dHoriz <= 0.5 ? 0 : dHoriz <= 1.0 ? 1 : dHoriz <= 2.0 ? 2
+		        : dHoriz <= 5.0 ? 3 : dHoriz <= 20.0 ? 4 : 5;
+		++s_gpHist[b];
+		if (dHoriz > 2.0) {
+			++s_gpOver2wu;
+			std::fprintf(stderr,
+				"[GPU_PICK_PARITY] over_2wu site=%s mission=%s screen=(%d,%d) gl=(%d,%d) "
+				"cpu=(%.1f,%.1f,%.1f) gpu=(%.1f,%.1f,%.1f) dxy=%.2f dz=%.2f\n",
+				site, s_gpMissionTag, mouseX, mouseY, ctx.glX, ctx.glY,
+				cx, cy, cz, res.worldX, res.worldY, res.worldZ, dHoriz, dVert);
+		}
 	}
 }
 
@@ -1126,7 +1266,20 @@ void MissionInterfaceManager::update (void)
 		// the discrete move click uses). The delta-cache above limits this to
 		// cursor/camera-change frames; the O(quads) cost only matters on the
 		// oversized 1K map (a separate, known perf concern), not normal maps.
+		const std::chrono::steady_clock::time_point _cpuT0 =
+			s_gpParityOn ? std::chrono::steady_clock::now()
+			             : std::chrono::steady_clock::time_point{};
 		eye->inverseProject(mouseXY, wPos);
+		// GPU-GROUND-PICK-PARITY-1: oracle fires only on the quad-walk branch (the
+		// exact O(quads) cost the GPU depth-unproject would replace); the cache-hit
+		// branch above skips both paths, matching the recon's "per cursor-move
+		// frame" comparison basis (R1). Parity-only; wPos is untouched.
+		if (s_gpParityOn) {
+			const unsigned long long _cpuNs = (unsigned long long)
+				std::chrono::duration_cast<std::chrono::nanoseconds>(
+					std::chrono::steady_clock::now() - _cpuT0).count();
+			gpParitySite(mouseX, mouseY, _cpuNs, wPos.x, wPos.y, wPos.z, "hover");
+		}
 		prevMouseX = mouseX;
 		prevMouseY = mouseY;
 		cachedWPos = wPos;
@@ -1958,7 +2111,20 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 			Stuff::Vector2DOf<long> clickXY;
 			clickXY.x = mouseX;
 			clickXY.y = mouseY;
+			const std::chrono::steady_clock::time_point _cpuT0 =
+				s_gpParityOn ? std::chrono::steady_clock::now()
+				             : std::chrono::steady_clock::time_point{};
 			eye->inverseProject(clickXY, wPos);
+			// GPU-GROUND-PICK-PARITY-1: precise per-click move-order pick (R2 case).
+			// Depth-unproject reads the true rendered terrain surface -> the recon
+			// expects GPU >= CPU accuracy on slopes; sample distant clicks for the
+			// reverse-Z precision check. Parity-only; wPos is untouched.
+			if (s_gpParityOn) {
+				const unsigned long long _cpuNs = (unsigned long long)
+					std::chrono::duration_cast<std::chrono::nanoseconds>(
+						std::chrono::steady_clock::now() - _cpuT0).count();
+				gpParitySite(mouseX, mouseY, _cpuNs, wPos.x, wPos.y, wPos.z, "Lmove");
+			}
 		}
 
 		if ( (controlGui.isAddingVehicle() && !paintingVtol[commanderID] && canAddVehicle( wPos )) ||
@@ -2312,7 +2478,18 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 			Stuff::Vector2DOf<long> clickXY;
 			clickXY.x = mouseX;
 			clickXY.y = mouseY;
+			const std::chrono::steady_clock::time_point _cpuT0 =
+				s_gpParityOn ? std::chrono::steady_clock::now()
+				             : std::chrono::steady_clock::time_point{};
 			eye->inverseProject(clickXY, wPos);
+			// GPU-GROUND-PICK-PARITY-1: precise per-click move-order pick (R2 case),
+			// right-click variant. Parity-only; wPos is untouched.
+			if (s_gpParityOn) {
+				const unsigned long long _cpuNs = (unsigned long long)
+					std::chrono::duration_cast<std::chrono::nanoseconds>(
+						std::chrono::steady_clock::now() - _cpuT0).count();
+				gpParitySite(mouseX, mouseY, _cpuNs, wPos.x, wPos.y, wPos.z, "Rmove");
+			}
 		}
 
 		if ( (controlGui.isAddingVehicle() && !paintingVtol[commanderID] && canAddVehicle( wPos )) ||
