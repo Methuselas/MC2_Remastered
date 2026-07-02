@@ -262,6 +262,17 @@ ALLOWLIST=(
     MC2_TERRAIN_LIGHTING_GPU    # feature -- promote-to-registry
     MC2_TERRAIN_LIGHTING_GPU_TRACE  # trace
     MC2_TERRAIN_LIGHTING_PARITY # parity
+    MC2_GROUND_CONTACT_BLOB     # feature -- GROUND-CONTACT-BLOB-1 contact-darkening disc under movers (default OFF)
+    MC2_SKYBOX_FOG_EXCLUDE      # feature -- SKYBOX-FOG-EXCLUDE-1 fog passes exclude stencil-tagged sky (default OFF)
+    MC2_TERRAIN_CONTROLMAP      # feature -- TERRAIN-CONTROLMAP-SAMPLE-1 authored material-weight override (default OFF)
+    MC2_TERRAIN_CONTROLMAP_ALBEDO_STRENGTH  # override -- TERRAIN-CONTROLMAP-ALBEDO-1 strength env override
+    MC2_TERRAIN_CONTROLMAP_FILE # override -- explicit control-map path override
+    MC2_TERRAIN_MATERIAL_LIB    # feature -- TERRAIN-MATERIAL-LIB-1 data-defined terrain material layers (default OFF)
+    MC2_TERRAIN_MATERIAL_LIB_FILE  # override -- explicit terrain_materials.json path override
+    MC2_TERRAIN_SHORELINE       # feature -- TERRAIN-SHORELINE-MASK-1 wetness/foam shoreline mask (default OFF)
+    MC2_TERRAIN_SHORELINE_FILE  # override -- explicit shoreline mask path override
+    MC2_TERRAIN_VISUAL_DISPLACE # feature -- TERRAIN-VISUAL-HEIGHT displacement from 4x bake (default OFF)
+    MC2_TERRAIN_VISUAL_DISPLACE_FAR  # override -- far-band displacement scale knob
     MC2_TERRAIN_MASK_DISPATCH   # feature -- promote-to-registry
     MC2_TERRAIN_MASK_DISPATCH_SOLID  # feature -- promote-to-registry
     MC2_TERRAIN_MASK_DISPATCH_TRACE  # trace
