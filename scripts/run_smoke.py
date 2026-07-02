@@ -1328,6 +1328,15 @@ def main():
                             "MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK",
                             "MC2_TERRAIN_COST_SPLIT",
                             "MC2_FX_COST_SPLIT",
+                            # GPU-GROUND-PICK-PARITY-1 (S1): GPU-vs-CPU ground-pick
+                            # oracle (default OFF). Requires MC2_OBJECT_ID_BUFFER=1
+                            # for a live depth+objectID attachment. Without these in
+                            # the allowlist Popen drops them and the [GPU_PICK_PARITY]
+                            # oracle is inert (no delta/timing/fallback data emitted).
+                            "MC2_GPU_GROUND_PICK_PARITY",
+                            "MC2_GPU_GROUND_PICK_PARITY_SAMPLE",
+                            "MC2_GPU_GROUND_PICK_PARITY_TAG",
+                            "MC2_OBJECT_ID_BUFFER",
                             # FX-FORCE-SPAWN fixture (code/warrior.cpp): forces up
                             # to 8 mechs to fire all weapons (PPC -> tube ribbons)
                             # so the otherwise-idle tier1 fly-throughs exercise the
