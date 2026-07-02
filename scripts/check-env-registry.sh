@@ -298,6 +298,8 @@ ALLOWLIST=(
     MC2_WATER_DEPTHPROBE        # trace
     MC2_WATER_MATERIAL_PROBE    # trace
     MC2_WATER_RENDERPROBE       # trace
+    MC2_WATER_HDRI_REFL_FULL    # override -- WATER-HDRI-REFL-PERF-1 restore full-rate LOD-1.0 HDRI reflection sampling
+    MC2_WATER_REFL_RT_PIXELPROOF # trace -- WATER-REFLECTION-CLIP-1 opt-in full pixel-coverage readback proof (sync stall)
     MC2_WATER_REFL_TRACE        # trace
     MC2_WATER_REFLECTION        # feature -- promote-to-registry; WATER-SKY-REFLECTION-1 gated SH-L2 sky reflection (default OFF)
     MC2_WATER_REFLECTION_RT     # feature -- promote-to-registry; WATER-TERRAIN-REFLECTION-1 mirrored terrain into reflection RT (default OFF)
