@@ -3602,8 +3602,10 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
     // SKYBOX-FOG-EXCLUDE-1: second, stencil-only pass. Tags stencil=1 for
-    // pixels the fog passes must hard-exclude (deep sky, worldDir.z < -0.22 --
-    // the same threshold fog_oob.frag already uses). Pixels at/below that
+    // pixels the fog passes must exclude (deep sky -- SKYBOX-FOG-EXCLUDE-2:
+    // elevation test worldDir.y > 0.22 in the skybox frame; equivalent to
+    // fog_oob's fog-frame worldDir.z < -0.22 band top, see the frag shader's
+    // fix note). Pixels at/below that
     // band (horizon + OOB void) are `discard`ed by the frag shader, leaving
     // their stencil at the frame-clear value (0) so fog behavior there is
     // unchanged. Color writes are masked off; only the stencil buffer is
@@ -3651,15 +3653,20 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
             hdriSkyboxStencilTagProg_->apply();
             hdriSkyboxStencilTagProg_->setMat4("invProj", invProjArray);
             hdriSkyboxStencilTagProg_->setMat3("invViewRot", invViewRot);
-            hdriSkyboxStencilTagProg_->setFloat("skyYaw", skyYaw);
+            // SKYBOX-FOG-EXCLUDE-2: skyYaw upload removed. The tag test is
+            // now elevation-only (worldDir.y > 0.22), which the sun-sync yaw
+            // (an azimuth rotation) cannot affect. v1 uploaded it and
+            // thresholded worldDir.z -- a HORIZONTAL axis in this frame --
+            // tagging an azimuth wedge of sky and hard-excluding the fog
+            // inside it (the vertical-edged dark-sky artifact).
 
             glBindVertexArray(quadVAO_ != 0 ? quadVAO_ : hdriDummyVao_);
             glDrawArrays(GL_TRIANGLES, 0, 3);
 
             static const bool s_tagLogOnce = []() {
                 std::fprintf(stderr,
-                    "[SKYBOX_FOG_EXCLUDE v1] enabled=1 stencil_tag_pass=active "
-                    "threshold=worldDir.z<-0.22\n");
+                    "[SKYBOX_FOG_EXCLUDE v2] enabled=1 stencil_tag_pass=active "
+                    "threshold=worldDir.y>0.22 (elevation; v1 wedge bug fixed)\n");
                 std::fflush(stderr);
                 return true;
             }();
