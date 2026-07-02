@@ -103,7 +103,15 @@ void main() {
     // the neighbour's stitch stride (else stride 1) — so stitch / skirt / LOD seams
     // are pixel-identical to the coarse path and no cracks form. Default OFF ->
     // falls through to the original coarse path below (byte-identical).
-    if (u_visualDisplace != 0) {
+    // TERRAIN-LOD-GEOMORPH-1 FIX (latent S2 bug): this branch is the MODE-1
+    // (LOD0) path — its localOffset is in FINE (1/4-coarse) units and its world
+    // position math is fine-grid (fx*32). The original `!= 0` condition ALSO
+    // caught mode 2, whose patches are COARSE-unit — every coarse-band block
+    // rendered collapsed to 1/4 size at its NW corner (floating slabs) and the
+    // mode-2 Z-swap block below was unreachable dead code. Caught by the
+    // FORCE_LOD=4 pixel oracle; must be `== 1` so mode 2 falls through to the
+    // coarse path + stitch + its own displacement block.
+    if (u_visualDisplace == 1) {
         int qx4 = u_quadCountX * 4;
         int qy4 = u_quadCountY * 4;
         int lx  = localOffset.x;

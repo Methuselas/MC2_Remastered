@@ -1091,6 +1091,18 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         visualDisplaceActive && s_visualMipFloats > 0 && !s_geomorphKill;
     if (s_locGeomorphMips >= 0)
         glUniform1i(s_locGeomorphMips, geomorphActive ? 1 : 0);
+    // One-shot draw-time truth line so a dead geomorph is diagnosable from the
+    // console instead of a pixel A/B (mirrors [VISUAL_HEIGHT v1] cadence).
+    {
+        static bool s_geoLogged = false;
+        if (!s_geoLogged && visualDisplaceActive) {
+            s_geoLogged = true;
+            printf("[GEOMORPH v1] active=%d mipFloats=%d kill=%d locMips=%d locMorph=%d locLodStep=%d\n",
+                   geomorphActive ? 1 : 0, s_visualMipFloats, s_geomorphKill ? 1 : 0,
+                   (int)s_locGeomorphMips, (int)s_locMorphFactor, (int)s_locLodStep);
+            fflush(stdout);
+        }
+    }
 
     // Upload per-frame uniforms (same for every patch).
     if (s_locMapSide >= 0)
