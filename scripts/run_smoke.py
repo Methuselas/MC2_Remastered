@@ -1268,6 +1268,12 @@ def main():
                             # does nothing.
                             "MC2_TERRAIN_SHORELINE",
                             "MC2_TERRAIN_SHORELINE_FILE",
+                            # TERRAIN-SHORELINE-V3 one-shot band-vs-drawn-plane
+                            # probe (observe-only). Prints [SHORELINE_PROBE v1]
+                            # with u_waterElevation vs coarse terrain z-range vs
+                            # fine-minus-coarse band drift at shore cells. Must be
+                            # allowlisted or Popen drops it and the probe is silent.
+                            "MC2_TERRAIN_SHORELINE_PROBE",
                             # TERRAIN-MATERIAL-LIB-1 — data-defined terrain material
                             # tuning (default OFF). Must be allowlisted or Popen
                             # drops it and the gate-ON smoke does nothing.

@@ -78,6 +78,15 @@ static RenderCore::GpuBufferOwner s_visualHeightSsbo{ // TERRAIN-VISUAL-HEIGHT-S
     "TerrainVisualHeightSsbo",
     0u};
 static int    s_visualSide       = 0; // V = (mapSide-1)*4+1, fine grid side (0 = bake not loaded)
+// TERRAIN-SHORELINE-V3 (band-vs-drawn-plane probe): retained CPU copies of the
+// coarse (gameplay/water-plane) heightfield and the 4x visual/displaced bake so
+// a one-shot load-time instrument (MC2_TERRAIN_SHORELINE_PROBE) can print the
+// delta between where the shoreline band is PLACED (v_worldPos.z, = fine bake
+// under displacement) and where the water plane actually DRAWS (u_waterElevation
+// on the coarse grid). Populated by the two upload entries below; observe-only.
+static std::vector<float> s_coarseHeightCpu;   // mapSide*mapSide row-major
+static std::vector<float> s_visualHeightCpu;   // V*V row-major (fine bake)
+static bool               s_shorelineProbeDone = false;
 // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: per-LOD-band displaced-chunk counters, reset
 // and logged once per submit alongside [TerrainLOD v1] so acceptance has hard
 // per-band numbers. Index = LOD level (0..5), same mapping as [TerrainLOD v1].
@@ -785,6 +794,112 @@ void gos_TerrainLodChunk_Destroy()
 }
 
 // ---------------------------------------------------------------------------
+// TERRAIN-SHORELINE-V3 shore-delta probe (MC2_TERRAIN_SHORELINE_PROBE).
+// One-shot, load-time-cheap instrument that answers the exact question behind
+// the V3 band drift: the band is placed at v_worldPos.z - u_waterElevation, but
+// v_worldPos.z is the FINE VISUAL bake under displacement while the water plane
+// DRAWS on the coarse grid at u_waterElevation. This walks the coarse grid, finds
+// cells adjacent to the true (coarse) waterline (a corner below and a corner above
+// u_waterElevation), and reports the mean/max fine-minus-coarse height offset at
+// exactly those shore cells — that offset IS how far up-bank the band drifts.
+// Observe-only; no state mutation; runs once per mission when the gate is set.
+static void gos_TerrainLodChunk_ShorelineProbe(float waterElev)
+{
+    static const bool s_probeGate = []() {
+        const char* v = std::getenv("MC2_TERRAIN_SHORELINE_PROBE");
+        return (v && v[0] && v[0] != '0');
+    }();
+    if (!s_probeGate || s_shorelineProbeDone) return;
+    if (s_coarseHeightCpu.empty() || s_mapSide <= 1) return;
+    s_shorelineProbeDone = true;
+
+    const int   ms   = s_mapSide;
+    const bool  haveFine = (!s_visualHeightCpu.empty() && s_visualSide > 0);
+    const int   V    = s_visualSide;
+    auto coarseAt = [&](int cx, int cy) -> float {
+        cx = cx < 0 ? 0 : (cx > ms - 1 ? ms - 1 : cx);
+        cy = cy < 0 ? 0 : (cy > ms - 1 ? ms - 1 : cy);
+        return s_coarseHeightCpu[(size_t)cx + (size_t)cy * ms];
+    };
+    // Fine bake sampled at the coarse-cell grid point (fx = cx*4), i.e. the exact
+    // vertex the coarse-band displacement (u_visualDisplace==2) writes to.
+    auto fineAt = [&](int cx, int cy) -> float {
+        if (!haveFine) return coarseAt(cx, cy);
+        int fx = cx * 4; if (fx > V - 1) fx = V - 1;
+        int fy = cy * 4; if (fy > V - 1) fy = V - 1;
+        return s_visualHeightCpu[(size_t)fx + (size_t)fy * V];
+    };
+
+    (void)fineAt;
+    // fine sample at ANY fine (fx,fy)
+    auto fineRaw = [&](int fx, int fy) -> float {
+        if (!haveFine) return 0.0f;
+        fx = fx < 0 ? 0 : (fx > V - 1 ? V - 1 : fx);
+        fy = fy < 0 ? 0 : (fy > V - 1 ? V - 1 : fy);
+        return s_visualHeightCpu[(size_t)fx + (size_t)fy * V];
+    };
+    // bilinear coarse surface at a fine (fx,fy) — the height space the water
+    // plane's land intersection lives on (== v_worldPos.z with displace OFF).
+    auto coarseBilinAtFine = [&](int fx, int fy) -> float {
+        float gx = (float)fx * 0.25f, gy = (float)fy * 0.25f;
+        int cx = (int)gx, cy = (int)gy;
+        float tx = gx - (float)cx, ty = gy - (float)cy;
+        float a = coarseAt(cx, cy),   b = coarseAt(cx + 1, cy);
+        float c = coarseAt(cx, cy+1), d = coarseAt(cx + 1, cy + 1);
+        return (a*(1-tx) + b*tx)*(1-ty) + (c*(1-tx) + d*tx)*ty;
+    };
+
+    double coarseZatWaterline = 0.0; long shoreCells = 0;
+    float  coarseMin = 1e30f, coarseMax = -1e30f;
+    // TRUE band drift: over the INTERIOR fine verts of shore quads, how far does
+    // the DISPLACED surface (fineRaw) sit above/below the coarse water-plane
+    // surface (coarseBilinAtFine)? Corner-pin makes this 0 AT coarse corners but
+    // the reshape bows the interior — that bow is the band's up-bank drift.
+    double sumInt = 0.0, maxInt = 0.0; long intCells = 0;
+    double sumSignedAtWL = 0.0; long wlSamples = 0; // signed gap at fine verts near the plane
+    for (int cy = 0; cy < ms - 1; ++cy)
+        for (int cx = 0; cx < ms - 1; ++cx) {
+            float c00 = coarseAt(cx, cy),   c10 = coarseAt(cx + 1, cy);
+            float c01 = coarseAt(cx, cy+1), c11 = coarseAt(cx + 1, cy + 1);
+            float lo = c00, hi = c00;
+            lo = c10 < lo ? c10 : lo; hi = c10 > hi ? c10 : hi;
+            lo = c01 < lo ? c01 : lo; hi = c01 > hi ? c01 : hi;
+            lo = c11 < lo ? c11 : lo; hi = c11 > hi ? c11 : hi;
+            if (lo < coarseMin) coarseMin = lo;
+            if (hi > coarseMax) coarseMax = hi;
+            if (lo <= waterElev && hi >= waterElev) {
+                coarseZatWaterline += (double)c00; ++shoreCells;
+                if (haveFine) {
+                    for (int sy = 0; sy <= 4; ++sy)
+                        for (int sx = 0; sx <= 4; ++sx) {
+                            int fx = cx * 4 + sx, fy = cy * 4 + sy;
+                            double cb  = (double)coarseBilinAtFine(fx, fy);
+                            double gap = (double)fineRaw(fx, fy) - cb;
+                            double ga  = gap < 0 ? -gap : gap;
+                            sumInt += ga; if (ga > maxInt) maxInt = ga; ++intCells;
+                            if (cb >= waterElev - 4.0 && cb <= waterElev + 4.0) {
+                                sumSignedAtWL += gap; ++wlSamples;
+                            }
+                        }
+                }
+            }
+        }
+    const double meanCoarseShoreZ = shoreCells ? coarseZatWaterline / (double)shoreCells : 0.0;
+    const double meanInt   = intCells ? sumInt / (double)intCells : 0.0;
+    const double meanAtWL  = wlSamples ? sumSignedAtWL / (double)wlSamples : 0.0;
+    fprintf(stderr,
+        "[SHORELINE_PROBE v1] u_waterElevation=%.3f (drawn plane Z; band placed at "
+        "v_worldPos.z-this) | coarse terrain z range=[%.2f,%.2f] | shore quads=%ld "
+        "meanCoarseShoreZ=%.3f | INTERIOR band-drift(displaced-fine minus coarse-plane "
+        "surface): mean=%.3fwu max=%.3fwu | signed vertical gap at fine verts on the "
+        "waterline=%.3fwu (n=%ld) | fineBake=%s\n",
+        (double)waterElev, (double)coarseMin, (double)coarseMax, shoreCells,
+        meanCoarseShoreZ, meanInt, maxInt, meanAtWL, wlSamples,
+        haveFine ? "LOADED" : "absent(no displace)");
+    fflush(stderr);
+}
+
+// ---------------------------------------------------------------------------
 // Submit draw commands — Phase 4 real implementation.
 // Called only from Terrain::flushDrawCommands() in mclib/terrain.cpp.
 // count==0 is a strict no-op. Restores GL state on exit.
@@ -1204,7 +1319,9 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             // mission load via gos_SetWaterElevation).
             if (s_locWaterElevation >= 0) {
                 gosPostProcess* pp = getGosPostProcess();
-                glUniform1f(s_locWaterElevation, pp ? pp->getWaterElevation() : 0.0f);
+                const float we = pp ? pp->getWaterElevation() : 0.0f;
+                glUniform1f(s_locWaterElevation, we);
+                gos_TerrainLodChunk_ShorelineProbe(we);  // one-shot; gated
             }
             if (s_locShaderTime >= 0)
                 glUniform1f(s_locShaderTime, gos_GetShaderClockSeconds());
@@ -1618,6 +1735,12 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
     s_mapSide = mapSide;
     s_halfMap = (float)mapSide * 128.0f * 0.5f;
 
+    // TERRAIN-SHORELINE-V3 probe: retain the coarse (gameplay/water-plane)
+    // heightfield so the one-shot shore-delta instrument can compare it to the
+    // fine bake and u_waterElevation. Cheap (one mapSide² copy at load).
+    s_coarseHeightCpu.assign(elevations, elevations + (size_t)mapSide * (size_t)mapSide);
+    s_shorelineProbeDone = false;
+
     // REGISTRY-TERRAIN-SSBO-1: register the live height SSBO (observe-only metadata;
     // never read by the draw path). Registered here (not at Init) because the byte
     // size is only known once the full heightfield is uploaded.
@@ -1675,6 +1798,11 @@ void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int 
     glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, visualHeights, GL_STATIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     s_visualSide = V;   // remembered for the displaced draw (u_visualSide)
+
+    // TERRAIN-SHORELINE-V3 probe: retain the fine visual bake (the height the
+    // band is placed against under displacement) for the shore-delta instrument.
+    s_visualHeightCpu.assign(visualHeights, visualHeights + (size_t)V * (size_t)V);
+    s_shorelineProbeDone = false;
 
     // TERRAIN-VISUAL-HEIGHT-SSBO-OWNER-1: register the live visual-height SSBO
     // (observe-only metadata; never read by the draw path). Reached here only when

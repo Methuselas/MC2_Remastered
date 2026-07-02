@@ -1024,13 +1024,42 @@ void main() {
         // = submerged; terrain under the water plane still shows here since
         // this pass draws land, but the smoothstep clamps those to full wet).
         float aboveWater = v_worldPos.z - u_waterElevation;
+        // TERRAIN-SHORELINE-V3 FIX (measured): the band's ZERO crossing is at
+        // the drawn waterline by construction (u_waterElevation == the water
+        // fast path's plane Z; SHORELINE_PROBE measured the fine/coarse gap at
+        // the waterline = -0.004wu, i.e. exact). The user-visible "band ~6m up
+        // the bank" was NOT a placement drift but the band's fixed VERTICAL
+        // thickness (wet 3wu / foam 1.2wu) spread horizontally by a shallow
+        // shore slope: on a ~3wu-per-128wu beach, 1.2wu of vertical foam height
+        // maps to ~50wu (~15m) of horizontal run. Fix: measure the band as a
+        // HORIZONTAL distance from the waterline (perpendicular run along the
+        // surface), so it hugs the drawn waterline at a consistent narrow width
+        // on shallow AND steep shores. Convert vertical rise -> horizontal run
+        // via the MACRO terrain slope (coarse heightfield normal -- same height
+        // space the water plane draws in), tan(theta) = sin/cos = sqrt(1-Nz^2)/Nz:
+        //   run = rise / tan(theta) = rise * Nz / sqrt(1 - Nz^2).
+        // Clamp the slope so a near-flat basin floor (sin->0, run->inf) can't
+        // blow the band out to the whole map -- below ~1.7deg we fall back to a
+        // capped run so flats still show a bounded rim, not an infinite smear.
+        vec3  macroN   = smoothTerrainNormal(v_worldPos.xy);
+        float nzc      = clamp(abs(macroN.z), 0.0, 0.9995);
+        float sinSlope = sqrt(max(1.0 - nzc * nzc, 1e-6));
+        sinSlope       = max(sinSlope, 0.03);            // >= ~1.7deg -> bounded run
+        float horizDist = max(aboveWater, 0.0) * (nzc / sinSlope);
+        // Widths are now HORIZONTAL world-units from the waterline. Reuse the
+        // existing wet/foam knobs (default 3.0 / 1.2 wu) but interpret them as
+        // horizontal reach -- on a shallow beach this holds the band tight to
+        // the waterline instead of smearing 15m inland.
         float wetHeight  = max(u_shorelineWetHeight,  1e-4);
         float foamHeight = max(u_shorelineFoamHeight,  1e-4);
         // Wet lobe: 1.0 at/under the waterline, fading to 0.0 by wetHeight
-        // above it. Mirrors the mask's old G channel (continuous weight).
-        float slWet  = 1.0 - smoothstep(0.0, wetHeight, aboveWater);
+        // (horizontal wu) inland. Mirrors the mask's old G channel.
+        float slWet  = 1.0 - smoothstep(0.0, wetHeight, horizDist);
         // Foam rim: narrower band hugging the exact waterline.
-        float slFoam = 1.0 - smoothstep(0.0, foamHeight, aboveWater);
+        float slFoam = 1.0 - smoothstep(0.0, foamHeight, horizDist);
+        // Submerged land (aboveWater < 0) stays full-wet: force weight to 1.0
+        // there so the waterline edge is solid, not cut by the horizontal calc.
+        if (aboveWater <= 0.0) { slWet = 1.0; slFoam = 1.0; }
         // Exclude fragments well inland (above the wet lobe entirely) and
         // well below the surface (fully submerged land, if any is visible)
         // from EITHER channel -- smoothstep already zeroes wet/foam there,
@@ -1097,13 +1126,18 @@ void main() {
     // above water clamped [0,1], G=wet weight, B=foam weight) so the V3
     // placement is directly inspectable without needing a mask loaded.
     if ((u_diag & 2048) != 0 && u_useShorelineMask != 0) {
+        // Mirror the horizontal-distance band measure used above.
         float aboveWaterDbg = v_worldPos.z - u_waterElevation;
+        vec3  macroNDbg     = smoothTerrainNormal(v_worldPos.xy);
+        float nzcDbg        = clamp(abs(macroNDbg.z), 0.0, 0.9995);
+        float sinSlopeDbg   = max(sqrt(max(1.0 - nzcDbg * nzcDbg, 1e-6)), 0.03);
+        float horizDistDbg  = max(aboveWaterDbg, 0.0) * (nzcDbg / sinSlopeDbg);
         float wetHeightDbg  = max(u_shorelineWetHeight,  1e-4);
         float foamHeightDbg = max(u_shorelineFoamHeight, 1e-4);
         vec3 dbgCol = vec3(
-            clamp(aboveWaterDbg / max(wetHeightDbg, 1e-4), 0.0, 1.0),
-            1.0 - smoothstep(0.0, wetHeightDbg,  aboveWaterDbg),
-            1.0 - smoothstep(0.0, foamHeightDbg, aboveWaterDbg));
+            clamp(horizDistDbg / max(wetHeightDbg, 1e-4), 0.0, 1.0),
+            1.0 - smoothstep(0.0, wetHeightDbg,  horizDistDbg),
+            1.0 - smoothstep(0.0, foamHeightDbg, horizDistDbg));
         fragColor = vec4(dbgCol, 1.0);
         if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
         return;
