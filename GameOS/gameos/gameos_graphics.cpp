@@ -6858,19 +6858,26 @@ static void uploadDynamicShadowUniforms(const Locs& tl, gosPostProcess* pp, GLin
 // does not implement (falls through to its normal render), which is safe.
 int mc2LightingDebugMode()
 {
-    const char* v = getenv("MC2_LIGHTING_DEBUG_VIEW");
-    if (!v || !*v) return -1;
-    if (!strcmp(v, "off") || !strcmp(v, "0")) return 0;   // explicit no-op render
-    if (!strcmp(v, "albedo"))     return 40;
-    if (!strcmp(v, "normal"))     return 41;   // final per-fragment N as RGB
-    if (!strcmp(v, "sun"))        return 42;   // sun N·L diffuse term
-    if (!strcmp(v, "ambient"))    return 43;   // hemisphere/ambient/SH fill only
-    if (!strcmp(v, "shadow"))     return 44;   // shadow factor (terrain) / no-shadow marker (props)
-    if (!strcmp(v, "final"))      return 45;   // == default lit render (falls through)
-    if (!strcmp(v, "overbright")) return 46;   // over/under-bright heatmap
-    if (!strcmp(v, "lightcount")) return 47;   // dynamic light-count heatmap (props/mech)
-    if (!strcmp(v, "lightindex")) return 48;   // baked-static-light-index palette (props/mech)
-    return -1;                                 // unknown -> safe fallback (keep existing)
+    // REDUNDANT-PASS-HUNT-1 (re-compute class): called per frame from 5 hot draw
+    // sites (terrain chunk, static-prop batcher x2, this TU x2), each hit doing a
+    // getenv() + up to 11 strcmp on a value that cannot change mid-process (no
+    // setenv/putenv/ImGui setter exists for MC2_LIGHTING_DEBUG_VIEW). Resolve once.
+    static const int s_mode = []() -> int {
+        const char* v = getenv("MC2_LIGHTING_DEBUG_VIEW");
+        if (!v || !*v) return -1;
+        if (!strcmp(v, "off") || !strcmp(v, "0")) return 0;   // explicit no-op render
+        if (!strcmp(v, "albedo"))     return 40;
+        if (!strcmp(v, "normal"))     return 41;   // final per-fragment N as RGB
+        if (!strcmp(v, "sun"))        return 42;   // sun N·L diffuse term
+        if (!strcmp(v, "ambient"))    return 43;   // hemisphere/ambient/SH fill only
+        if (!strcmp(v, "shadow"))     return 44;   // shadow factor (terrain) / no-shadow marker (props)
+        if (!strcmp(v, "final"))      return 45;   // == default lit render (falls through)
+        if (!strcmp(v, "overbright")) return 46;   // over/under-bright heatmap
+        if (!strcmp(v, "lightcount")) return 47;   // dynamic light-count heatmap (props/mech)
+        if (!strcmp(v, "lightindex")) return 48;   // baked-static-light-index palette (props/mech)
+        return -1;                                 // unknown -> safe fallback (keep existing)
+    }();
+    return s_mode;
 }
 
 // TERRAIN-DETAIL-ANTI-TILE-1: pack distance-fade + macro-noise knobs into the
