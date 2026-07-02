@@ -333,7 +333,14 @@ public:
     // Gate OFF (executor never called): flag stays false → body sets state as before
     // → byte-identical to pre-slice behavior.
     bool  edgeFogStateAppliedByExecutor_ = false;
-    float edgeFogColor_[3] = {0.93f, 0.94f, 0.95f};
+    // FOG-EXPOSURE-HEADROOM-1: fog composites into sceneFBO_ BEFORE the composite
+    // pass applies exposure_ + the unconditional warm grade (postprocess.frag:89,
+    // 95-112). At the near-white {0.93,0.94,0.95} the graded missions (mc2_24
+    // exposure 1.1, mc2_10 1.05) drove fog past 1.0 -> blown-out white cloud
+    // ("fog super bright in some spots"). Drop the base so exposure*grade has
+    // headroom: 0.80 * 1.1(exp) * 1.10(grade) ~= 0.97, still a bright cloud bank
+    // but no clip. Env MC2_OOB_FOG_COLOR still overrides oob at runtime.
+    float edgeFogColor_[3] = {0.80f, 0.81f, 0.83f};
     float edgeFogStart_    = 50.0f;    // world units inside boundary where fog begins
     float edgeFogHeight_   = 2000.0f;  // cloud bank top in world Z (MC2_EDGE_FOG_HEIGHT)
     float edgeFogMax_      = 0.92f;    // max opacity
@@ -440,7 +447,11 @@ public:
     // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: per-island executor-applied flag (see
     // cloudShadowStateAppliedByExecutor_). Set by executorApplyFogOobState().
     bool  fogOobStateAppliedByExecutor_ = false;
-    float oobFogColor_[3] = {0.93f, 0.94f, 0.95f}; // default: white cloud bank
+    // FOG-EXPOSURE-HEADROOM-1: see edgeFogColor_ above. fog_oob.frag's noise
+    // "sunlit tops" (col = fogColor*1.05, line 101) clip FIRST under exposure,
+    // which is what read as bright *spots*. 0.80 base * 1.05(top) * 1.1(exp) *
+    // 1.10(grade) ~= 1.01 -- tops stay bright, no saturated white blob.
+    float oobFogColor_[3] = {0.80f, 0.81f, 0.83f}; // bright cloud bank (exposure-headroom)
     float oobFogOpacity_ = 1.0f;
     void  runFogOob();
 
