@@ -3837,7 +3837,10 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			//------------------------------------------------------------------
 			// Find the object to load
 			result = missionFile->seekBlock(partName);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1):
+			// NumParts promised this Part block; a missing block leaves parts[i]
+			// zeroed and spawns a garbage object type at loadObjectType(objNumber).
+			MC2_VERIFY(result == NO_ERR, "Mission::init: mission .fit missing [%s] block", partName);
 
 #ifdef USE_ALTERNATES
 			//----------------------------------------------------------------------
@@ -3855,7 +3858,8 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 
 			long alternatives[MAX_ALTERNATIVES];
 			result = missionFile->readIdLongArray("IndicesOfAlternatives", alternatives, MAX_ALTERNATIVES);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing IndicesOfAlternatives", partName);
 			if (maxAlternatives[squadIndex]) 
 			{
 				long partId = i;
@@ -3868,29 +3872,37 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 				//MUST save off ORIGINAL Pilot.  WE don't load the alternate pilots!!!!!
 				usingAlternate = true;
 				result = missionFile->readIdULong("Pilot", realPilot);
-				gosASSERT(result == NO_ERR);
+				// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+				MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing Pilot (alternate)", partName);
 
 				sprintf(partName, "Part%d", partId);
 				result = missionFile->seekBlock(partName);
-				gosASSERT(result == NO_ERR);
+				// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+				MC2_VERIFY(result == NO_ERR, "Mission::init: alternate part block [%s] missing", partName);
 			}
 #endif
 
 			//------------------------------------------------------------------
 			// Find out what kind of object this is.
 			result = missionFile->readIdULong("ObjectNumber",parts[i].objNumber);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1):
+			// objNumber feeds loadObjectType() below; a failed read leaves it
+			// uninitialized-then-used to spawn the wrong/garbage object type.
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing ObjectNumber", partName);
 
 			//-------------------------------------------------
 			// Read in the data needed to control the object...
 			result = missionFile->readIdULong("ControlType", parts[i].controlType);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing ControlType", partName);
 
 			result = missionFile->readIdULong("ControlDataType", parts[i].controlDataType);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing ControlDataType", partName);
 
 			result = missionFile->readIdString("ObjectProfile", parts[i].profileName, 9);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing ObjectProfile", partName);
 
 			// Mod-tolerance: read CSVFile so we can back-fill the ObjectType
 			// appearance name when the pak lookup fails for a high ObjectNumber.
@@ -3910,24 +3922,29 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			else
 			{
 				result = missionFile->readIdULong("Pilot", parts[i].pilot);
-				gosASSERT(result == NO_ERR);
+				// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+				MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing Pilot", partName);
 			}
-			
+
 			//------------------------------------------------------------------
 			// Read the object's position, initial velocity and rotation.
 			result = missionFile->readIdFloat("PositionX",parts[i].position.x);
-			gosASSERT(result == NO_ERR);
-				
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing PositionX", partName);
+
 			result = missionFile->readIdFloat("PositionY",parts[i].position.y);
-			gosASSERT(result == NO_ERR);
-				
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing PositionY", partName);
+
 			parts[i].position.z = -1.0;
 
 			result = missionFile->readIdFloat("Rotation",parts[i].rotation);
-			gosASSERT(result == NO_ERR);
-				
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing Rotation", partName);
+
 			result = missionFile->readIdChar("TeamId",parts[i].teamId);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing TeamId", partName);
 			//--------------------------------------------------------------------------
 			// Hack for singleplayer, until editor spits this out properly for allies...
 			if (!MPlayer && (parts[i].teamId == 2))
@@ -3979,10 +3996,12 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
   			parts[i].velocity = 0;
 			
 			result = missionFile->readIdLong("Active",parts[i].active);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing Active", partName);
 
 			result = missionFile->readIdLong("Exists",parts[i].exists);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing Exists", partName);
 
 			float fDamage = 0.0f;
 			result = missionFile->readIdFloat("Damage",fDamage);
@@ -3993,10 +4012,12 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			}
 
 			result = missionFile->readIdChar("MyIcon", parts[i].myIcon);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing MyIcon", partName);
 
 			result = missionFile->readIdChar("MyIcon", parts[i].myIcon);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1)
+			MC2_VERIFY(result == NO_ERR, "Mission::init: [%s] missing MyIcon", partName);
 
 			result = missionFile->readIdBoolean("Captureable", parts[i].captureable);
 			if (result != NO_ERR)
