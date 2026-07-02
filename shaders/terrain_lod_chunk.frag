@@ -995,6 +995,17 @@ void main() {
     // default-OFF). Uniform control flow: u_useMatAlbedo is a uniform, so the
     // implicit-LOD texture() calls here are well-defined (UB2 discipline).
     if (u_useMatAlbedo != 0) {
+        // TERRAIN-MATERIAL-TEXTURES-1-FIX (fix C, cement exclusion): where a
+        // cement WORD is active (apron/runway/pad) the colormap `base` is already
+        // the authored cement tone and pureConcrete forced matWeights=(0,0,0,1).
+        // Compositing the CONCRETE albedo (Road004/marking source) here and then
+        // only PARTIALLY restoring it via concreteColorBlend below leaves a second,
+        // misaligned cement layer fighting the cement atlas on the apron. Hard-
+        // exclude the textured albedo on cement: cementAlbExcl==1 on a full cement
+        // hit -> the block is a no-op and `base` (the cement atlas colour) wins
+        // cleanly. cementTransAlpha feathers the transition-tile margin the same
+        // way concreteColorBlend already feathers it, so no seam is introduced.
+        float cementAlbExcl = cementHit ? 1.0 : max(concreteColorBlend, cementTransAlpha);
         vec2 uvM = v_worldPos.xy * (detailNormalTiling.x / MAT_WORLD_UNITS_PER_TILE);
         vec3 texAlb =
               matWeights.x * texture(u_matAlbedoArray, vec3(uvM * (matTiling.x / 3.0), float(MAT_LAYER_ROCK))).rgb
@@ -1006,7 +1017,33 @@ void main() {
         // per-mission colour zones on top of the tiled material albedo (weights
         // matWeights+snowWeight sum to 1 after the normalizations above).
         vec3 texComposed = texAlb * base * 2.0;
-        baseColor = mix(baseColor, texComposed, clamp(u_matAlbedoStrength, 0.0, 1.0));
+        // Scale the textured contribution down to zero over cement so the cement
+        // atlas (restored into `base`, mixed in at line ~concreteColorBlend) is
+        // the ONE surface shown on the apron.
+        float albMix = clamp(u_matAlbedoStrength, 0.0, 1.0) * (1.0 - cementAlbExcl);
+        baseColor = mix(baseColor, texComposed, albMix);
+    }
+
+    // TERRAIN-MATERIAL-TEXTURES-1-FIX (fix A, INDEX ORACLE debug view): DIAG bit
+    // 16384 renders each albedo texture-array LAYER as a distinct flat colour keyed
+    // by ARRAY INDEX (the value the frag passes to texture()), weighted by the same
+    // matWeights/snowWeight used for the real composite. This makes channel->layer
+    // wiring provable by eye/capture WITHOUT trusting the texture content:
+    //   ROCK(0)=red  GRASS(1)=green  DIRT(2)=blue  CONCRETE(3)=yellow  SNOW(4)=white
+    // (this returns before the cliff block, so MARBLE_CLIFF(5) is proved separately
+    // by the loader's per-layer "[TERRAIN_MAT_TEX] layer 5 (cliff)" log line, not here.)
+    // If open dirt ground shows BLUE here, dirt->layer 2 is correct; if it shows
+    // yellow, the weight->layer mapping is wrong (the reported symptom's oracle).
+    if ((u_diag & 16384) != 0) {
+        vec3 idxCol =
+              matWeights.x * vec3(1.0, 0.0, 0.0)   // MAT_LAYER_ROCK     = 0
+            + matWeights.y * vec3(0.0, 1.0, 0.0)   // MAT_LAYER_GRASS    = 1
+            + matWeights.z * vec3(0.0, 0.0, 1.0)   // MAT_LAYER_DIRT     = 2
+            + matWeights.w * vec3(1.0, 1.0, 0.0)   // MAT_LAYER_CONCRETE = 3
+            + snowWeight   * vec3(1.0, 1.0, 1.0);  // MAT_LAYER_SNOW     = 4
+        fragColor = vec4(idxCol, 1.0);
+        if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
     }
 
     // Cement: restore the authored colormap tone (runway/apron) instead of the

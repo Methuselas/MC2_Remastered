@@ -213,6 +213,25 @@ static const int kMatAlbedoLayerCount = 6;
 static const char* const kMatAlbedoChannelNames[kMatAlbedoLayerCount] = {
     "rock", "grass", "dirt", "concrete", "snow", "cliff"
 };
+// TERRAIN-MATERIAL-TEXTURES-1-FIX (fix A, INDEX ORACLE -- shared source of truth):
+// This table is the C++ mirror of the frag's MAT_LAYER_* constants
+// (shaders/include/terrain_mat_layers.hglsl). The albedo array is uploaded in
+// kMatAlbedoChannelNames[] order (layer i = channel i), and the frag samples
+// channel C at texture()'s layer arg = MAT_LAYER_<C>. Those two orders MUST agree
+// or dirt renders with the concrete/road albedo (the reported bug). kMatAlbedoExpectedLayer[i]
+// records what the frag's constant table says layer i should be; a load-time HARD
+// ERROR fires (and the array is disabled -> legacy tint path) if array index i !=
+// its frag constant. Keep these six values equal to their index -- if the frag
+// header ever reorders, update BOTH here and terrain_mat_layers.hglsl in lockstep.
+//   MAT_LAYER_ROCK=0 GRASS=1 DIRT=2 CONCRETE=3 SNOW=4 MARBLE_CLIFF=5
+static const int kMatAlbedoExpectedLayer[kMatAlbedoLayerCount] = {
+    0,  // rock     == MAT_LAYER_ROCK
+    1,  // grass    == MAT_LAYER_GRASS
+    2,  // dirt     == MAT_LAYER_DIRT
+    3,  // concrete == MAT_LAYER_CONCRETE
+    4,  // snow     == MAT_LAYER_SNOW
+    5,  // cliff    == MAT_LAYER_MARBLE_CLIFF
+};
 static char  s_matAlbedoLayerPath[kMatAlbedoLayerCount][512] = {{0}};
 static char  s_matAlbedoTextureRoot[512] = {0};  // default data/terrain_layers/
 // JSON strength (matAlbedoStrength). <0 = "no JSON value" sentinel; the bind
@@ -257,6 +276,32 @@ static void tglc_EnsureMatAlbedoArrayLoaded()
         printf("[TERRAIN_MAT_TEX] BPTC unsupported on this GL -- albedo array disabled\n");
         fflush(stdout);
         return;
+    }
+
+    // TERRAIN-MATERIAL-TEXTURES-1-FIX (fix A, INDEX ORACLE): print the
+    // channel->array-layer table the loader will build, alongside the frag's
+    // MAT_LAYER_* constant each channel is sampled at, and HARD-ERROR (disable the
+    // array -> legacy tint) on any mismatch. This is the shared-source-of-truth
+    // guard: the manifest cook order, this upload order, and the frag constants
+    // must all agree or the reported "dirt shows road albedo" index bug recurs.
+    {
+        bool orderOk = true;
+        printf("[TERRAIN_MAT_TEX] channel->layer table (loader upload order vs frag MAT_LAYER_* constant):\n");
+        for (int i = 0; i < kMatAlbedoLayerCount; ++i) {
+            const int frag = kMatAlbedoExpectedLayer[i];
+            const bool match = (frag == i);
+            if (!match) orderOk = false;
+            printf("[TERRAIN_MAT_TEX]   loader layer %d = '%s'  frag MAT_LAYER = %d  %s\n",
+                   i, kMatAlbedoChannelNames[i], frag, match ? "OK" : "*** MISMATCH ***");
+        }
+        fflush(stdout);
+        if (!orderOk) {
+            printf("[TERRAIN_MAT_TEX] ERROR: channel->layer order disagrees with the frag MAT_LAYER_* "
+                   "constants -- albedo array DISABLED to avoid a wrong-material splat (fix A oracle). "
+                   "Sync kMatAlbedoChannelNames[]/kMatAlbedoExpectedLayer[] with terrain_mat_layers.hglsl.\n");
+            fflush(stdout);
+            return;
+        }
     }
 
     RenderCore::KtxImage imgs[kMatAlbedoLayerCount];
@@ -335,6 +380,18 @@ static void tglc_EnsureMatAlbedoArrayLoaded()
     printf("[TERRAIN_MAT_TEX] albedo array READY: %d layers %dx%d BC7-sRGB levels=%d vram=%.1f MiB tex=%u\n",
            kMatAlbedoLayerCount, refW, refH, levels,
            totalBytes / (1024.0 * 1024.0), s_matAlbedoArrayTex);
+    // TERRAIN-MATERIAL-TEXTURES-1-FIX (fix D, MIPS GUARD): a mip-incomplete
+    // (levels==1) array shimmers/aliases badly when tiled at terrain distances.
+    // The cook writes 12 levels for a 2048^2 layer; levels==1 at runtime means a
+    // STALE pre-mip cook was deployed (the cook output post-dates the deploy pickup
+    // -- deploy_payload copies whatever _albedo.ktx2 is on disk). Loud so a bad
+    // deploy is caught in the console instead of shipping as a soft visual bug.
+    if (levels <= 1) {
+        printf("[TERRAIN_MAT_TEX] WARNING: albedo array has levels=1 (NO MIPS). Tiled terrain "
+               "albedo will shimmer. A mip-complete cook was NOT deployed -- re-cook "
+               "(tools/mc2texcook/cook_terrain_layers.py) THEN re-deploy so the mip-complete "
+               "data/terrain_layers/*_albedo.ktx2 reach the payload.\n");
+    }
     fflush(stdout);
 }
 
