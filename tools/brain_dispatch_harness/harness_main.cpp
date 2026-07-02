@@ -495,6 +495,10 @@ int main(int argc, char** argv) {
         (void)_putenv("MC2_BRAIN_INTENT_QUEUE=1");
     // BRAIN-FSM-1K-A/B: enable FSM verbs for fsm-* fixtures.
     (void)_putenv("MC2_BRAIN_FSM=1");
+    // BRAINSPECIAL-ALIAS-1: enable the alias registry for the alias-registry fixture.
+    // Safe for all other fixtures: resolution only rewrites tokens that match the
+    // registry or the catalog case-insensitively; exact canonical spellings pass through.
+    (void)_putenv("MC2_BRAIN_ALIAS=1");
     if (applyMode) {
         (void)_putenv("MC2_BRAIN_DISPATCH_APPLY=1");
     }

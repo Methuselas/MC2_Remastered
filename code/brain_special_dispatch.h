@@ -30,6 +30,10 @@
 //   MC2_BRAIN_DISPATCH_VAR=1 alone                → warns + is inert (DISPATCH required)
 //   MC2_BRAIN_DISPATCH=1 + MC2_BRAIN_DISPATCH_CALL=1 → TechSpecial.Call chaining; index + recurse + trace
 //   MC2_BRAIN_DISPATCH_CALL=1 alone               → warns + is inert (DISPATCH required)
+//   MC2_BRAIN_ALIAS=1 (BRAINSPECIAL-ALIAS-1)      → data-driven alias registry active:
+//       built-in seeds + Aliases{} block entries + per-block alias= keys + case-insensitive
+//       catalog shorthand. OFF (default): only the 5 hardcoded aliasToCanonical mappings
+//       apply (pre-slice behavior, byte-identical).
 //
 // FORBIDDEN-CALL GUARD (1A — executeSpecialBody_TraceOnly / executeSpecialBody_TraceOnlyChained):
 //   MUST NOT call ANY of: setGeneralTacOrder, setPlayerTacOrder, setAlarmTacOrder,
@@ -110,6 +114,9 @@ struct BrainSpecialBody {
 //   Documented here and in brain_special_dispatch.cpp.
 struct SpecialIndexEntry {
     std::string     key;   // from key= field in TechSpecial block
+    // BRAINSPECIAL-ALIAS-1: per-block alias= field (carver: alias = "Scenario.Main").
+    // Resolved by specialIndexFind as a fallback when MC2_BRAIN_ALIAS=1; unused otherwise.
+    std::string     alias;
     BrainSpecialBody body; // verbs collected from that block's Body { DO ... } section
 };
 

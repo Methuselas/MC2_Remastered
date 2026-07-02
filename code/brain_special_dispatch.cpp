@@ -118,12 +118,52 @@ void resetMissionVarStore() {
 // Corpus max observed depth = 2; limit set to 8 per recon recommendation.
 static constexpr int kCallChainMaxDepth = 8;
 
-// specialIndexFind — linear-scan lookup by key (case-sensitive).
+// ---------------------------------------------------------------------------
+// BRAINSPECIAL-ALIAS-1: gate + case-insensitive compare helper.
+// Gate MC2_BRAIN_ALIAS (default OFF). When OFF every alias path below is a no-op
+// and behavior is byte-identical to pre-slice (only the 5 hardcoded
+// aliasToCanonical mappings apply, exactly as before).
+static bool s_brainAliasGate() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_ALIAS");
+        return v && std::atoi(v) != 0;
+    })();
+    return kGate;
+}
+
+// Forward declaration — defined after aliasToCanonical (used by the dispatch loops above it).
+static const char* resolveVerbAliasToken(const char* verb, char out[256]);
+
+// ASCII case-insensitive full-string compare (leaf TU — no engine str helpers).
+static bool ciEquals(const char* a, const char* b) {
+    while (*a && *b) {
+        char ca = (*a >= 'A' && *a <= 'Z') ? (char)(*a + 32) : *a;
+        char cb = (*b >= 'A' && *b <= 'Z') ? (char)(*b + 32) : *b;
+        if (ca != cb) return false;
+        ++a; ++b;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+// specialIndexFind — linear-scan lookup by key (case-sensitive exact first).
+// BRAINSPECIAL-ALIAS-1 (gate ON only): fallback passes resolve the per-block
+// `alias = "..."` field (carver authors these, e.g. alias="Scenario.Main")
+// and finally a case-insensitive key match (author shorthand).
 // Returns pointer into idx for the found entry, or nullptr.
 const SpecialIndexEntry* specialIndexFind(const SpecialIndex& idx, const std::string& key) {
     for (const SpecialIndexEntry& e : idx) {
         if (e.key == key)
             return &e;
+    }
+    if (s_brainAliasGate()) {
+        for (const SpecialIndexEntry& e : idx) {
+            if (!e.alias.empty() && ciEquals(e.alias.c_str(), key.c_str()))
+                return &e;
+        }
+        for (const SpecialIndexEntry& e : idx) {
+            if (ciEquals(e.key.c_str(), key.c_str()))
+                return &e;
+        }
     }
     return nullptr;
 }
@@ -301,12 +341,16 @@ void executeSpecialBody_TraceOnlyChained(const BrainSpecialBody& body,
     // Trace each verb in the called body with depth marker.
     for (const std::string& verb : body.verbs) {
         const char* vp = verb.c_str();
+        // BRAINSPECIAL-ALIAS-1: resolve for MATCHING only; trace lines keep the
+        // original author spelling (vp). No-op when MC2_BRAIN_ALIAS is OFF.
+        char aliasBuf[256];
+        const char* vpr = resolveVerbAliasToken(vp, aliasBuf);
 
         // Handle nested TechSpecial.Call within a called body.
-        if (std::strncmp(vp, "TechSpecial.Call", 16) == 0 &&
-            (vp[16] == ' ' || vp[16] == '\t' || vp[16] == '\0')) {
+        if (std::strncmp(vpr, "TechSpecial.Call", 16) == 0 &&
+            (vpr[16] == ' ' || vpr[16] == '\t' || vpr[16] == '\0')) {
             char callKey[128];
-            if (!parseCallVerbKey(vp, callKey)) {
+            if (!parseCallVerbKey(vpr, callKey)) {
                 std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_UNKNOWN] from=%s target=<parse-fail> depth=%d wid=%d\n",
                              fromKey, depth, wid);
                 std::fflush(stderr);
@@ -352,17 +396,17 @@ void executeSpecialBody_TraceOnlyChained(const BrainSpecialBody& body,
 
         // Var.* handling (when DISPATCH_VAR=1) — reuse the 1D handlers.
         if (s_dispatchVarGate() && varStore) {
-            if (std::strncmp(vp, "Var.Set", 7) == 0 || std::strncmp(vp, "Var.Get", 7) == 0) {
+            if (std::strncmp(vpr, "Var.Set", 7) == 0 || std::strncmp(vpr, "Var.Get", 7) == 0) {
                 char key[32], value[32];
                 uint8_t scope = 0;
-                bool ok = parseVarVerb(vp, key, value, &scope);
+                bool ok = parseVarVerb(vpr, key, value, &scope);
                 if (!ok) {
                     std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_PARSE_FAIL] verb=%s wid=%d depth=%d (malformed)\n",
                                  vp, wid, depth);
                     std::fflush(stderr);
                     continue;
                 }
-                bool isSet = (std::strncmp(vp, "Var.Set", 7) == 0);
+                bool isSet = (std::strncmp(vpr, "Var.Set", 7) == 0);
                 if (isSet) handleVarSet(key, value, scope, varStore, wid);
                 else       handleVarGet(key, scope, varStore, wid);
                 continue;
@@ -372,7 +416,7 @@ void executeSpecialBody_TraceOnlyChained(const BrainSpecialBody& body,
         // Standard verb trace with depth.
         // NOTE: Brain.CorePower false in a CALLED body traces as recognized but
         // does NOT call setGeneralTacOrder (1A: no chained effects; deferred to 1B).
-        if (isRecognizedVerb(vp)) {
+        if (isRecognizedVerb(vpr)) {
             std::fprintf(stderr, "[BRAIN_DISPATCH] depth=%d verb=%s wid=%d\n", depth, vp, wid);
         } else {
             std::fprintf(stderr, "[BRAIN_DISPATCH_UNKNOWN] depth=%d verb=%s wid=%d\n", depth, vp, wid);
@@ -404,12 +448,16 @@ void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStor
 
     for (const std::string& verb : body.verbs) {
         const char* vp = verb.c_str();
+        // BRAINSPECIAL-ALIAS-1: resolve for MATCHING only; trace lines keep the
+        // original author spelling (vp). No-op when MC2_BRAIN_ALIAS is OFF.
+        char aliasBuf[256];
+        const char* vpr = resolveVerbAliasToken(vp, aliasBuf);
 
         // CALL-CHAIN-1A: TechSpecial.Call "<key>" handling.
-        if (callGate && std::strncmp(vp, "TechSpecial.Call", 16) == 0 &&
-            (vp[16] == ' ' || vp[16] == '\t' || vp[16] == '\0')) {
+        if (callGate && std::strncmp(vpr, "TechSpecial.Call", 16) == 0 &&
+            (vpr[16] == ' ' || vpr[16] == '\t' || vpr[16] == '\0')) {
             char callKey[128];
-            if (!parseCallVerbKey(vp, callKey)) {
+            if (!parseCallVerbKey(vpr, callKey)) {
                 std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_UNKNOWN] from=%s target=<parse-fail> wid=%d\n",
                              callerKey ? callerKey : "root", wid);
                 std::fflush(stderr);
@@ -454,16 +502,16 @@ void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStor
 
         // When DISPATCH_VAR=1, intercept Var.Set / Var.Get before the UNKNOWN fallthrough.
         if (varGate) {
-            if (std::strncmp(vp, "Var.Set", 7) == 0 || std::strncmp(vp, "Var.Get", 7) == 0) {
+            if (std::strncmp(vpr, "Var.Set", 7) == 0 || std::strncmp(vpr, "Var.Get", 7) == 0) {
                 char key[32], value[32];
                 uint8_t scope = 0;
-                bool ok = parseVarVerb(vp, key, value, &scope);
+                bool ok = parseVarVerb(vpr, key, value, &scope);
                 if (!ok) {
                     std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_PARSE_FAIL] verb=%s wid=%d (malformed)\n", vp, wid);
                     std::fflush(stderr);
                     continue;
                 }
-                bool isSet = (std::strncmp(vp, "Var.Set", 7) == 0);
+                bool isSet = (std::strncmp(vpr, "Var.Set", 7) == 0);
                 if (isSet)
                     handleVarSet(key, value, scope, varStore, wid);
                 else
@@ -471,7 +519,7 @@ void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStor
                 continue;
             }
         }
-        if (isRecognizedVerb(vp)) {
+        if (isRecognizedVerb(vpr)) {
             std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d\n", vp, wid);
         } else {
             std::fprintf(stderr, "[BRAIN_DISPATCH_UNKNOWN] verb=%s wid=%d\n", vp, wid);
@@ -505,11 +553,97 @@ static const char* aliasToCanonical(const char* verb) {
 }
 
 // ---------------------------------------------------------------------------
+// BRAINSPECIAL-ALIAS-1: data-driven alias registry.
+//
+// Spec (discussion #18): "stable canonical keys + author-friendly scoped shorthand
+// (Tactic.Standard -> tactic.standard)". Engine adaptation:
+//   1. Registry seeded with the 5 built-in aliases (same set aliasToCanonical hardcodes).
+//   2. Authorable `Aliases { <alias> = "<canonical>" }` block in the specials file
+//      (parsed by the raw scanner; registered unconditionally, resolved gate-ON only —
+//      same parse-unconditional / resolve-gated model as the CALL-CHAIN index).
+//   3. Case-insensitive shorthand: a token matching a registry canonical or a
+//      kRecognizedVerbs catalog entry case-insensitively is rewritten to the
+//      canonical spelling (spec's `tactic.standard` form).
+// Resolution is FIRST-TOKEN rewrite: verb args pass through untouched.
+// Gate OFF: resolveVerbAliasToken returns its input pointer unchanged (no-op).
+//
+// FORBIDDEN-CALL CONTRACT (registry + resolver): string ops + fprintf only.
+// No warrior pointer, no order functions.
+struct AliasEntry { char alias[64]; char canonical[96]; };
+static constexpr int kAliasRegistryCap = 32;
+static AliasEntry g_aliasRegistry[kAliasRegistryCap];
+static int       g_aliasRegistryCount = 0;
+
+// Add (or overwrite by alias name). Returns false when the cap is hit.
+static bool aliasRegistryAdd(const char* alias, const char* canonical) {
+    if (!alias || !canonical || alias[0] == '\0' || canonical[0] == '\0')
+        return false;
+    for (int i = 0; i < g_aliasRegistryCount; ++i) {
+        if (ciEquals(g_aliasRegistry[i].alias, alias)) {
+            std::strncpy(g_aliasRegistry[i].canonical, canonical, 95);
+            g_aliasRegistry[i].canonical[95] = '\0';
+            return true;
+        }
+    }
+    if (g_aliasRegistryCount >= kAliasRegistryCap) {
+        std::fprintf(stderr, "[BRAIN_ALIAS_REG] WARN: registry cap (%d) reached — alias %s dropped\n",
+                     kAliasRegistryCap, alias);
+        std::fflush(stderr);
+        return false;
+    }
+    AliasEntry& e = g_aliasRegistry[g_aliasRegistryCount++];
+    std::strncpy(e.alias, alias, 63);         e.alias[63] = '\0';
+    std::strncpy(e.canonical, canonical, 95); e.canonical[95] = '\0';
+    return true;
+}
+
+// Re-seed the registry with the built-in aliases (mirrors aliasToCanonical).
+// Called at the start of each specials parse (mission-load / harness path).
+static void aliasRegistrySeed() {
+    g_aliasRegistryCount = 0;
+    aliasRegistryAdd("coreEject",       "Unit.Eject");
+    aliasRegistryAdd("Brain.CoreEject", "Unit.Eject");
+    aliasRegistryAdd("corePower",       "Brain.CorePower");
+    aliasRegistryAdd("coreGuard",       "OPORD.CoreGuard");
+    aliasRegistryAdd("coreRetreat",     "Unit.Retreat");
+}
+
+// resolveVerbAliasToken — first-token alias/shorthand resolution.
+// Gate OFF (default): returns `verb` unchanged — byte-identical no-op.
+// Gate ON: if the first token matches (1) a registry alias, (2) a registry
+// canonical (case-insensitive), or (3) a kRecognizedVerbs entry (case-insensitive),
+// rewrite the token to the canonical spelling into `out` and return `out`.
+// Returns `verb` unchanged when no rewrite is needed.
+static const char* resolveVerbAliasToken(const char* verb, char out[256]) {
+    if (!s_brainAliasGate()) return verb;
+    const char* te = verb;
+    while (*te && *te != ' ' && *te != '\t') ++te;
+    size_t tl = (size_t)(te - verb);
+    if (tl == 0 || tl >= 96) return verb;
+    char tok[96];
+    std::memcpy(tok, verb, tl);
+    tok[tl] = '\0';
+    const char* canonical = nullptr;
+    for (int i = 0; i < g_aliasRegistryCount && !canonical; ++i)
+        if (ciEquals(g_aliasRegistry[i].alias, tok)) canonical = g_aliasRegistry[i].canonical;
+    for (int i = 0; i < g_aliasRegistryCount && !canonical; ++i)
+        if (ciEquals(g_aliasRegistry[i].canonical, tok)) canonical = g_aliasRegistry[i].canonical;
+    for (int i = 0; kRecognizedVerbs[i] != nullptr && !canonical; ++i)
+        if (ciEquals(kRecognizedVerbs[i], tok)) canonical = kRecognizedVerbs[i];
+    if (!canonical) return verb;
+    if (std::strcmp(canonical, tok) == 0) return verb;  // already canonical spelling
+    std::snprintf(out, 256, "%s%s", canonical, te);     // te keeps the arg tail (incl. space)
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // bodyHasPowerdown
 // Returns true if the body contains the Brain.CorePower false verb token.
 bool bodyHasPowerdown(const BrainSpecialBody& body) {
     for (const std::string& verb : body.verbs) {
-        if (verb == "Brain.CorePower false")
+        char abuf[256];  // BRAINSPECIAL-ALIAS-1: registry resolve (no-op gate-OFF)
+        const char* v = resolveVerbAliasToken(verb.c_str(), abuf);
+        if (std::strcmp(v, "Brain.CorePower false") == 0)
             return true;
     }
     return false;
@@ -520,7 +654,8 @@ bool bodyHasPowerdown(const BrainSpecialBody& body) {
 // Returns true if the body contains a Unit.Eject (or coreEject alias) verb token.
 bool bodyHasUnitEject(const BrainSpecialBody& body) {
     for (const std::string& verb : body.verbs) {
-        const char* canonical = aliasToCanonical(verb.c_str());
+        char abuf[256];  // BRAINSPECIAL-ALIAS-1: registry resolve (no-op gate-OFF)
+        const char* canonical = aliasToCanonical(resolveVerbAliasToken(verb.c_str(), abuf));
         if (std::strcmp(canonical, "Unit.Eject") == 0)
             return true;
     }
@@ -532,7 +667,8 @@ bool bodyHasUnitEject(const BrainSpecialBody& body) {
 // Returns true if the body contains an OPORD.CoreGuard (or coreGuard alias) verb token.
 bool bodyHasCoreGuard(const BrainSpecialBody& body) {
     for (const std::string& verb : body.verbs) {
-        const char* canonical = aliasToCanonical(verb.c_str());
+        char abuf[256];  // BRAINSPECIAL-ALIAS-1: registry resolve (no-op gate-OFF)
+        const char* canonical = aliasToCanonical(resolveVerbAliasToken(verb.c_str(), abuf));
         if (std::strcmp(canonical, "OPORD.CoreGuard") == 0)
             return true;
     }
@@ -545,8 +681,11 @@ bool bodyHasCoreGuard(const BrainSpecialBody& body) {
 // Token-prefix match: first word of the stored verb string must equal "OPORD.CoreMoveTo".
 bool bodyHasCoreMoveTo(const BrainSpecialBody& body) {
     for (const std::string& verb : body.verbs) {
-        if (std::strncmp(verb.c_str(), "OPORD.CoreMoveTo", 16) == 0
-            && (verb.size() == 16 || verb[16] == ' '))
+        char abuf[256];  // BRAINSPECIAL-ALIAS-1: registry resolve (no-op gate-OFF)
+        const char* v = resolveVerbAliasToken(verb.c_str(), abuf);
+        size_t vn = std::strlen(v);
+        if (std::strncmp(v, "OPORD.CoreMoveTo", 16) == 0
+            && (vn == 16 || v[16] == ' '))
             return true;
     }
     return false;
@@ -558,11 +697,14 @@ bool bodyHasCoreMoveTo(const BrainSpecialBody& body) {
 // Token-prefix match: first word of the stored verb string must equal "OPORD.CoreAttack".
 bool bodyHasCoreAttack(const BrainSpecialBody& body) {
     for (const std::string& verb : body.verbs) {
+        char abuf[256];  // BRAINSPECIAL-ALIAS-1: registry resolve (no-op gate-OFF)
+        const char* v = resolveVerbAliasToken(verb.c_str(), abuf);
+        size_t vn = std::strlen(v);
         // BRAIN-ALIAS-COREVERBS-1: Brain.CoreAttack (carver_v_enhanced) shares the
         // OPORD.CoreAttack effect/slot; match either spelling (both 16-char prefixes).
-        if ((std::strncmp(verb.c_str(), "OPORD.CoreAttack", 16) == 0
-             || std::strncmp(verb.c_str(), "Brain.CoreAttack", 16) == 0)
-            && (verb.size() == 16 || verb[16] == ' '))
+        if ((std::strncmp(v, "OPORD.CoreAttack", 16) == 0
+             || std::strncmp(v, "Brain.CoreAttack", 16) == 0)
+            && (vn == 16 || v[16] == ' '))
             return true;
     }
     return false;
@@ -573,7 +715,8 @@ bool bodyHasCoreAttack(const BrainSpecialBody& body) {
 // Returns true if the body contains a Unit.Retreat (or coreRetreat alias) verb token.
 bool bodyHasUnitRetreat(const BrainSpecialBody& body) {
     for (const std::string& verb : body.verbs) {
-        const char* canonical = aliasToCanonical(verb.c_str());
+        char abuf[256];  // BRAINSPECIAL-ALIAS-1: registry resolve (no-op gate-OFF)
+        const char* canonical = aliasToCanonical(resolveVerbAliasToken(verb.c_str(), abuf));
         if (std::strcmp(canonical, "Unit.Retreat") == 0)
             return true;
     }
@@ -586,8 +729,11 @@ bool bodyHasUnitRetreat(const BrainSpecialBody& body) {
 // Token-prefix match: first word of the stored verb string must equal "OPORD.CorePatrol".
 bool bodyHasCorePatrol(const BrainSpecialBody& body) {
     for (const std::string& verb : body.verbs) {
-        if (std::strncmp(verb.c_str(), "OPORD.CorePatrol", 16) == 0
-            && (verb.size() == 16 || verb[16] == ' '))
+        char abuf[256];  // BRAINSPECIAL-ALIAS-1: registry resolve (no-op gate-OFF)
+        const char* v = resolveVerbAliasToken(verb.c_str(), abuf);
+        size_t vn = std::strlen(v);
+        if (std::strncmp(v, "OPORD.CorePatrol", 16) == 0
+            && (vn == 16 || v[16] == ' '))
             return true;
     }
     return false;
@@ -780,6 +926,12 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
         // BRAIN-FSM-1K-A: gate check — skip effect verbs after a failed InState/NotInState.
         if (!stateGateOpen) continue;
 
+        // BRAINSPECIAL-ALIAS-1: registry/shorthand resolution for the whole handler
+        // chain below (Call/Var/effects/FSM all see the canonical spelling).
+        // No-op when MC2_BRAIN_ALIAS is OFF (returns vp unchanged).
+        char aliasBuf[256];
+        vp = resolveVerbAliasToken(vp, aliasBuf);
+
         // CALL-CHAIN-1A: TechSpecial.Call handling (trace only — no chained effects in 1A).
         if (callGate && std::strncmp(vp, "TechSpecial.Call", 16) == 0 &&
             (vp[16] == ' ' || vp[16] == '\t' || vp[16] == '\0')) {
@@ -846,7 +998,9 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
         // DISPATCH-EFFECT-UNITEJECT-1: alias resolution before effect dispatch.
         const char* vpCanon = aliasToCanonical(vp);
 
-        if (verb == "Brain.CorePower false") {
+        // BRAINSPECIAL-ALIAS-1: compare via vpCanon (== verb text when no alias
+        // resolution occurred — behavior-identical to the previous `verb ==` form).
+        if (std::strcmp(vpCanon, "Brain.CorePower false") == 0) {
             // BRAIN-DECISION-INTENT-QUEUE-1: gate ON → emit intent; gate OFF → direct call.
             // NOTE: This fires only for the ROOT body. Chained-body POWERDOWN = 1B.
             if (runtime) {
@@ -1923,10 +2077,11 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
         return false;
 
     // State machine:
-    //   OUTER      — scanning for "TechSpecial {"
-    //   IN_SPECIAL — inside TechSpecial block, scanning for "Body {" or key=/type= fields
+    //   OUTER      — scanning for "TechSpecial {" or "Aliases {"
+    //   IN_SPECIAL — inside TechSpecial block, scanning for "Body {" or key=/type=/alias= fields
     //   IN_BODY    — inside Body block, collecting DO lines
-    enum { OUTER, IN_SPECIAL, IN_BODY } state = OUTER;
+    //   IN_ALIASES — inside Aliases block (BRAINSPECIAL-ALIAS-1), collecting <alias> = "<canonical>"
+    enum { OUTER, IN_SPECIAL, IN_BODY, IN_ALIASES } state = OUTER;
 
     int bodiesFound = 0;
     int verbsThisBody = 0;
@@ -1935,6 +2090,7 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
     // Per-block state (reset on each TechSpecial {).
     std::string currentKey;
     std::string currentType;
+    std::string currentAlias;   // BRAINSPECIAL-ALIAS-1: per-block alias= field
     std::vector<std::string> currentVerbs;
 
     // Entry-body selection tracking.
@@ -1944,6 +2100,7 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
     struct RawBlock {
         std::string key;
         std::string type;
+        std::string alias;   // BRAINSPECIAL-ALIAS-1
         std::vector<std::string> verbs;
     };
     std::vector<RawBlock> rawBlocks;
@@ -1987,11 +2144,46 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     verbsThisBody = 0;
                     currentKey.clear();
                     currentType.clear();
+                    currentAlias.clear();
                     currentVerbs.clear();
+                }
+            } else if (std::strncmp(p, "Aliases", 7) == 0) {
+                // BRAINSPECIAL-ALIAS-1: top-level Aliases { <alias> = "<canonical>" } block.
+                // Registered unconditionally (parse-unconditional / resolve-gated model);
+                // the [BRAIN_ALIAS_REG] trace fires only when MC2_BRAIN_ALIAS=1 so gate-OFF
+                // stderr output is byte-identical.
+                const char* q = p + 7;
+                while (*q == ' ' || *q == '\t') ++q;
+                if (*q == '{')
+                    state = IN_ALIASES;
+            }
+        } else if (state == IN_ALIASES) {
+            // BRAINSPECIAL-ALIAS-1: collect alias lines until the closing brace.
+            if (*p == '}') {
+                state = OUTER;
+            } else {
+                const char* eq = std::strchr(p, '=');
+                if (eq) {
+                    size_t nl = (size_t)(eq - p);
+                    while (nl > 0 && (p[nl - 1] == ' ' || p[nl - 1] == '\t')) --nl;
+                    char aname[64];
+                    if (nl > 0 && nl < sizeof(aname)) {
+                        std::memcpy(aname, p, nl);
+                        aname[nl] = '\0';
+                        std::string canon = parseQuotedField(eq + 1);
+                        if (!canon.empty()) {
+                            aliasRegistryAdd(aname, canon.c_str());
+                            if (s_brainAliasGate()) {
+                                std::fprintf(stderr, "[BRAIN_ALIAS_REG] alias=%s canonical=%s\n",
+                                             aname, canon.c_str());
+                                std::fflush(stderr);
+                            }
+                        }
+                    }
                 }
             }
         } else if (state == IN_SPECIAL) {
-            // Look for key=, type=, "Body {", or closing "}".
+            // Look for key=, type=, alias=, "Body {", or closing "}".
             if (std::strncmp(p, "key", 3) == 0) {
                 const char* q = p + 3;
                 while (*q == ' ' || *q == '\t') ++q;
@@ -2006,6 +2198,16 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     ++q;
                     currentType = parseQuotedField(q);
                 }
+            } else if (std::strncmp(p, "alias", 5) == 0) {
+                // BRAINSPECIAL-ALIAS-1: per-block alias= field (carver authors these,
+                // e.g. alias = "Scenario.Main"). Captured into the index entry;
+                // specialIndexFind resolves it when MC2_BRAIN_ALIAS=1.
+                const char* q = p + 5;
+                while (*q == ' ' || *q == '\t') ++q;
+                if (*q == '=') {
+                    ++q;
+                    currentAlias = parseQuotedField(q);
+                }
             } else if (std::strncmp(p, "Body", 4) == 0) {
                 const char* q = p + 4;
                 while (*q == ' ' || *q == '\t') ++q;
@@ -2016,8 +2218,9 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
             } else if (*p == '}') {
                 // Closing brace of TechSpecial with no Body — commit block (no verbs).
                 RawBlock rb;
-                rb.key  = currentKey;
-                rb.type = currentType;
+                rb.key   = currentKey;
+                rb.type  = currentType;
+                rb.alias = currentAlias;
                 // no verbs
                 rawBlocks.push_back(std::move(rb));
                 state = OUTER;
@@ -2029,6 +2232,7 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     RawBlock rb;
                     rb.key   = currentKey;
                     rb.type  = currentType;
+                    rb.alias = currentAlias;
                     rb.verbs = currentVerbs;
                     rawBlocks.push_back(std::move(rb));
                 }
@@ -2071,6 +2275,7 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
         for (const RawBlock& rb : rawBlocks) {
             SpecialIndexEntry entry;
             entry.key        = rb.key;
+            entry.alias      = rb.alias;   // BRAINSPECIAL-ALIAS-1
             entry.body.verbs = rb.verbs;
             entry.body.loaded = !rb.verbs.empty();
             outIndex->push_back(std::move(entry));
@@ -2170,6 +2375,10 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
     outBody.verbs.clear();
     outBody.loaded = false;
 
+    // BRAINSPECIAL-ALIAS-1: reset the alias registry to its built-in seeds before
+    // each specials parse (mission-ephemeral, like the special cache).
+    aliasRegistrySeed();
+
     char fitPath[256];
     std::snprintf(fitPath, sizeof(fitPath), "data/missions/%s_specials.fit", missionName);
 
@@ -2252,6 +2461,9 @@ bool parseBrainSpecialBodyFromPath(const char* fitPath, BrainSpecialBody& outBod
                                     SpecialIndex* outIndex) {
     outBody.verbs.clear();
     outBody.loaded = false;
+
+    // BRAINSPECIAL-ALIAS-1: reset the alias registry to its built-in seeds (harness path).
+    aliasRegistrySeed();
 
     bool ok = parseBrainSpecialBody_RawScan(fitPath, outBody, outIndex);
     if (!ok) {

@@ -529,6 +529,36 @@
         "TARGET_POLICY intent emitted",
         "commit calls setTargetPriority with resolved values"
       ]
+    },
+    {
+      "name": "alias-registry",
+      "file": "mc2_01_alias_specials.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": [
+        "MC2_BRAIN_DISPATCH=1",
+        "MC2_BRAIN_ALIAS=1"
+      ],
+      "expected_bodyHasCoreGuard": true,
+      "expected_bodyHasUnitRetreat": true,
+      "expected_bodyHasEffect": true,
+      "expected_trace_substrings": [
+        "[BRAIN_ALIAS_REG] alias=guardnow canonical=OPORD.CoreGuard",
+        "[BRAIN_DISPATCH] verb=guardnow",
+        "[BRAIN_DISPATCH] verb=unit.retreat",
+        "[BRAIN_DISPATCH_CALL] from=root to=LibProbe"
+      ],
+      "notes": "BRAINSPECIAL-ALIAS-1: Aliases{} registry rewrite (guardnow->GUARD), case-insensitive catalog shorthand (unit.retreat->WITHDRAW), Call resolution via per-block alias= field.",
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_GUARD",
+        "expected_count": 2,
+        "notes": "guardnow -> GUARD first, unit.retreat -> WITHDRAW second. A/B identity."
+      },
+      "harness_proven": [
+        "Aliases{} block registered at parse",
+        "registry + shorthand resolution drives real effect dispatch",
+        "specialIndexFind resolves block alias= keys"
+      ]
     }
   ]
 }
