@@ -163,9 +163,13 @@ def cook_channel(channel, entry, out_dir, ktx_exe, output_size, force, dry_run):
             pbr.resize_to_square(albedo_png, albedo_png, output_size)
 
             print(f'[{channel}] cooking albedo ({os.path.basename(albedo_src)}) -> {albedo_out}')
+            # TERRAIN-MATERIAL-TEXTURES-1: mips=True is load-bearing. The engine
+            # albedo array samples these tiled at terrain distances; a single-level
+            # 2048 sq. layer shimmers/aliases badly. (The original 62d3d3c0 cook
+            # omitted --generate-mipmap; the engine loader requires mipCount > 1.)
             ok = pbr.cook_source_to_bc7(
                 ktx_exe, albedo_png, albedo_out,
-                vk_format='R8G8B8A8_SRGB', oetf='srgb', tmpdir=tmpdir,
+                vk_format='R8G8B8A8_SRGB', oetf='srgb', tmpdir=tmpdir, mips=True,
             )
             size = os.path.getsize(albedo_out) if os.path.exists(albedo_out) else 0
             results['albedo'] = (albedo_out, ok, size)
@@ -190,9 +194,11 @@ def cook_channel(channel, entry, out_dir, ktx_exe, output_size, force, dry_run):
             pbr.pack_height_into_normal_alpha(normal_norm_png, height_src, packed_png, output_size)
 
             print(f'[{channel}] cooking normal(+height alpha) -> {normal_out}')
+            # mips=True: keep normal(+height) cooks mip-complete like albedo so a
+            # future normal-source remap (recon R3) does not re-hit the shimmer bug.
             ok = pbr.cook_source_to_bc7(
                 ktx_exe, packed_png, normal_out,
-                vk_format='R8G8B8A8_UNORM', oetf='linear', tmpdir=tmpdir,
+                vk_format='R8G8B8A8_UNORM', oetf='linear', tmpdir=tmpdir, mips=True,
             )
             size = os.path.getsize(normal_out) if os.path.exists(normal_out) else 0
             results['normal'] = (normal_out, ok, size)
