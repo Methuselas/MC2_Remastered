@@ -285,6 +285,7 @@ ALLOWLIST=(
     MC2_TERRAIN_SHORELINE_FOAM_RUN    # override -- V3 foam-band horizontal run from waterline (world units)
     MC2_TERRAIN_SHORELINE_WET_HEIGHT  # override -- legacy alias for _WET_RUN (now horizontal-run units)
     MC2_TERRAIN_SHORELINE_FOAM_HEIGHT # override -- legacy alias for _FOAM_RUN (now horizontal-run units)
+    MC2_TERRAIN_SHORELINE_EDGE_JITTER # override -- V4-STYLE static world-XY band-distance jitter amplitude (wu, [0,32], default 4)
     MC2_TERRAIN_VISUAL_DISPLACE # feature -- TERRAIN-VISUAL-HEIGHT displacement from 4x bake (default OFF)
     MC2_TERRAIN_VISUAL_DISPLACE_FAR  # override -- far-band displacement scale knob
     MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE  # feature -- TERRAIN-REAUTH-UNPIN-1 near-object displacement fade (default ON when displacing; 0 disables)
@@ -469,6 +470,7 @@ ALLOWLIST=(
     MC2_IMGUI_DEMO                    # infra -- ImGui demo window toggle
     MC2_JUMPJETS_ALL                  # override -- dev cheat (all jumpjets)
     MC2_LAUNCHED                      # infra -- launcher-provenance flag (documented tier1 companion)
+    MC2_LAUNCHER_ENV_JSON             # infra -- =0 kill-switch for the MC2_NO_LAUNCHER launcher_env.json read (gameosmain LAUNCHER_ENV v1)
     MC2_LIGHTBRIDGE_COMMIT_TRACE      # trace
     MC2_LIGHTING_DEBUG_VIEW           # trace
     MC2_LIGHTING_LINEAR_AUDIT         # trace
