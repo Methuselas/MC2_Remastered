@@ -1933,6 +1933,12 @@ static GLint g_locSolidMVP = -1;   // u_terrainMVP    (per-frame)
 static GLint g_locSolidBHT = -1;   // u_bucketHeaderTrace (per-frame int gate)
 static GLint g_locSolidUW  = -1;   // u_useWindow (per-frame: 1=windowed, 0=full-range identity)
 static GLint g_locSolidMS  = -1;   // u_mapSide (PER-FRAME: changes when a different-size map loads)
+// WATER-REFLECTION-CLIP-1: u_reflectionPass (per-frame int gate; see .comp for
+// rationale). Set true only for the duration of RenderWaterReflectionPass()'s
+// ComputeDispatch() call, false otherwise -- so the main SOLID dispatch is
+// unaffected (byte-identical pzOk behavior).
+static GLint g_locSolidReflPass = -1;
+static bool  s_solidReflectionPassActive = false;
 
 
 // Flag: whether ComputeDispatch() ran the GPU path this frame.
@@ -2856,6 +2862,10 @@ void ComputeDispatch() {
         // decompose use the stale side) -> all-black terrain. Cache the location;
         // upload the live value per frame in ComputeDispatch().
         g_locSolidMS  = glGetUniformLocation(g_solidComputeProgram, "u_mapSide");
+        // WATER-REFLECTION-CLIP-1: may be optimized out if unused by the
+        // driver in some future shader revision; -1 is handled below (skip
+        // upload, shader-side uniform defaults to 0 = main-pass behavior).
+        g_locSolidReflPass = glGetUniformLocation(g_solidComputeProgram, "u_reflectionPass");
         // Upload the genuinely-constant uniforms once.
         MC2_GL_UseProgram(g_solidComputeProgram);
         const GLint locMTR  = glGetUniformLocation(g_solidComputeProgram, "u_maxThinRecords");
@@ -3376,6 +3386,11 @@ void ComputeDispatch() {
     // GPU readback.
     if (g_locSolidUW >= 0)
         glUniform1i(g_locSolidUW, s_solidUseWindow);
+    // WATER-REFLECTION-CLIP-1: armed ONLY for the duration of the reflection
+    // pass's own ComputeDispatch() call (see RenderWaterReflectionPass). 0 on
+    // every other call site (main SOLID dispatch) -> byte-identical pzOk.
+    if (g_locSolidReflPass >= 0)
+        glUniform1i(g_locSolidReflPass, s_solidReflectionPassActive ? 1 : 0);
 
     {
         const float* mvp = gos_GetTerrainMVPMat4();
@@ -3886,7 +3901,13 @@ void RenderWaterReflectionPass() {
     uint64_t savedDispatchFrameIdx = g_dispatchMvpFrameIdx;
 
     gos_SetTerrainMVP(mir);   // install mirror -> compute bakes mirrored clip
+    // WATER-REFLECTION-CLIP-1: arm the reflection-pass pzOk relaxation ONLY for
+    // this ComputeDispatch() call, then disarm immediately after -- the flag is
+    // read once per dispatch (uploaded inside ComputeDispatch itself) so there is
+    // no window where the main SOLID pass could see it armed.
+    s_solidReflectionPassActive = true;
     ComputeDispatch();        // fresh ring slot + refills shared cmd buffer
+    s_solidReflectionPassActive = false;
 
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, rw, rh);
@@ -3894,7 +3915,36 @@ void RenderWaterReflectionPass() {
     glClearDepth(0.0);                        // reverse-Z: far plane = 0 (GEQUAL)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // WATER-REFLECTION-CLIP-1: cheap mirrored-draw-count proof. Read back just
+    // the indirect cmd's DrawArraysIndirectCommand.count (16 bytes) rather than
+    // the whole RT -- this is the count of mirrored VERTICES the CLIP-1-relaxed
+    // pzOk gate admitted this dispatch (0 == the pre-fix bug: everything culled).
+    // Still a GL sync point (glGetBufferSubData waits for the write), but is
+    // ~4-5 orders of magnitude less data than the recon's landmine-6
+    // whole-RT glReadPixels(GL_RGBA, GL_FLOAT) stall, which is now opt-in only
+    // (MC2_WATER_REFL_RT_PIXELPROOF=1) for deep debugging.
+    uint32_t mirroredCmdCount = 0;
+    {
+        GLint prevDIB = 0; glGetIntegerv(GL_DRAW_INDIRECT_BUFFER_BINDING, &prevDIB);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
+        glGetBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, (GLsizeiptr)sizeof(mirroredCmdCount), &mirroredCmdCount);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, (GLuint)prevDIB);
+    }
+
+    // WATER-REFLECTION-CLIP-1: pzOk (compute-side) now ADMITS far-mirrored quads
+    // (see u_reflectionPass), but hardware near/far clipping happens again at
+    // the rasterizer regardless of what the compute gate decided -- a quad with
+    // clip.z > clip.w still gets clipped/discarded by the GPU, not just culled
+    // by our own gate. GL_DEPTH_CLAMP disables that hardware far-plane clip
+    // (clamps depth to [0,1] instead of discarding), matching the recon's
+    // "relax pzOk + GL_DEPTH_CLAMP" interim-fix pairing. Scoped to this pass
+    // only; restored immediately after (was disabled engine-wide before this).
+    const GLboolean depthClampWasEnabled = glIsEnabled(GL_DEPTH_CLAMP);
+    if (!depthClampWasEnabled) glEnable(GL_DEPTH_CLAMP);
+
     const bool drew = DrawIndirect();          // bridge inherits this FBO+viewport
+
+    if (!depthClampWasEnabled) glDisable(GL_DEPTH_CLAMP);
 
     glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFBO);
     glViewport(prevVP[0], prevVP[1], prevVP[2], prevVP[3]);
@@ -3906,32 +3956,45 @@ void RenderWaterReflectionPass() {
     g_dispatchMvpFp       = savedDispatchFp;
     g_dispatchMvpFrameIdx = savedDispatchFrameIdx;
 
-    // Throttled diagnostics + non-clear PROOF. Whole-RT coverage (not just
-    // center) so a camera-dependent center sample can't read black when terrain
-    // IS landing elsewhere in the RT. coverage = fraction of pixels with any
-    // non-zero color; alpha_cov = fraction with alpha>0 (terrain-marked).
+    // Throttled diagnostics. Default: cheap count-only proof (mirroredCmdCount,
+    // read back above -- BEFORE the restore, since g_indirectCmdBuffer is
+    // per-dispatch-shared and DrawIndirect()/the next frame's main dispatch may
+    // reuse the slot). Opt-in MC2_WATER_REFL_RT_PIXELPROOF=1 additionally does
+    // the old whole-RT glReadPixels coverage/alpha_cov breakdown for deep debug.
     static long s_frame = 0; ++s_frame;
     if (s_frame == 1 || s_frame == 5 || s_frame == 30 || s_frame == 120 ||
         (s_frame % 600) == 0) {
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        std::vector<float> px((size_t)rw * rh * 4, 0.0f);
-        glReadPixels(0, 0, rw, rh, GL_RGBA, GL_FLOAT, px.data());
-        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFBO);
-        int n = rw * rh, colorHits = 0, alphaHits = 0; float maxL = 0.0f; double acc = 0.0;
-        for (int i = 0; i < n; ++i) {
-            float L = 0.2126f*px[i*4] + 0.7152f*px[i*4+1] + 0.0722f*px[i*4+2];
-            if (L > 0.001f)        ++colorHits;
-            if (px[i*4+3] > 0.001f) ++alphaHits;
-            if (L > maxL) maxL = L;
-            acc += L;
+        static const bool s_pixelProof = [](){
+            const char* v = getenv("MC2_WATER_REFL_RT_PIXELPROOF");
+            return v && v[0] && v[0] != '0';
+        }();
+        if (!s_pixelProof) {
+            fprintf(stderr, "[WATER_REFL_RT v1] frame=%ld gate=1 fbo=%u dims=%dx%d drew=%d "
+                    "mirrored_cmd_count=%u\n",
+                    s_frame, (unsigned)fbo, rw, rh, (int)drew, (unsigned)mirroredCmdCount);
+            fflush(stderr);
+        } else {
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            std::vector<float> px((size_t)rw * rh * 4, 0.0f);
+            glReadPixels(0, 0, rw, rh, GL_RGBA, GL_FLOAT, px.data());
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFBO);
+            int n = rw * rh, colorHits = 0, alphaHits = 0; float maxL = 0.0f; double acc = 0.0;
+            for (int i = 0; i < n; ++i) {
+                float L = 0.2126f*px[i*4] + 0.7152f*px[i*4+1] + 0.0722f*px[i*4+2];
+                if (L > 0.001f)        ++colorHits;
+                if (px[i*4+3] > 0.001f) ++alphaHits;
+                if (L > maxL) maxL = L;
+                acc += L;
+            }
+            GLenum err = glGetError();
+            fprintf(stderr, "[WATER_REFL_RT v1] frame=%ld gate=1 fbo=%u dims=%dx%d drew=%d "
+                    "mirrored_cmd_count=%u coverage=%.1f%% alpha_cov=%.1f%% max_luma=%.4f "
+                    "avg_luma=%.5f gl_err=0x%x\n",
+                    s_frame, (unsigned)fbo, rw, rh, (int)drew, (unsigned)mirroredCmdCount,
+                    100.0*colorHits/(n?n:1), 100.0*alphaHits/(n?n:1), maxL,
+                    (n?acc/n:0.0), (unsigned)err);
+            fflush(stderr);
         }
-        GLenum err = glGetError();
-        fprintf(stderr, "[WATER_REFL_RT v1] frame=%ld gate=1 fbo=%u dims=%dx%d drew=%d "
-                "coverage=%.1f%% alpha_cov=%.1f%% max_luma=%.4f avg_luma=%.5f gl_err=0x%x\n",
-                s_frame, (unsigned)fbo, rw, rh, (int)drew,
-                100.0*colorHits/(n?n:1), 100.0*alphaHits/(n?n:1), maxL,
-                (n?acc/n:0.0), (unsigned)err);
-        fflush(stderr);
     }
 }
 
