@@ -192,25 +192,29 @@ def build_mask_rgba(signed_d_wu: np.ndarray, damp_w: float, foam_w: float) -> np
 
 
 # --- cook ---------------------------------------------------------------------
-def cmd_cook(args) -> int:
-    pak = Path(args.pak)
+def cook_one(pak: Path, out_path: Path, *, fit: Path | None = None,
+             visual_height: Path | None = None, damp_width: float = DEFAULT_DAMP_WIDTH_WU,
+             foam_width: float = DEFAULT_FOAM_WIDTH_WU, supersample: int = 1,
+             quiet: bool = False) -> dict:
+    """Cook one shoreline mask + bounds. Returns a census dict
+    (mission/side/water_elev/water_cells/wet_cells/foam_cells/water_pct/out/
+    bounds/source), or {"error": ...} on failure. Shared by cmd_cook and
+    cmd_all_missions so the single-mission and batch paths cook identically."""
     if not pak.is_file():
-        print(f"[cook] ERROR pak not found: {pak}", file=sys.stderr)
-        return 4
+        return {"mission": pak.stem, "error": f"pak not found: {pak}"}
     packets = read_packets(pak)
     md = locate_mapdata(packets)
     if md is None:
-        print(f"[cook] ERROR no MapData packet matched signature in {pak}", file=sys.stderr)
-        return 4
+        return {"mission": pak.stem, "error": f"no MapData packet in {pak}"}
     _pkt_idx, side, blocks = md
 
-    fit_path = Path(args.fit) if args.fit else pak.with_suffix(".fit")
+    fit_path = fit if fit else pak.with_suffix(".fit")
     water_elev = read_water_elevation(fit_path)
     layers = extract_layers(side, blocks, water_elev)
     coarse_elev = layers["elev"]  # (side, side), row0=top=north
 
     # --- hi-res source selection (USER AMENDMENT) ---
-    vh_path = Path(args.visual_height) if args.visual_height else _default_visual_height_path(pak)
+    vh_path = visual_height if visual_height else _default_visual_height_path(pak)
     vh = _load_visual_height(vh_path)
     if vh is not None:
         elev, grid_side = vh
@@ -223,7 +227,7 @@ def cmd_cook(args) -> int:
         source = "coarse pak heightfield (no hi-res bake found — fallback)"
 
     water = elev <= water_elev
-    ss = max(1, int(args.supersample))
+    ss = max(1, int(supersample))
     if ss > 1:
         # nearest-neighbour upsample of the boolean water field before EDT so
         # the distance transform itself runs at the requested output resolution
@@ -234,11 +238,10 @@ def cmd_cook(args) -> int:
         grid_side = grid_side * ss
 
     signed_d = compute_signed_distance_wu(water, cell_wu)
-    damp_w = max(float(args.damp_width), MIN_BAND_WU)
-    foam_w = max(float(args.foam_width), MIN_BAND_WU)
+    damp_w = max(float(damp_width), MIN_BAND_WU)
+    foam_w = max(float(foam_width), MIN_BAND_WU)
     rgba = build_mask_rgba(signed_d, damp_w, foam_w)
 
-    out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(rgba, mode="RGBA").save(out_path)
 
@@ -249,15 +252,103 @@ def cmd_cook(args) -> int:
     bounds_path = bounds_path.with_name(bounds_path.name + ".bounds.txt")
     bounds_path.write_text(f"{-half_map:.3f} {half_map:.3f} {2*half_map:.3f} {2*half_map:.3f}\n")
 
-    water_cells = int(water.sum())
+    n = int(coarse_elev.size)
+    water_cells = int((coarse_elev <= water_elev).sum())  # coarse-grid water census
     foam_cells = int((rgba[..., 2] > 0).sum())
     wet_cells = int((rgba[..., 1] > 0).sum())
-    print(f"[cook] {pak.stem}: side={side} mask={grid_side}x{grid_side} "
-          f"source={source} water_elev={water_elev:.2f}wu "
-          f"damp_w={damp_w:.1f}wu foam_w={foam_w:.1f}wu "
-          f"water_cells={water_cells} wet_cells={wet_cells} foam_cells={foam_cells} "
-          f"-> {out_path} bounds={bounds_path}")
+    census = {
+        "mission": pak.stem, "side": int(side), "grid_side": int(grid_side),
+        "source": source, "water_elev": float(water_elev),
+        "damp_w": float(damp_w), "foam_w": float(foam_w), "supersample": int(ss),
+        "water_cells": water_cells, "wet_cells": wet_cells, "foam_cells": foam_cells,
+        "water_pct": round(100.0 * water_cells / max(n, 1), 3),
+        "out": str(out_path), "bounds": str(bounds_path),
+    }
+    if not quiet:
+        print(f"[cook] {pak.stem}: side={side} mask={grid_side}x{grid_side} "
+              f"source={source} water_elev={water_elev:.2f}wu "
+              f"damp_w={damp_w:.1f}wu foam_w={foam_w:.1f}wu "
+              f"water_cells={water_cells} wet_cells={wet_cells} foam_cells={foam_cells} "
+              f"-> {out_path} bounds={bounds_path}")
+    return census
+
+
+def cmd_cook(args) -> int:
+    r = cook_one(
+        Path(args.pak), Path(args.out),
+        fit=Path(args.fit) if args.fit else None,
+        visual_height=Path(args.visual_height) if args.visual_height else None,
+        damp_width=args.damp_width, foam_width=args.foam_width,
+        supersample=args.supersample)
+    if r.get("error"):
+        print(f"[cook] ERROR {r['error']}", file=sys.stderr)
+        return 4
     return 0
+
+
+# --- all-missions (SHORELINE-BATCH-COOK-1) -----------------------------------
+def cmd_all_missions(args) -> int:
+    """Batch-cook shoreline masks for every water-bearing mission in a dir.
+
+    Water detection: [Water].Elevation from the mission .fit vs the coarse pak
+    heightfield (analyzer.read_water_elevation + elev<=elev) -- NEVER the
+    PostcompVertex .water byte (packed alpha, not a bool). Missions with zero
+    water cells are skipped and reported in the census.
+
+    Sources the hi-res bake from <missions-dir-or-beauty-root>/<stem>.beauty/
+    visual_height_4x.r32 when present (falls back to the coarse pak grid, which
+    at 128wu cells yields empty narrow bands -- run the bake first, or pass
+    --supersample). Writes <out>/<stem>.beauty/shoreline_mask.png (+ bounds) and
+    an all_missions_census.json."""
+    import glob as _glob
+    import json as _json
+
+    mdir = Path(args.missions_dir)
+    beauty_root = Path(args.beauty_root) if args.beauty_root else mdir
+    out_root = Path(args.out_root)
+    paks = sorted(mdir.glob("*.pak"))
+    if not paks:
+        print(f"[all-missions] ERROR no .pak files in {mdir}", file=sys.stderr)
+        return 4
+
+    census = {"missions_dir": str(mdir), "beauty_root": str(beauty_root),
+              "out_root": str(out_root), "damp_w": args.damp_width,
+              "foam_w": args.foam_width, "supersample": args.supersample,
+              "cooked": [], "skipped": []}
+    rc = 0
+    for pak in paks:
+        stem = pak.stem
+        md = locate_mapdata(read_packets(pak))
+        if md is None:
+            census["skipped"].append({"mission": stem, "reason": "no MapData packet"})
+            continue
+        _idx, side, blocks = md
+        welev = read_water_elevation(pak.with_suffix(".fit"))
+        layers = extract_layers(side, blocks, welev)
+        wcells = int(layers["water"].sum())
+        if wcells == 0:
+            census["skipped"].append({"mission": stem, "reason": "no water cells",
+                                      "water_elev": float(welev)})
+            print(f"[all-missions] skip {stem}: no water (elev={welev:.2f}wu)")
+            continue
+        vh = beauty_root / f"{stem}.beauty" / "visual_height_4x.r32"
+        out = out_root / f"{stem}.beauty" / "shoreline_mask.png"
+        r = cook_one(pak, out, visual_height=vh if vh.is_file() else None,
+                     damp_width=args.damp_width, foam_width=args.foam_width,
+                     supersample=args.supersample)
+        if r.get("error"):
+            census["skipped"].append({"mission": stem, "reason": r["error"]})
+            print(f"[all-missions] FAIL {stem}: {r['error']}", file=sys.stderr)
+            rc = 1
+            continue
+        census["cooked"].append(r)
+
+    if args.census:
+        Path(args.census).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.census).write_text(_json.dumps(census, indent=2), encoding="utf-8")
+        print(f"[all-missions] census -> {args.census}")
+    print(f"[all-missions] cooked={len(census['cooked'])} skipped={len(census['skipped'])}")
+    return rc
 
 
 # --- validate -------------------------------------------------------------
@@ -389,6 +480,24 @@ def main() -> int:
     p.add_argument("--supersample", type=int, default=1,
                    help="extra upsample factor applied to the water mask before the EDT (default 1)")
     p.set_defaults(func=cmd_cook)
+
+    p = sub.add_parser("all-missions", help="SHORELINE-BATCH-COOK-1: cook masks for "
+                       "every water-bearing mission in a dir (skips dry maps, emits census)")
+    p.add_argument("--missions-dir", required=True,
+                   help="dir of stock <stem>.pak/.fit missions")
+    p.add_argument("--beauty-root",
+                   help="dir holding <stem>.beauty/visual_height_4x.r32 hi-res bakes "
+                        "(default: --missions-dir); falls back to coarse pak grid if absent")
+    p.add_argument("--out-root", required=True,
+                   help="writes <out-root>/<stem>.beauty/shoreline_mask.png (+bounds)")
+    p.add_argument("--damp-width", type=float, default=DEFAULT_DAMP_WIDTH_WU)
+    p.add_argument("--foam-width", type=float, default=DEFAULT_FOAM_WIDTH_WU)
+    p.add_argument("--supersample", type=int, default=8,
+                   help="EDT upsample so the default 28/6wu bands are representable "
+                        "against a 4x hi-res bake (32wu cells at ss=1 => empty bands); "
+                        "default 8 => 4wu cells")
+    p.add_argument("--census", help="write a JSON census (mission -> water/band stats)")
+    p.set_defaults(func=cmd_all_missions)
 
     p = sub.add_parser("validate", help="format + bounds-file sanity checks")
     p.add_argument("--png", required=True)

@@ -393,3 +393,59 @@ def test_install_without_bounds_warns(tmp_path):
     r = run("install", "--png", str(png), "--deploy", str(deploy), "--mission", "mc2_17")
     assert r.returncode == 0
     assert "WARN" in r.stdout
+
+
+# --- all-missions batch (SHORELINE-BATCH-COOK-1) -----------------------------
+@pytest.fixture()
+def synthetic_missions_dir(tmp_path):
+    """A missions dir with two synthetic maps: one water-bearing island and one
+    all-land (dry) map that the batch must skip. Mirrors the real batch's water
+    detection ([Water].Elevation vs coarse elev, never the .water byte)."""
+    mdir = tmp_path / "missions"
+    mdir.mkdir()
+    # wet: island radius 12 at water_elev 0 -> surrounding cells go negative -> water
+    _write_synthetic_pak(mdir / "wet_map.pak", 60, water_elev=0.0, island_radius=12.0)
+    _write_fit(mdir / "wet_map.fit", 0.0)
+    # dry: island radius huge so every cell is above the (very low) water level
+    _write_synthetic_pak(mdir / "dry_map.pak", 60, water_elev=-1e6, island_radius=12.0)
+    _write_fit(mdir / "dry_map.fit", -1e6)
+    return mdir
+
+
+def test_all_missions_cooks_water_skips_dry(synthetic_missions_dir, tmp_path):
+    out_root = tmp_path / "out"
+    census = tmp_path / "census.json"
+    # foam-width 24: this synthetic dir has no <stem>.beauty bake, so cook falls
+    # back to the coarse 128wu pak grid (16wu cells at ss=8) -- a 6wu foam band
+    # can't land on that (same coarse-grid landmine the real batch avoids by
+    # baking a 4x hi-res source first). Widen foam so the census row is nonzero;
+    # the real batch keeps the 6wu default against its hi-res bakes.
+    r = run("all-missions", "--missions-dir", str(synthetic_missions_dir),
+            "--out-root", str(out_root), "--supersample", "8",
+            "--foam-width", "24", "--census", str(census))
+    assert r.returncode == 0, r.stdout + r.stderr
+    # wet map cooked; dry map skipped as "no water cells"
+    assert (out_root / "wet_map.beauty" / "shoreline_mask.png").is_file()
+    assert (out_root / "wet_map.beauty" / "shoreline_mask.bounds.txt").is_file()
+    assert not (out_root / "dry_map.beauty").exists()
+    import json as _json
+    doc = _json.loads(census.read_text())
+    cooked = {c["mission"] for c in doc["cooked"]}
+    skipped = {s["mission"]: s["reason"] for s in doc["skipped"]}
+    assert cooked == {"wet_map"}
+    assert skipped.get("dry_map") == "no water cells"
+    # the cooked census row carries populated bands (supersample fix)
+    row = next(c for c in doc["cooked"] if c["mission"] == "wet_map")
+    assert row["wet_cells"] > 0 and row["foam_cells"] > 0
+
+
+def test_all_missions_deterministic(synthetic_missions_dir, tmp_path):
+    o1 = tmp_path / "o1"; o2 = tmp_path / "o2"
+    r1 = run("all-missions", "--missions-dir", str(synthetic_missions_dir),
+             "--out-root", str(o1), "--supersample", "8")
+    r2 = run("all-missions", "--missions-dir", str(synthetic_missions_dir),
+             "--out-root", str(o2), "--supersample", "8")
+    assert r1.returncode == 0 and r2.returncode == 0
+    a = np.array(Image.open(o1 / "wet_map.beauty" / "shoreline_mask.png"))
+    b = np.array(Image.open(o2 / "wet_map.beauty" / "shoreline_mask.png"))
+    assert np.array_equal(a, b)
