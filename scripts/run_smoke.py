@@ -1394,6 +1394,10 @@ def main():
                             "MC2_RENDERLISTS_COST_SPLIT",
                             "MC2_LIGHT_PREFIX_GPU_COPY",
                             "MC2_SHADOW_CASTER_CULL_CACHE",
+                            # SP-BATCHER-ALPHASCAN-GATE-1: skip the frame-constant
+                            # per-packet alpha-test re-resolve scan when no
+                            # destruction/damage-alpha event occurred since last flush.
+                            "MC2_SP_ALPHASCAN_GATE",
                             "MC2_STATIC_PROP_FLUSH_CACHED_BLOB",
                             "MC2_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE",
                             "MC2_STATIC_PROP_COLORS_FILL",
