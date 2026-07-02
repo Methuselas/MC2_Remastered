@@ -78,6 +78,11 @@ static RenderCore::GpuBufferOwner s_visualHeightSsbo{ // TERRAIN-VISUAL-HEIGHT-S
     "TerrainVisualHeightSsbo",
     0u};
 static int    s_visualSide       = 0; // V = (mapSide-1)*4+1, fine grid side (0 = bake not loaded)
+// TERRAIN-LOD-GEOMORPH-1: float count of the max-mip levels APPENDED to the
+// binding-26 SSBO after the V*V fine bake (5 levels x mapSide^2, strides
+// 2/4/5/10/20). 0 = no mips shipped -> u_geomorphMips uploads 0 -> the vert's
+// coarse-band branch behaves exactly as S2 (legacy layout untouched).
+static int    s_visualMipFloats  = 0;
 // TERRAIN-SHORELINE-V3 (band-vs-drawn-plane probe): retained CPU copies of the
 // coarse (gameplay/water-plane) heightfield and the 4x visual/displaced bake so
 // a one-shot load-time instrument (MC2_TERRAIN_SHORELINE_PROBE) can print the
@@ -241,6 +246,8 @@ static GLint s_locEdgeFeatherStr     = -1;
 static GLint s_locVisualDisplace     = -1; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1
 static GLint s_locVisualSide         = -1;
 static GLint s_locVisualDisplaceFar  = -1; // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD
+static GLint s_locGeomorphMips       = -1; // TERRAIN-LOD-GEOMORPH-1: b26 has max-mip levels
+static GLint s_locMorphFactor        = -1; // TERRAIN-LOD-GEOMORPH-1: per-block parent-band lerp
 static GLint s_locPomParams      = -1;
 static GLint s_locMatProfile     = -1;
 static GLint s_locControlMap     = -1;  // TERRAIN-CONTROLMAP-SAMPLE-1: u_controlMap sampler
@@ -660,6 +667,8 @@ void gos_TerrainLodChunk_Init()
             s_locVisualDisplace    = glGetUniformLocation(s_terrainProgram, "u_visualDisplace");
             s_locVisualSide        = glGetUniformLocation(s_terrainProgram, "u_visualSide");
             s_locVisualDisplaceFar = glGetUniformLocation(s_terrainProgram, "u_visualDisplaceFar");
+            s_locGeomorphMips      = glGetUniformLocation(s_terrainProgram, "u_geomorphMips");   // TERRAIN-LOD-GEOMORPH-1
+            s_locMorphFactor       = glGetUniformLocation(s_terrainProgram, "u_morphFactor");    // TERRAIN-LOD-GEOMORPH-1
             s_locPomParams   = glGetUniformLocation(s_terrainProgram, "pomParams");
             s_locMatProfile  = glGetUniformLocation(s_terrainProgram, "g_terrainMaterialProfile");
             s_locCementAtlas    = glGetUniformLocation(s_terrainProgram, "u_cementAtlas");
@@ -750,6 +759,7 @@ void gos_TerrainLodChunk_Destroy()
         GLuint visualBuf = static_cast<GLuint>(s_visualHeightSsbo.glName);
         glDeleteBuffers(1, &visualBuf);
         s_visualHeightSsbo.glName = 0;
+        s_visualMipFloats = 0;   // TERRAIN-LOD-GEOMORPH-1
 
         // TERRAIN-VISUAL-HEIGHT-SSBO-OWNER-1: mark the slot unavailable on teardown.
         RenderCore::RenderResourceDesc invalid;
@@ -1066,6 +1076,20 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     }();
     if (s_locVisualDisplaceFar >= 0)
         glUniform1f(s_locVisualDisplaceFar, s_visualDisplaceFar);
+
+    // TERRAIN-LOD-GEOMORPH-1: coarse-band vertices read their OWN max-mip level
+    // (silhouette keeps peaks) when the bake shipped mips. Rides the same
+    // MC2_TERRAIN_VISUAL_DISPLACE gate (visualDisplaceActive); mips absent ->
+    // uploads 0 -> vert branch skipped (S2 behavior verbatim).
+    // MC2_TERRAIN_LOD_GEOMORPH=0 is the killswitch when mips ARE present.
+    static const bool s_geomorphKill = []() {
+        const char* v = getenv("MC2_TERRAIN_LOD_GEOMORPH");
+        return (v && v[0] == '0');
+    }();
+    const bool geomorphActive =
+        visualDisplaceActive && s_visualMipFloats > 0 && !s_geomorphKill;
+    if (s_locGeomorphMips >= 0)
+        glUniform1i(s_locGeomorphMips, geomorphActive ? 1 : 0);
 
     // Upload per-frame uniforms (same for every patch).
     if (s_locMapSide >= 0)
@@ -1777,7 +1801,8 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
 // TERRAIN-VISUAL-HEIGHT-SAMPLE-1 Stage 1: upload the 4x VISUAL heightfield bake to
 // a dedicated SSBO (binding 26). Lazily allocated. NO geometry samples it yet —
 // Stage 2 (corner-pinned interior subdivision) consumes it. Load+log only here.
-void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int V)
+void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int V,
+                                                const float* mipMaxes, int mipFloats)
 {
     if (!visualHeights || V <= 0)
         return;
@@ -1793,11 +1818,21 @@ void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int 
             return;
         }
     }
-    GLsizeiptr bytes = (GLsizeiptr)V * (GLsizeiptr)V * (GLsizeiptr)sizeof(float);
+    // TERRAIN-LOD-GEOMORPH-1: mips (when shipped) are appended to the SAME
+    // buffer after the fine bake — shader offsets are computable from
+    // u_visualSide/u_mapSide alone, no extra binding slot consumed.
+    if (!mipMaxes) mipFloats = 0;
+    GLsizeiptr fineBytes = (GLsizeiptr)V * (GLsizeiptr)V * (GLsizeiptr)sizeof(float);
+    GLsizeiptr mipBytes  = (GLsizeiptr)mipFloats * (GLsizeiptr)sizeof(float);
+    GLsizeiptr bytes     = fineBytes + mipBytes;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_visualHeightSsbo.glName));
-    glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, visualHeights, GL_STATIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, nullptr, GL_STATIC_DRAW);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, fineBytes, visualHeights);
+    if (mipBytes > 0)
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, fineBytes, mipBytes, mipMaxes);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    s_visualSide = V;   // remembered for the displaced draw (u_visualSide)
+    s_visualSide      = V;   // remembered for the displaced draw (u_visualSide)
+    s_visualMipFloats = (int)mipFloats;
 
     // TERRAIN-SHORELINE-V3 probe: retain the fine visual bake (the height the
     // band is placed against under displacement) for the shore-delta instrument.
@@ -1820,8 +1855,10 @@ void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int 
         RenderCore::registerOrUpdateRenderResource(d);
     }
     // Bound to base 26 in the draw only when displacement is active.
-    fprintf(stderr, "[VISUAL_HEIGHT v1] SSBO uploaded binding=%u V=%d bytes=%lld first=%.3f\n",
-            TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, V, (long long)bytes, visualHeights[0]);
+    fprintf(stderr, "[VISUAL_HEIGHT v1] SSBO uploaded binding=%u V=%d bytes=%lld first=%.3f "
+            "geomorphMips=%s(%d floats)\n",
+            TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, V, (long long)bytes, visualHeights[0],
+            mipFloats > 0 ? "YES" : "no", (int)mipFloats);
     fflush(stderr);
 }
 

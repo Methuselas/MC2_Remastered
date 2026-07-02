@@ -127,6 +127,48 @@ def reshape_visual(base: np.ndarray, elev: np.ndarray, factor: int,
     return work
 
 
+# TERRAIN-LOD-GEOMORPH-1: coarse-band vertex strides the renderer decimates to
+# (mclib/terrain.cpp LOD_STEPS[1:]). One max-reduced level is emitted per stride.
+MIP_STRIDES = (2, 4, 5, 10, 20)
+
+
+def _sliding_max(a: np.ndarray, halfw: int, axis: int) -> np.ndarray:
+    """Centered sliding-window max along `axis` (edge-padded, window 2*halfw+1)."""
+    from numpy.lib.stride_tricks import sliding_window_view
+    pad = [(0, 0), (0, 0)]
+    pad[axis] = (halfw, halfw)
+    p = np.pad(a, pad, mode="edge")
+    return sliding_window_view(p, 2 * halfw + 1, axis=axis).max(axis=-1)
+
+
+def build_max_mips(visual: np.ndarray, factor: int, side: int) -> dict:
+    """Max-preserving reduction levels for the coarse-band silhouette fix.
+
+    For each renderer LOD stride N the level stores, AT EVERY coarse vertex
+    (side x side, full resolution -- no decimation, so stitch lookups at any
+    stride-aligned index are well-defined), the MAX of the FINAL fine bake over
+    the Voronoi footprint that vertex represents on the stride-N lattice:
+    +/- N/2 coarse cells = +/- N*factor/2 fine samples. A coarse band whose
+    vertex Z reads its own level can no longer drop ridge maxima that fall
+    between surviving vertices (silhouette-LOSS root cause,
+    TERRAIN-LOD-GEOMORPH-RECON-1 sec 3). Built from the FINAL `visual` array so
+    it composes with --reshape (and future --reauth) automatically."""
+    levels = []
+    stats = []
+    corners = visual[::factor, ::factor][:side, :side]
+    for s in MIP_STRIDES:
+        halfw = (s * factor) // 2                     # +/- s/2 coarse cells in fine units
+        m = _sliding_max(_sliding_max(visual, halfw, 0), halfw, 1)
+        mip = m[::factor, ::factor][:side, :side]     # sample at coarse verts
+        lift = mip - corners
+        levels.append(mip.astype("<f4"))
+        stats.append({"stride": s, "window_fine": 2 * halfw + 1,
+                      "max_lift_wu": float(lift.max()),
+                      "mean_lift_wu": float(lift.mean())})
+    return {"blob": np.concatenate([lv.ravel() for lv in levels]),
+            "strides": list(MIP_STRIDES), "stats": stats}
+
+
 def nearest_coarse(elev: np.ndarray, factor: int) -> np.ndarray:
     """The blocky reference: each visual cell = its containing coarse value."""
     N = elev.shape[0]
@@ -148,7 +190,7 @@ def _pyramid_top_score(elev, water_mask, land_mask):
 
 def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
          reshape: bool = False, corner_clamp: float = 0.0,
-         max_delta: float = 40.0, passes: int = 24) -> dict:
+         max_delta: float = 40.0, passes: int = 24, mips: bool = True) -> dict:
     pak = missions_dir / f"{mission}.pak"
     if not pak.is_file():
         return {"mission": mission, "error": f"not found: {pak}"}
@@ -194,9 +236,23 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
 
     delta = visual - nearest_coarse(elev, factor)             # smoothing introduced
 
+    # TERRAIN-LOD-GEOMORPH-1: max-preserving mip levels, built from the FINAL
+    # fine bake (post-reshape / post-any-future-reauth) so silhouette maxes
+    # track whatever surface actually ships. Emitted as a sibling sidecar the
+    # engine appends to the binding-26 SSBO; absent file = legacy behavior.
+    mips_info = None
+    if mips:
+        mm = build_max_mips(visual, factor, side)
+        mips_info = {"file": "visual_height_mips.r32",
+                     "strides": mm["strides"],
+                     "grid_side": int(side),
+                     "levels": mm["stats"]}
+
     beauty = out_root / f"{mission}.beauty"
     beauty.mkdir(parents=True, exist_ok=True)
     visual.astype("<f4").tofile(beauty / f"visual_height_{factor}x.r32")
+    if mips:
+        mm["blob"].astype("<f4").tofile(beauty / "visual_height_mips.r32")
     _save_gray(visual, beauty / "visual_height_preview.png")
     _save_gray(np.abs(delta), beauty / "visual_delta_heatmap.png")
 
@@ -214,6 +270,7 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
         "visual_delta_wu": {"max_abs": float(np.abs(delta).max()),
                             "mean_abs": float(np.abs(delta).mean())},
         "visual_height_file": f"visual_height_{factor}x.r32",
+        "max_mips": mips_info,
         "note": ("reshaped (de-pyramid) visual height; coarse corners clamped to "
                  "corner_clamp; protected pinned; render-only.") if reshape else
                 ("boring bilinear bake; corners exact; render-only "
@@ -233,13 +290,16 @@ def main() -> int:
     ap.add_argument("--corner-clamp", type=float, default=0.0, help="max coarse-vertex move (wu)")
     ap.add_argument("--max-delta", type=float, default=40.0, help="max visual deviation (wu)")
     ap.add_argument("--passes", type=int, default=24)
+    ap.add_argument("--no-mips", action="store_true",
+                    help="skip TERRAIN-LOD-GEOMORPH-1 max-mip sidecar emission")
     args = ap.parse_args()
     missions_dir = Path(args.missions_dir)
     out_root = Path(args.out)
     rc = 0
     for m in args.missions:
         rep = bake(m, missions_dir, out_root, args.factor, args.reshape,
-                   args.corner_clamp, args.max_delta, args.passes)
+                   args.corner_clamp, args.max_delta, args.passes,
+                   mips=not args.no_mips)
         if rep.get("error"):
             print(f"[visual-bake] {m}: ERROR {rep['error']}", file=sys.stderr); rc = 1; continue
         cap = (0.0 if not args.reshape else args.corner_clamp) + 1e-4
@@ -249,6 +309,10 @@ def main() -> int:
             ri = rep["reshape"]
             extra = (f" pyr_score {ri['pyramid_top_score_before']:.2f}->{ri['pyramid_top_score_after']:.2f}"
                      f" corner_move<={ri['max_corner_move_wu']:.1f}wu")
+        if rep.get("max_mips"):
+            lifts = ["%d:%.0f" % (lv["stride"], lv["max_lift_wu"])
+                     for lv in rep["max_mips"]["levels"]]
+            extra += " mips max_lift[" + " ".join(lifts) + "]wu"
         print(f"[visual-bake] {m}: coarse={rep['coarse_side']} -> visual={rep['visual_side']} "
               f"(x{rep['factor']}) corner_err={rep['max_corner_error_wu']:.3g} "
               f"{'PASS' if ok else 'FAIL'}  delta_max={rep['visual_delta_wu']['max_abs']:.2f}wu{extra} "

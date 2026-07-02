@@ -1231,7 +1231,56 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 							}
 							else
 							{
-								gos_TerrainLodChunk_UploadVisualHeightFull(vh.data(), V);
+								// TERRAIN-LOD-GEOMORPH-1: optional max-mip sidecar
+								// (visual_height_mips.r32, sibling of the fine bake):
+								// 5 levels (strides 2,4,5,10,20) x mapSide^2 floats,
+								// max of the fine bake over each coarse vertex's
+								// +/- stride/2 footprint. Appended to the binding-26
+								// SSBO by the upload below. Absent/mis-sized -> no
+								// mips (legacy layout; coarse bands behave as S2).
+								std::vector<float> vmips;
+								{
+									char mipPath[600];
+									strncpy(mipPath, vhPath, sizeof(mipPath) - 1);
+									mipPath[sizeof(mipPath) - 1] = '\0';
+									char* mbs = strrchr(mipPath, '\\');
+									char* mfs = strrchr(mipPath, '/');
+									char* mSlash = (mfs > mbs) ? mfs : mbs;
+									if (mSlash)
+									{
+										size_t dirLen = (size_t)(mSlash + 1 - mipPath);
+										snprintf(mipPath + dirLen, sizeof(mipPath) - dirLen,
+										         "visual_height_mips.r32");
+										FILE* mf = fopen(mipPath, "rb");
+										if (mf)
+										{
+											fseek(mf, 0, SEEK_END);
+											long msz = ftell(mf);
+											fseek(mf, 0, SEEK_SET);
+											const size_t mipWant =
+												5u * (size_t)mapSide * (size_t)mapSide * sizeof(float);
+											if ((size_t)msz == mipWant)
+											{
+												vmips.resize(mipWant / sizeof(float));
+												if (fread(vmips.data(), sizeof(float), vmips.size(), mf)
+												    != vmips.size())
+													vmips.clear();
+											}
+											else
+											{
+												printf("[VISUAL_HEIGHT v1] mips SIZE MISMATCH path=%s "
+												       "got=%ld want=%zu (5 x %d^2 floats) -- ignored\n",
+												       mipPath, msz, mipWant, mapSide);
+												fflush(stdout);
+											}
+											fclose(mf);
+										}
+									}
+								}
+								gos_TerrainLodChunk_UploadVisualHeightFull(
+									vh.data(), V,
+									vmips.empty() ? nullptr : vmips.data(),
+									(int)vmips.size());
 								// TERRAIN-DISPLACEMENT-TRUTH-1: report the REAL state, not
 								// the stale Stage-1 lie. Stage 2 shipped: when
 								// MC2_TERRAIN_VISUAL_DISPLACE is on the vert shader

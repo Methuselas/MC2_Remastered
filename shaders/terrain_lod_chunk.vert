@@ -43,6 +43,25 @@ uniform int u_visualSide;      // V = (mapSide-1)*4+1
 // (default); 0.0 = coarse heightfield only (mode-2 verts fall back to `h`, matching
 // the byte-identical coarse path's Z). Only affects u_visualDisplace==2 verts.
 uniform float u_visualDisplaceFar;
+// TERRAIN-LOD-GEOMORPH-1: binding-26 layout extension. When u_geomorphMips==1 the
+// buffer holds [fine V*V | mip(2) | mip(4) | mip(5) | mip(10) | mip(20)], each mip
+// u_mapSide*u_mapSide row-major: MAX of the fine bake over the +/- stride/2
+// coarse-cell footprint at EVERY coarse vertex (full resolution, so stitch-stride
+// lookups at any index are well-defined). Coarse-band INTERIOR verts read their
+// OWN stride's mip so decimation can no longer drop ridge maxima (silhouette fix);
+// block-PERIMETER verts keep the S2 fine-bake/stitch path verbatim, so every seam
+// agrees with every neighbour band by construction (seam ownership: perimeter
+// never mips, never morphs).
+uniform int   u_geomorphMips;   // 1 = mips resident in binding 26
+uniform int   u_lodStep;        // this block's stride (1,2,4,5,10,20); shared with frag
+float mipH(int cx, int cy, int stride) {
+    cx = clamp(cx, 0, u_mapSide - 1);
+    cy = clamp(cy, 0, u_mapSide - 1);
+    int lvl = (stride == 2) ? 0 : (stride == 4) ? 1 : (stride == 5) ? 2
+            : (stride == 10) ? 3 : 4;   // 20 -> 4
+    int base = u_visualSide * u_visualSide + lvl * u_mapSide * u_mapSide;
+    return heightsFine[base + cx + cy * u_mapSide];
+}
 out vec3  v_worldPos;
 out float v_terrainType;
 
@@ -189,6 +208,19 @@ void main() {
             fxV = clamp(mapX * 4, 0, u_visualSide - 1);
             fyV = clamp(mapY * 4, 0, u_visualSide - 1);
             hv = heightsFine[fxV + fyV * u_visualSide];
+            // TERRAIN-LOD-GEOMORPH-1: block-INTERIOR verts of a coarse band read
+            // their OWN max-mip level instead of the bake corner value, so the
+            // stride-N lattice carries the peak of the footprint it decimated
+            // away (silhouette-LOSS fix, recon sec 3/4b). Perimeter verts
+            // (localOffset on the block edge — includes every stitched vert)
+            // are EXCLUDED and keep the S2 sample above: both sides of every
+            // seam read identical values, zero new crack risk. Skirts never
+            // reach here (mode-2 branch already gates isSkirtFlag==0).
+            bool onPerim = (localOffset.x == 0 || localOffset.x == u_quadCountX ||
+                            localOffset.y == 0 || localOffset.y == u_quadCountY);
+            if (u_geomorphMips == 1 && !onPerim && u_lodStep > 1) {
+                hv = mipH(mapX, mapY, u_lodStep);
+            }
         }
         h = mix(h, hv, clamp(u_visualDisplaceFar, 0.0, 1.0));
     }

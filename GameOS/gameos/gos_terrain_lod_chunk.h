@@ -70,7 +70,14 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide);
 // TERRAIN-VISUAL-HEIGHT-SAMPLE-1 Stage 1: upload the 4x VISUAL heightfield bake to
 // a dedicated SSBO (binding 26). visualHeights: float[V*V] row-major, V=(mapSide-1)*4+1.
 // Stage 1 is load+log only — NO geometry samples binding 26 yet (Stage 2 displaces).
-void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int V);
+// TERRAIN-LOD-GEOMORPH-1: optional max-preserving mip levels (visual_height_mips.r32)
+// are APPENDED to the same binding-26 SSBO: mipMaxes = 5 levels (strides 2,4,5,10,20),
+// each mapSide*mapSide row-major floats (mipFloats = 5*mapSide*mapSide total), holding
+// the MAX of the fine bake over the +/- stride/2 coarse-cell footprint at every coarse
+// vertex. nullptr/0 = no mips (legacy layout, geomorph inactive).
+void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int V,
+                                                const float* mipMaxes = nullptr,
+                                                int mipFloats = 0);
 
 // Step 5b: upload per-vertex terrainType (0..N; cement/concrete ~3) to its SSBO.
 // types: float[mapSide*mapSide] row-major (parallel to the heightfield).
