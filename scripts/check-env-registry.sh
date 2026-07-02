@@ -269,8 +269,12 @@ ALLOWLIST=(
     MC2_TERRAIN_CONTROLMAP_FILE # override -- explicit control-map path override
     MC2_TERRAIN_MATERIAL_LIB    # feature -- TERRAIN-MATERIAL-LIB-1 data-defined terrain material layers (default OFF)
     MC2_TERRAIN_MATERIAL_LIB_FILE  # override -- explicit terrain_materials.json path override
-    MC2_TERRAIN_SHORELINE       # feature -- TERRAIN-SHORELINE-MASK-1 wetness/foam shoreline mask (default OFF)
-    MC2_TERRAIN_SHORELINE_FILE  # override -- explicit shoreline mask path override
+    MC2_TERRAIN_SHORELINE       # feature -- TERRAIN-SHORELINE-V3 elevation-placed wetness/foam band (default OFF)
+    MC2_TERRAIN_SHORELINE_FILE  # override -- explicit shoreline mask (optional modulator) path override
+    MC2_TERRAIN_SHORELINE_STRENGTH   # override -- wet/damp darken intensity multiplier [0,2]
+    MC2_TERRAIN_SHORELINE_FOAM       # override -- foam rim intensity multiplier [0,2]
+    MC2_TERRAIN_SHORELINE_WET_HEIGHT  # override -- V3 wet-band height above water (world units)
+    MC2_TERRAIN_SHORELINE_FOAM_HEIGHT # override -- V3 foam-band height above water (world units)
     MC2_TERRAIN_VISUAL_DISPLACE # feature -- TERRAIN-VISUAL-HEIGHT displacement from 4x bake (default OFF)
     MC2_TERRAIN_VISUAL_DISPLACE_FAR  # override -- far-band displacement scale knob
     MC2_TERRAIN_MASK_DISPATCH   # feature -- promote-to-registry

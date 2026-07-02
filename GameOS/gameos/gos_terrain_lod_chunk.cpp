@@ -114,11 +114,13 @@ static int    s_controlMapSide = 0;
 static GLuint s_overlaySidecarTex = 0;
 static float  s_overlayBounds[4]  = {0.0f, 0.0f, 0.0f, 0.0f};  // topLeftX,topLeftY(=maxY),sizeX,sizeY
 
-// TERRAIN-SHORELINE-MASK-1: authored land-side wet/foam shoreline mask sidecar
+// TERRAIN-SHORELINE-V3: authored land-side wet/foam shoreline mask sidecar
 // texture (unit TERRAIN_SHORELINE_TEXUNIT). Plain GLuint, same self-contained
-// single-owner pattern as s_overlaySidecarTex. glName 0 = not loaded (gate off
-// or no mask) -> u_useShorelineMask uploads 0 at draw (byte-identical -- no
-// wet/foam band, legacy screen runShoreline() stays active).
+// single-owner pattern as s_overlaySidecarTex. glName 0 = not loaded (no
+// sidecar found) -> u_hasShorelineMask uploads 0 at draw -> the elevation
+// band still renders (mask is now an optional modulator, not a requirement);
+// u_useShorelineMask (the band's own on/off) is driven directly by the
+// MC2_TERRAIN_SHORELINE gate, independent of this texture's state.
 static GLuint s_shorelineMaskTex   = 0;
 static float  s_shorelineBounds[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // topLeftX,topLeftY(=maxY),sizeX,sizeY
 
@@ -238,10 +240,15 @@ static GLint s_locUseControlMap  = -1;  // u_useControlMap gate uniform
 static GLint s_locOverlaySidecar    = -1;  // u_overlaySidecar sampler
 static GLint s_locUseOverlaySidecar = -1;  // u_useOverlaySidecar gate uniform
 static GLint s_locOverlayBounds     = -1;  // u_overlayBounds (vec4 minX,minY,sizeX,sizeY)
-// TERRAIN-SHORELINE-MASK-1: authored land-side wet/foam shoreline mask.
-static GLint s_locShorelineMask     = -1;  // u_shorelineMask sampler
-static GLint s_locUseShorelineMask  = -1;  // u_useShorelineMask gate uniform
-static GLint s_locShorelineBounds   = -1;  // u_shorelineBounds (vec4 minX,minY,sizeX,sizeY)
+// TERRAIN-SHORELINE-V3: elevation-placed wet/foam band; mask is now an
+// OPTIONAL modulator (u_hasShorelineMask), not the placement source.
+static GLint s_locShorelineMask     = -1;  // u_shorelineMask sampler (modulator)
+static GLint s_locUseShorelineMask  = -1;  // u_useShorelineMask: 1 = elevation bands active (MC2_TERRAIN_SHORELINE gate)
+static GLint s_locHasShorelineMask  = -1;  // u_hasShorelineMask: 1 = sidecar loaded, apply modulator
+static GLint s_locShorelineBounds   = -1;  // u_shorelineBounds (vec4 minX,minY,sizeX,sizeY) -- modulator sample bounds
+static GLint s_locWaterElevation    = -1;  // u_waterElevation (Terrain::waterElevation, world units)
+static GLint s_locShorelineWetHeight  = -1;  // u_shorelineWetHeight (world units above water)
+static GLint s_locShorelineFoamHeight = -1;  // u_shorelineFoamHeight (world units above water)
 static GLint s_locShaderTime        = -1;  // u_shaderTime (f(worldPos,time)-only foam animation clock)
 static GLint s_locShorelineStrength     = -1;  // u_shorelineStrength (wet/damp darken multiplier)
 static GLint s_locShorelineFoamStrength = -1;  // u_shorelineFoamStrength (foam rim multiplier)
@@ -658,9 +665,13 @@ void gos_TerrainLodChunk_Init()
             s_locOverlaySidecar    = glGetUniformLocation(s_terrainProgram, "u_overlaySidecar");    // TERRAIN-OVERLAY-V2-PARITY-1
             s_locUseOverlaySidecar = glGetUniformLocation(s_terrainProgram, "u_useOverlaySidecar");
             s_locOverlayBounds     = glGetUniformLocation(s_terrainProgram, "u_overlayBounds");
-            s_locShorelineMask     = glGetUniformLocation(s_terrainProgram, "u_shorelineMask");    // TERRAIN-SHORELINE-MASK-1
+            s_locShorelineMask     = glGetUniformLocation(s_terrainProgram, "u_shorelineMask");    // TERRAIN-SHORELINE-V3 (was MASK-1)
             s_locUseShorelineMask  = glGetUniformLocation(s_terrainProgram, "u_useShorelineMask");
+            s_locHasShorelineMask  = glGetUniformLocation(s_terrainProgram, "u_hasShorelineMask");
             s_locShorelineBounds   = glGetUniformLocation(s_terrainProgram, "u_shorelineBounds");
+            s_locWaterElevation    = glGetUniformLocation(s_terrainProgram, "u_waterElevation");
+            s_locShorelineWetHeight  = glGetUniformLocation(s_terrainProgram, "u_shorelineWetHeight");
+            s_locShorelineFoamHeight = glGetUniformLocation(s_terrainProgram, "u_shorelineFoamHeight");
             s_locShaderTime        = glGetUniformLocation(s_terrainProgram, "u_shaderTime");
             s_locShorelineStrength     = glGetUniformLocation(s_terrainProgram, "u_shorelineStrength");
             s_locShorelineFoamStrength = glGetUniformLocation(s_terrainProgram, "u_shorelineFoamStrength");
@@ -1154,31 +1165,50 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         }
     }
 
-    // TERRAIN-SHORELINE-MASK-1: authored land-side wet/foam shoreline mask at
-    // unit TERRAIN_SHORELINE_TEXUNIT. Only bound when a mask was actually
-    // loaded (s_shorelineMaskTex != 0); u_useShorelineMask uploads 0 otherwise
-    // (gate off / no mask) -> frag skips the whole wet/foam block -> byte-
+    // TERRAIN-SHORELINE-V3: elevation-placed wet/foam band. u_useShorelineMask
+    // now gates the BAND ITSELF (MC2_TERRAIN_SHORELINE on), independent of
+    // whether a mask sidecar was found -- v1/v2 required a loaded mask before
+    // any band showed; V3's placement comes from v_worldPos.z vs
+    // u_waterElevation, so the band works unconditionally once the gate is
+    // on. The mask, when present (s_shorelineMaskTex != 0), is uploaded too
+    // and applied as an OPTIONAL modulator (u_hasShorelineMask) -- it no
+    // longer decides whether the band exists, only how it's shaped. Gate OFF
+    // -> u_useShorelineMask uploads 0 -> frag skips the whole block -> byte-
     // identical (no band; legacy screen runShoreline() stays active per its
-    // own gate). u_shaderTime is uploaded unconditionally (cheap scalar); the
-    // frag only reads it inside the gated shoreline block, so this is
-    // render-invariant when the gate is off.
+    // own gate).
     {
+        static const bool s_shorelineGateOn = []() {
+            const char* v = std::getenv("MC2_TERRAIN_SHORELINE");
+            return (v && v[0] && v[0] != '0');
+        }();
         const bool shorelineMaskReady = (s_shorelineMaskTex != 0);
         if (s_locUseShorelineMask >= 0)
-            glUniform1i(s_locUseShorelineMask, shorelineMaskReady ? 1 : 0);
-        if (shorelineMaskReady) {
-            if (s_locShorelineMask >= 0) {
-                glUniform1i(s_locShorelineMask, TERRAIN_SHORELINE_TEXUNIT);
-                glActiveTexture(GL_TEXTURE0 + TERRAIN_SHORELINE_TEXUNIT);
-                glBindTexture(GL_TEXTURE_2D, s_shorelineMaskTex);
-                glActiveTexture(GL_TEXTURE0);
+            glUniform1i(s_locUseShorelineMask, s_shorelineGateOn ? 1 : 0);
+        if (s_shorelineGateOn) {
+            if (s_locHasShorelineMask >= 0)
+                glUniform1i(s_locHasShorelineMask, shorelineMaskReady ? 1 : 0);
+            if (shorelineMaskReady) {
+                if (s_locShorelineMask >= 0) {
+                    glUniform1i(s_locShorelineMask, TERRAIN_SHORELINE_TEXUNIT);
+                    glActiveTexture(GL_TEXTURE0 + TERRAIN_SHORELINE_TEXUNIT);
+                    glBindTexture(GL_TEXTURE_2D, s_shorelineMaskTex);
+                    glActiveTexture(GL_TEXTURE0);
+                }
+                if (s_locShorelineBounds >= 0)
+                    glUniform4f(s_locShorelineBounds, s_shorelineBounds[0], s_shorelineBounds[1],
+                                s_shorelineBounds[2], s_shorelineBounds[3]);
             }
-            if (s_locShorelineBounds >= 0)
-                glUniform4f(s_locShorelineBounds, s_shorelineBounds[0], s_shorelineBounds[1],
-                            s_shorelineBounds[2], s_shorelineBounds[3]);
+            // TERRAIN-SHORELINE-V3: water elevation the bands are placed
+            // relative to -- SAME source as the water fast path
+            // (Terrain::waterElevation, mirrored into gosPostProcess at
+            // mission load via gos_SetWaterElevation).
+            if (s_locWaterElevation >= 0) {
+                gosPostProcess* pp = getGosPostProcess();
+                glUniform1f(s_locWaterElevation, pp ? pp->getWaterElevation() : 0.0f);
+            }
             if (s_locShaderTime >= 0)
                 glUniform1f(s_locShaderTime, gos_GetShaderClockSeconds());
-            // TERRAIN-SHORELINE-MASK-1 (visual-quality pass): runtime intensity
+            // TERRAIN-SHORELINE-V3 (visual-quality pass): runtime intensity
             // knobs, sampled once (feature gate is per-process anyway). Default
             // 1.0 = the authored modest band in terrain_lod_chunk.frag; clamp to
             // [0,2] so a bad env value can't blow the band out or invert it.
@@ -1200,6 +1230,26 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                 glUniform1f(s_locShorelineStrength, s_shorelineStrength);
             if (s_locShorelineFoamStrength >= 0)
                 glUniform1f(s_locShorelineFoamStrength, s_shorelineFoamStrength);
+            // TERRAIN-SHORELINE-V3: band heights (world units above water).
+            // Locked design defaults: wet ~3.0wu (range 2-4), foam ~1.2wu
+            // (range 0.8-1.5). MC2_TERRAIN_SHORELINE_WET_HEIGHT / _FOAM_HEIGHT
+            // override for art iteration without a shader edit.
+            static const float s_shorelineWetHeight = []() {
+                const char* v = std::getenv("MC2_TERRAIN_SHORELINE_WET_HEIGHT");
+                float f = v ? (float)std::atof(v) : 3.0f;
+                if (!(f == f) || f <= 0.0f) f = 3.0f; // NaN/non-positive guard
+                return f;
+            }();
+            static const float s_shorelineFoamHeight = []() {
+                const char* v = std::getenv("MC2_TERRAIN_SHORELINE_FOAM_HEIGHT");
+                float f = v ? (float)std::atof(v) : 1.2f;
+                if (!(f == f) || f <= 0.0f) f = 1.2f; // NaN/non-positive guard
+                return f;
+            }();
+            if (s_locShorelineWetHeight >= 0)
+                glUniform1f(s_locShorelineWetHeight, s_shorelineWetHeight);
+            if (s_locShorelineFoamHeight >= 0)
+                glUniform1f(s_locShorelineFoamHeight, s_shorelineFoamHeight);
         }
     }
 
@@ -1820,12 +1870,20 @@ void gos_TerrainLodChunk_UploadShorelineMask(const unsigned char* rgba, int w, i
     fflush(stderr);
 }
 
-// TERRAIN-SHORELINE-MASK-1: true once a shoreline mask has been uploaded.
-// Consumed by gos_postprocess.cpp to suppress the legacy screen runShoreline()
-// pass (recon landmine #6 -- avoid double-brightening the seam).
+// TERRAIN-SHORELINE-V3: true whenever the elevation-based shoreline band is
+// active (MC2_TERRAIN_SHORELINE gate on) -- NOT dependent on a mask sidecar
+// being loaded, since V3 places the band by elevation unconditionally (the
+// mask, if present, is only an optional modulator). Consumed by
+// gos_postprocess.cpp to suppress the legacy screen runShoreline() pass
+// (recon landmine #6 -- avoid double-brightening the seam). Name kept for
+// caller-site stability; semantics widened from "mask uploaded" to "gate on".
 bool gos_TerrainLodChunk_IsShorelineMaskActive()
 {
-    return s_shorelineMaskTex != 0;
+    static const bool s_shorelineGateOn = []() {
+        const char* v = std::getenv("MC2_TERRAIN_SHORELINE");
+        return (v && v[0] && v[0] != '0');
+    }();
+    return s_shorelineGateOn;
 }
 
 // Step 5c: per-vertex cement word upload (valid bit | atlas layer index). Built by

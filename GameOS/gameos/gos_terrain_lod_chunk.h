@@ -30,12 +30,16 @@ constexpr int TERRAIN_CONTROLMAP_TEXUNIT = 12;
 // default OFF; upload only called when a sidecar was found at mission load.
 constexpr int TERRAIN_OVERLAY_SIDECAR_TEXUNIT = 1;
 
-// TERRAIN-SHORELINE-MASK-1: authored land-side wet/foam shoreline mask sidecar
+// TERRAIN-SHORELINE-V3: authored land-side wet/foam shoreline mask sidecar
 // texture unit (free per recon's list: 2,4,6,7,8 after overlay-V2 took 1).
 // Bounds-aware RGBA8 (R=signed dist, G=wet, B=foam, A=valid), sampled by WORLD
 // XY (same u_*Bounds pattern as control-map/overlay-V2) -- see
 // gos_TerrainLodChunk_UploadShorelineMask. Gate MC2_TERRAIN_SHORELINE, default
-// OFF; upload only called when a mask sidecar was found at mission load.
+// OFF. As of V3 the band's PLACEMENT comes from elevation
+// (v_worldPos.z vs u_waterElevation), not this mask -- the mask is now an
+// OPTIONAL modulator (wide-beach falloff / basin exclusion) applied on top;
+// upload only called when a mask sidecar was found at mission load, but the
+// band shows with or without one once the gate is on.
 constexpr int TERRAIN_SHORELINE_TEXUNIT = 2;
 
 // Submit block draw commands for the current frame.
@@ -104,29 +108,35 @@ void gos_TerrainLodChunk_UploadOverlaySidecar(const unsigned char* rgba, int w, 
                                                float boundsTopLeftX, float boundsTopLeftY,
                                                float boundsSizeX, float boundsSizeY);
 
-// TERRAIN-SHORELINE-MASK-1: upload the authored land-side wet/foam shoreline
-// mask as a GL_RGBA8 2D texture (arbitrary WxH, NOT tied to the vertex grid)
-// bound at TERRAIN_SHORELINE_TEXUNIT. R=signed dist (0.5=waterline), G=wet
-// weight, B=foam weight, A=valid/coverage. worldBounds = {topLeftX, topLeftY,
-// sizeX, sizeY} in world units, SAME convention as
-// gos_TerrainLodChunk_UploadOverlaySidecar (topLeftX=MIN world X, topLeftY=MAX
-// world Y, PNG row 0 = north edge, no vertical flip). rgba may be null / w<=0
-// / h<=0 to mean "no sidecar" -- the caller (mclib/terrain.cpp) only calls
-// this when a mask was actually loaded; the driver uploads
-// u_useShorelineMask=1 only when the texture handle is valid. Passthrough
-// (gate off or no mask) never calls this and u_useShorelineMask uploads 0
-// (byte-identical -- no shoreline band, legacy screen runShoreline() stays
-// active).
+// TERRAIN-SHORELINE-V3: upload the authored land-side wet/foam shoreline mask
+// as a GL_RGBA8 2D texture (arbitrary WxH, NOT tied to the vertex grid) bound
+// at TERRAIN_SHORELINE_TEXUNIT. R=signed dist (0.5=waterline), G=wet weight,
+// B=foam weight, A=valid/coverage. worldBounds = {topLeftX, topLeftY, sizeX,
+// sizeY} in world units, SAME convention as gos_TerrainLodChunk_UploadOverlaySidecar
+// (topLeftX=MIN world X, topLeftY=MAX world Y, PNG row 0 = north edge, no
+// vertical flip). rgba may be null / w<=0 / h<=0 to mean "no sidecar" -- the
+// caller (mclib/terrain.cpp) only calls this when a mask was actually loaded;
+// the driver uploads u_hasShorelineMask=1 only when the texture handle is
+// valid. As of V3 this mask is an OPTIONAL MODULATOR on top of the
+// elevation-placed band (u_useShorelineMask gates the band itself, driven by
+// MC2_TERRAIN_SHORELINE directly, independent of this upload) -- absence of a
+// mask still produces full elevation bands. Passthrough (gate off) never
+// reaches the shoreline block at all (byte-identical -- no shoreline band,
+// legacy screen runShoreline() stays active).
 void gos_TerrainLodChunk_UploadShorelineMask(const unsigned char* rgba, int w, int h,
                                               float boundsTopLeftX, float boundsTopLeftY,
                                               float boundsSizeX, float boundsSizeY);
 
-// TERRAIN-SHORELINE-MASK-1: true once a shoreline mask sidecar has been
-// uploaded (gate ON + file present at mission load). Consumed by
-// gos_postprocess.cpp to suppress the legacy screen-space runShoreline() pass
-// when the terrain-side mask is active (recon landmine #6: "double-shore" --
-// both must not brighten the seam at once). false (default) -> runShoreline()
-// behaves exactly as before (byte-identical).
+// TERRAIN-SHORELINE-V3: true whenever the elevation-based shoreline band is
+// active (MC2_TERRAIN_SHORELINE gate ON) -- a mask sidecar is NO LONGER
+// required (V3 places the band by v_worldPos.z vs u_waterElevation; a loaded
+// mask is only an optional modulator). Consumed by gos_postprocess.cpp to
+// suppress the legacy screen-space runShoreline() pass while the terrain-side
+// band is active (recon landmine #6: "double-shore" -- both must not
+// brighten the seam at once). false (default, gate off) -> runShoreline()
+// behaves exactly as before (byte-identical). Function name kept for
+// caller-site stability even though the semantics widened past "mask
+// uploaded" to "gate on".
 bool gos_TerrainLodChunk_IsShorelineMaskActive();
 
 // Patch a dirty block's heightfield rows after terrain edit.

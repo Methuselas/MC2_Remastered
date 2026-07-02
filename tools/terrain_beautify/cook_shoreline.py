@@ -1,11 +1,32 @@
 #!/usr/bin/env python3
-"""TERRAIN-SHORELINE-MASK-1: offline cook for the land-side wet/foam shoreline
-sidecar (`data/missions/<stem>.beauty/shoreline_mask.png` + companion
+"""TERRAIN-SHORELINE-V3 (was MASK-1): offline cook for the land-side wet/foam
+shoreline sidecar (`data/missions/<stem>.beauty/shoreline_mask.png` + companion
 `shoreline_mask.bounds.txt`).
+
+DEMOTED ROLE (V3): this mask is now an OPTIONAL MODULATOR, not the band's
+placement source. v1/v2 placed the band by projecting this mask's world-XY
+signed-distance field onto the terrain -- root cause of the "zigzag AND floats
+up-slope" defect: the EDT here is cooked from a height SOURCE (coarse pak grid
+or a 16x-smoothed bake) that never exactly equals the RENDERED waterline (the
+coarse mesh's bilinear-interpolated surface), so a horizontal-distance mask
+either staircases (faithful source) or floats above the true shoreline
+(smoothed source). V3 moved PLACEMENT into the frag shader itself: wetness =
+smoothstep over (v_worldPos.z - u_waterElevation), which hugs the drawn
+waterline by construction (v_worldPos.z IS the interpolated height the
+rasterizer produced) at any LOD or slope, no cook required. Gate
+MC2_TERRAIN_SHORELINE alone now produces full elevation bands with NO sidecar.
+This cook's output, when present, is still consumed -- its G/B channels
+MULTIPLICATIVELY MODULATE the elevation bands (e.g. wide-beach falloff on
+flat shores, or narrowing/excluding a below-water basin) -- but it is no
+longer required, and its own coarse-grid stair-steps can no longer create a
+misplaced band on their own (only shape an already-correctly-placed one).
+No cook-side changes were made this slice; the math below (EDT/bands) is
+unchanged and still valid as a modulator source.
 
 Engine contract (mclib/terrain.cpp, gated MC2_TERRAIN_SHORELINE; loader
 gos_TerrainLodChunk_UploadShorelineMask; shaders/terrain_lod_chunk.frag
-u_shorelineMask/u_useShorelineMask/u_shorelineBounds):
+u_shorelineMask/u_useShorelineMask/u_hasShorelineMask/u_shorelineBounds/
+u_waterElevation):
   - RGBA8 PNG, ARBITRARY WxH -- world-XY sampled (overlay-V2 sidecar pattern),
     NOT tied to the vertex grid, so mask resolution is decoupled from the
     coarse pak grid and can carry sub-tile shoreline curvature.

@@ -239,10 +239,12 @@ call from inside a draw-bind path.
 - `MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR=N` — CPU bilinear resample (1/2/4). Default 1.
 - `MC2_TERRAIN_LIGHTING_V1=1` — hemisphere ambient fill on terrain. Default **OFF**.
 - `MC2_TERRAIN_LIGHTING_V2=1` — shadow-aware V1 modulation. Default **OFF**.
-- `MC2_TERRAIN_SHORELINE=1` — land-side wet/foam shoreline band (TERRAIN-SHORELINE-MASK-1), sampled from an offline-cooked `<mission>.beauty/shoreline_mask.png` sidecar (`tools/terrain_beautify/cook_shoreline.py`). Default **OFF**. Suppresses the legacy screen-space `runShoreline()` post pass when a mask is actually loaded.
-- `MC2_TERRAIN_SHORELINE_FILE=<path>` — override the sidecar PNG path (default `data/missions/<stem>.beauty/shoreline_mask.png`).
+- `MC2_TERRAIN_SHORELINE=1` — land-side wet/foam shoreline band (TERRAIN-SHORELINE-V3), placed by **elevation** in the frag (`v_worldPos.z` vs `u_waterElevation` — the same source the water fast path uses) so the band hugs the RENDERED waterline by construction, at any LOD/slope. No sidecar is required. Default **OFF**. Suppresses the legacy screen-space `runShoreline()` post pass whenever this gate is on.
+- `MC2_TERRAIN_SHORELINE_FILE=<path>` — override the OPTIONAL mask sidecar path (default `data/missions/<stem>.beauty/shoreline_mask.png`), offline-cooked by `tools/terrain_beautify/cook_shoreline.py`. When present, its G/B channels MODULATE the elevation bands (wide-beach falloff / basin exclusion); when absent, the gate alone still produces full elevation bands.
 - `MC2_TERRAIN_SHORELINE_STRENGTH=F` — wet/damp darken intensity multiplier, clamped [0,2]. Default 1.0.
 - `MC2_TERRAIN_SHORELINE_FOAM=F` — foam rim intensity multiplier, clamped [0,2]. Default 1.0.
+- `MC2_TERRAIN_SHORELINE_WET_HEIGHT=F` — V3 wet-lobe height above `u_waterElevation`, world units. Default 3.0 (locked design range 2-4).
+- `MC2_TERRAIN_SHORELINE_FOAM_HEIGHT=F` — V3 foam-rim height above `u_waterElevation`, world units. Default 1.2 (locked design range 0.8-1.5).
 
 ## Water gates
 

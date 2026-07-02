@@ -172,6 +172,12 @@ public:
     void setMapHalfExtent(float extent) { mapHalfExtent_ = extent; }
     float getMapHalfExtent() const { return mapHalfExtent_; }
     void setWaterElevation(float elev) { waterElevation_ = elev; }
+    // TERRAIN-SHORELINE-V3: read-only accessor so the chunk terrain driver
+    // (gos_terrain_lod_chunk.cpp) can upload the SAME water elevation the
+    // water fast path uses (Terrain::waterElevation, mirrored here at mission
+    // load via setWaterElevation/gos_SetWaterElevation) as u_waterElevation
+    // for elevation-based shoreline band placement.
+    float getWaterElevation() const { return waterElevation_; }
 
     // Dynamic object shadows: camera-centered, re-rendered every frame
     void initDynamicShadows();

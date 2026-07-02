@@ -1038,17 +1038,24 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 				}
 			}
 
-			// TERRAIN-SHORELINE-MASK-1: v1 = ADDITIVE terrain-side wet/foam band
-			// sidecar. Gate MC2_TERRAIN_SHORELINE default OFF (mirrors
-			// MC2_TERRAIN_OVERLAY_V2's read pattern above). When ON, load an
-			// authored bounds-aware shoreline mask PNG (RGBA8, arbitrary WxH --
-			// offline-cooked by tools/terrain_beautify/cook_shoreline.py) if
-			// present; when absent or gate OFF, no texture is created and
-			// u_useShorelineMask uploads 0 at draw -> byte-identical (no wet/foam
-			// band; legacy screen runShoreline() stays active). Companion
-			// "<name>.bounds.txt" -- SAME convention as overlay_v2.bounds.txt
-			// (topLeftX topLeftY sizeX sizeY, world units; absent -> full map
-			// extent). MC2_TERRAIN_SHORELINE_FILE overrides the sidecar path
+			// TERRAIN-SHORELINE-V3: terrain-side wet/foam band. Gate
+			// MC2_TERRAIN_SHORELINE default OFF (mirrors MC2_TERRAIN_OVERLAY_V2's
+			// read pattern above). As of V3 the band's PLACEMENT is computed in
+			// the frag from ELEVATION (v_worldPos.z vs u_waterElevation) and
+			// needs no sidecar at all -- gate ON alone is enough to show
+			// full elevation bands. This load block is now OPTIONAL: when
+			// present, an authored bounds-aware shoreline mask PNG (RGBA8,
+			// arbitrary WxH -- offline-cooked by
+			// tools/terrain_beautify/cook_shoreline.py) is loaded and applied
+			// as a MODULATOR (wide-beach falloff / basin exclusion) on top of
+			// the elevation bands; when absent, no texture is created and
+			// u_hasShorelineMask uploads 0 at draw -> pure elevation bands (no
+			// modulation, not "no band"). Gate OFF -> u_useShorelineMask
+			// uploads 0 -> byte-identical (no wet/foam band; legacy screen
+			// runShoreline() stays active). Companion "<name>.bounds.txt" --
+			// SAME convention as overlay_v2.bounds.txt (topLeftX topLeftY
+			// sizeX sizeY, world units; absent -> full map extent).
+			// MC2_TERRAIN_SHORELINE_FILE overrides the sidecar path
 			// (precedent: MC2_TERRAIN_OVERLAY_V2_FILE above).
 			{
 				static const bool s_shorelineGate = []() {
@@ -1080,7 +1087,7 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 					if (!sf)
 					{
 						printf("[TERRAIN_SHORELINE v1] sidecar NOT FOUND path=%s (gate on)"
-						       " -- passthrough (legacy screen runShoreline())\n", slPath);
+						       " -- pure elevation bands, no mask modulator\n", slPath);
 						fflush(stdout);
 					}
 					else

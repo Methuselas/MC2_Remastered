@@ -69,23 +69,28 @@ uniform sampler2D u_overlaySidecar;
 uniform int       u_useOverlaySidecar;
 uniform vec4      u_overlayBounds;  // topLeftX, topLeftY(=maxY), sizeX, sizeY (world units)
 
-// TERRAIN-SHORELINE-MASK-1: authored land-side wet/foam shoreline mask
-// (unit TERRAIN_SHORELINE_TEXUNIT). R=signed dist (0.5=waterline, <0.5 water
-// side/>0.5 land side), G=wet weight, B=foam weight, A=valid/coverage.
-// World-XY sampled via u_shorelineBounds, IDENTICAL convention/shape to
-// u_overlaySidecar/u_overlayBounds just above (topLeftX=MIN world X,
-// topLeftY=MAX world Y, PNG row 0 = north edge, no vertical flip). Composited
-// AFTER the cement/overlay blocks and BEFORE final lighting (recon Sec.3/6):
-// multiplies base albedo by a wet-darken factor (G) + adds a bright foam rim
-// (B, fBm on v_worldPos+u_shaderTime -- camera-INDEPENDENT by construction,
-// f(worldPos,time) ONLY per the advisor ruling), feathered by R. Gate OFF or
-// no mask -> u_useShorelineMask=0 -> this whole block is skipped -> byte-
-// identical to the pre-slice composite (the legacy screen runShoreline() pass
-// stays active in that case; the C++ driver suppresses it only when this gate
-// is genuinely active -- see gos_postprocess.cpp runShoreline()).
-uniform sampler2D u_shorelineMask;
-uniform int       u_useShorelineMask;
-uniform vec4      u_shorelineBounds; // topLeftX, topLeftY(=maxY), sizeX, sizeY (world units)
+// TERRAIN-SHORELINE-V3: band PLACEMENT is now driven by ELEVATION
+// (v_worldPos.z - u_waterElevation), not by the world-XY mask. Root cause of
+// v1/v2 zigzag+float-uphill: the mask EDT was cooked against a coarse or
+// smoothed height SOURCE that never exactly matches the RENDERED (bilinear-
+// interpolated) waterline, so a horizontal-distance mask either staircases
+// (faithful coarse source) or floats up-slope (smoothed source). Elevation
+// hugs the drawn waterline BY CONSTRUCTION -- v_worldPos.z is the same
+// interpolated height the rasterizer produced, so "am I within wetHeight of
+// the water surface" is exact at every fragment regardless of LOD/slope.
+// u_useShorelineMask==0 (gate OFF) -> the whole shoreline block below is
+// skipped -> byte-identical to the pre-slice composite (the legacy screen
+// runShoreline() pass stays active in that case; the C++ driver suppresses
+// it only when this gate is genuinely active -- see gos_postprocess.cpp
+// runShoreline()). NOTE: despite the name, u_useShorelineMask now gates the
+// elevation bands themselves; the mask (u_shorelineMask/u_hasShorelineMask)
+// is an OPTIONAL modulator applied on top (wide-beach falloff / basin
+// exclusion) -- absent mask still produces full elevation bands.
+uniform int       u_useShorelineMask;      // 1 = elevation bands active (MC2_TERRAIN_SHORELINE on)
+uniform float     u_waterElevation;        // Terrain::waterElevation (world units, same as water fast path)
+uniform sampler2D u_shorelineMask;         // OPTIONAL modulator: R=signed dist, G=wet, B=foam, A=valid
+uniform int       u_hasShorelineMask;      // 1 = sidecar loaded -> apply modulator; 0 -> pure elevation bands
+uniform vec4      u_shorelineBounds;       // topLeftX, topLeftY(=maxY), sizeX, sizeY (world units) -- for the modulator sample
 uniform float     u_shaderTime;      // f(worldPos,time)-only clock for foam animation (NOT camera)
 // TERRAIN-SHORELINE-MASK-1 (visual-quality pass): user-tunable overall
 // strength knobs (MC2_TERRAIN_SHORELINE_STRENGTH / _FOAM env vars, C++ side
@@ -93,6 +98,13 @@ uniform float     u_shaderTime;      // f(worldPos,time)-only clock for foam ani
 // the mask's own G/B weights so art can dial intensity without a re-cook.
 uniform float     u_shorelineStrength;     // wet/damp darken multiplier
 uniform float     u_shorelineFoamStrength; // foam rim multiplier
+// TERRAIN-SHORELINE-V3: elevation band heights (world units above u_waterElevation).
+// wetHeight is the outer wet/damp lobe; foamHeight is the narrower bright rim
+// hugging the exact waterline. Defaults picked per the locked V3 design (wet
+// ~2-4wu, foam ~0.8-1.5wu); exposed as knobs for the C++ driver to widen/narrow
+// without a shader edit (mirrors u_shorelineStrength's runtime-tunable pattern).
+uniform float     u_shorelineWetHeight;    // default 3.0 wu
+uniform float     u_shorelineFoamHeight;   // default 1.2 wu
 
 uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uniform as legacy)
 uniform int   u_shadowTier;               // Slice B: per-chunk shadow tier (0=high,1=low,2=static,3=none)
@@ -981,80 +993,117 @@ void main() {
         lit = mix(lit, EDGE_HAZE_SKY, clamp(haze, 0.0, 1.0));
     }
 
-    // TERRAIN-SHORELINE-MASK-1: land-side wet-darken + foam band, sampled by
-    // WORLD XY (same u_*Bounds pattern as the overlay-V2 sidecar block above).
-    // Gate OFF or no mask loaded -> u_useShorelineMask==0 -> this whole block
-    // is skipped -> byte-identical (recon Sec.5 "byte-identity via uniform
+    // TERRAIN-SHORELINE-V3: land-side wet-darken + foam band, PLACED BY
+    // ELEVATION (v_worldPos.z relative to u_waterElevation) instead of a
+    // world-XY mask. Gate OFF -> u_useShorelineMask==0 -> this whole block is
+    // skipped -> byte-identical (recon Sec.5 "byte-identity via uniform
     // else-branch"). cement/concrete excluded from wet-darken (recon ruling
     // #6 / open ruling 6: cementHit already computed above). Foam is
     // f(v_worldPos, u_shaderTime) ONLY -- no view-dependent term anywhere in
     // this block (advisor camera-independence ruling, recon landmine #2).
     //
-    // VISUAL-QUALITY FIX (post-ship): the original band read as a bright grey
-    // painted stripe, especially where the mask's own R-channel geometry
-    // still carries coarse-grid stair-steps (see cook_shoreline.py hi-res
-    // sourcing). Two independent mitigations, both f(worldPos,time) only:
-    //   1. Slope guard -- steep banks project the mask by world-XY distance
-    //      regardless of slope, so a band would otherwise smear straight
-    //      down a cliff face. Attenuate by the terrain normal's slope angle
-    //      (from N, already computed above): full strength on ~flat beaches,
-    //      fading to 0 by ~20 deg (cos(20deg)~=0.94).
-    //   2. Noise-BROKEN foam coverage -- foam alpha is now `band * fbm`
-    //      thresholded into a coverage mask (wisps of foam), not a smooth
-    //      multiply-brighten of the whole lobe (which read as a solid tint).
+    // V3 ROOT-CAUSE FIX (post v1/v2 "zigzag AND floats up-slope"): the mask
+    // EDT was cooked off a height SOURCE (coarse or 16x-smoothed) that never
+    // exactly equals the RENDERED waterline (the coarse mesh's bilinear-
+    // interpolated surface), so a horizontal-distance mask either staircases
+    // (faithful source) or floats above the true shoreline (smoothed source).
+    // Elevation sidesteps this entirely: wetness = smoothstep over
+    // (v_worldPos.z - u_waterElevation), and v_worldPos.z IS the exact height
+    // the rasterizer produced for this fragment -- the band hugs the drawn
+    // waterline BY CONSTRUCTION, at any LOD, on any source.
+    //
+    // Two mitigations carried over from v2 (both f(worldPos,time) only):
+    //   1. Slope guard -- an elevation band still runs along a contour line,
+    //      which on a steep bank is a near-vertical smear. Attenuate by the
+    //      terrain normal's slope angle (from N, already computed above):
+    //      full strength on ~flat beaches, fading to 0 by ~20 deg.
+    //   2. Noise-BROKEN foam coverage -- foam alpha is `band * fbm`
+    //      thresholded into a coverage mask (wisps), not a smooth brighten.
     if (u_useShorelineMask != 0) {
-        vec2 slUV;
-        slUV.x = (v_worldPos.x - u_shorelineBounds.x) / max(u_shorelineBounds.z, 1e-5);
-        slUV.y = (u_shorelineBounds.y - v_worldPos.y) / max(u_shorelineBounds.w, 1e-5);
-        if (slUV.x >= 0.0 && slUV.x <= 1.0 && slUV.y >= 0.0 && slUV.y <= 1.0) {
-            vec4 sl = texture(u_shorelineMask, slUV);
-            float slValid = sl.a;
-            float slWet   = sl.g * slValid;
-            float slFoam  = sl.b * slValid;
+        // Elevation-relative height above the water surface (can be negative
+        // = submerged; terrain under the water plane still shows here since
+        // this pass draws land, but the smoothstep clamps those to full wet).
+        float aboveWater = v_worldPos.z - u_waterElevation;
+        float wetHeight  = max(u_shorelineWetHeight,  1e-4);
+        float foamHeight = max(u_shorelineFoamHeight,  1e-4);
+        // Wet lobe: 1.0 at/under the waterline, fading to 0.0 by wetHeight
+        // above it. Mirrors the mask's old G channel (continuous weight).
+        float slWet  = 1.0 - smoothstep(0.0, wetHeight, aboveWater);
+        // Foam rim: narrower band hugging the exact waterline.
+        float slFoam = 1.0 - smoothstep(0.0, foamHeight, aboveWater);
+        // Exclude fragments well inland (above the wet lobe entirely) and
+        // well below the surface (fully submerged land, if any is visible)
+        // from EITHER channel -- smoothstep already zeroes wet/foam there,
+        // so no extra branch is needed; this comment documents the bound.
 
-            // Slope guard: N.z == cos(slope angle) for a unit normal (N.z=1 on
-            // flat ground). Full band strength up to ~12 deg, linear falloff
-            // to 0 by ~20 deg, so steep hillsides never carry a wet/foam smear.
-            const float kSlopeFullCos = 0.978; // cos(12 deg)
-            const float kSlopeZeroCos = 0.940; // cos(20 deg)
-            float slopeAtten = clamp((N.z - kSlopeZeroCos) / max(kSlopeFullCos - kSlopeZeroCos, 1e-5), 0.0, 1.0);
+        // TERRAIN-SHORELINE-V3: optional mask MODULATOR. When a sidecar was
+        // loaded (u_hasShorelineMask!=0), its G/B channels scale the elevation
+        // bands (e.g. wide-beach falloff on flat shores, or basin exclusion)
+        // -- multiplicative, so absence of a mask (u_hasShorelineMask==0)
+        // leaves the pure elevation bands untouched (modulator == 1).
+        if (u_hasShorelineMask != 0) {
+            vec2 slUV;
+            slUV.x = (v_worldPos.x - u_shorelineBounds.x) / max(u_shorelineBounds.z, 1e-5);
+            slUV.y = (u_shorelineBounds.y - v_worldPos.y) / max(u_shorelineBounds.w, 1e-5);
+            if (slUV.x >= 0.0 && slUV.x <= 1.0 && slUV.y >= 0.0 && slUV.y <= 1.0) {
+                vec4 sl = texture(u_shorelineMask, slUV);
+                float slValid = sl.a;
+                // Modulator: mask-authored weight softly gates the elevation
+                // band (mix toward the mask weight instead of hard-multiply,
+                // so a low-res/blocky mask can only WIDEN or narrow the lobe,
+                // never introduce its own stair-step hard edge).
+                slWet  *= mix(1.0, clamp(sl.g, 0.0, 1.0), slValid);
+                slFoam *= mix(1.0, clamp(sl.b, 0.0, 1.0), slValid);
+            } else {
+                // Outside the authored mask's bounds: no modulation data ->
+                // treat as "no mask" (pure elevation bands) rather than 0, so
+                // shorelines outside the cooked extent still show a band.
+            }
+        }
 
-            // Wet/damp darken: SUBTLE multiplicative darken only (no forced
-            // desaturation-toward-luma -- that read as a grey paint stripe).
-            // u_shorelineStrength scales overall intensity (art/runtime knob).
-            if (slWet > 0.001 && cementHit == false && slopeAtten > 0.0) {
-                float wetAmt = clamp(slWet, 0.0, 1.0) * (1.0 - pureConcrete) * slopeAtten * u_shorelineStrength;
-                vec3  wetDark = lit * 0.86; // subtle darken, no luma flattening
-                lit = mix(lit, wetDark, clamp(wetAmt, 0.0, 1.0));
-            }
-            // Foam: procedural fBm, f(worldPos,time) ONLY (camera-INDEPENDENT
-            // by construction -- no view matrix/camera pos anywhere in this
-            // expression). Coverage is THRESHOLDED noise (wisps), not a smooth
-            // brighten of the whole lobe -- band*fbm decides WHERE foam shows,
-            // not just how bright it is.
-            if (slFoam > 0.001 && slopeAtten > 0.0) {
-                float foamScroll = fbm(v_worldPos.xy * 0.09 + u_shaderTime * 0.15, 3) * 0.5 + 0.5;
-                float foamPulse  = fbm(v_worldPos.xy * 0.20 - u_shaderTime * 0.22 + 19.0, 2) * 0.5 + 0.5;
-                float foamNoise  = clamp(mix(foamScroll, foamPulse, 0.5), 0.0, 1.0);
-                // Coverage threshold: the noise must clear a bar that rises as
-                // the band weight falls, so foam appears as broken wisps near
-                // the lobe's edge and near-solid only at the exact waterline.
-                float coverage  = smoothstep(1.0 - clamp(slFoam, 0.0, 1.0) * 0.85, 1.0, foamNoise + (1.0 - clamp(slFoam, 0.0, 1.0)) * 0.15);
-                float foamAmt   = coverage * slopeAtten * u_shorelineFoamStrength;
-                lit = mix(lit, vec3(0.90, 0.93, 0.92), clamp(foamAmt, 0.0, 1.0) * (1.0 - pureConcrete));
-            }
+        // Slope guard: N.z == cos(slope angle) for a unit normal (N.z=1 on
+        // flat ground). Full band strength up to ~12 deg, linear falloff
+        // to 0 by ~20 deg, so steep hillsides never carry a wet/foam smear.
+        const float kSlopeFullCos = 0.978; // cos(12 deg)
+        const float kSlopeZeroCos = 0.940; // cos(20 deg)
+        float slopeAtten = clamp((N.z - kSlopeZeroCos) / max(kSlopeFullCos - kSlopeZeroCos, 1e-5), 0.0, 1.0);
+
+        // Wet/damp darken: SUBTLE multiplicative darken only (no forced
+        // desaturation-toward-luma -- that read as a grey paint stripe).
+        // u_shorelineStrength scales overall intensity (art/runtime knob).
+        if (slWet > 0.001 && cementHit == false && slopeAtten > 0.0) {
+            float wetAmt = clamp(slWet, 0.0, 1.0) * (1.0 - pureConcrete) * slopeAtten * u_shorelineStrength;
+            vec3  wetDark = lit * 0.86; // subtle darken, no luma flattening
+            lit = mix(lit, wetDark, clamp(wetAmt, 0.0, 1.0));
+        }
+        // Foam: procedural fBm, f(worldPos,time) ONLY (camera-INDEPENDENT
+        // by construction -- no view matrix/camera pos anywhere in this
+        // expression). Coverage is THRESHOLDED noise (wisps), not a smooth
+        // brighten of the whole lobe -- band*fbm decides WHERE foam shows,
+        // not just how bright it is.
+        if (slFoam > 0.001 && slopeAtten > 0.0) {
+            float foamScroll = fbm(v_worldPos.xy * 0.09 + u_shaderTime * 0.15, 3) * 0.5 + 0.5;
+            float foamPulse  = fbm(v_worldPos.xy * 0.20 - u_shaderTime * 0.22 + 19.0, 2) * 0.5 + 0.5;
+            float foamNoise  = clamp(mix(foamScroll, foamPulse, 0.5), 0.0, 1.0);
+            // Coverage threshold: the noise must clear a bar that rises as
+            // the band weight falls, so foam appears as broken wisps near
+            // the lobe's edge and near-solid only at the exact waterline.
+            float coverage  = smoothstep(1.0 - clamp(slFoam, 0.0, 1.0) * 0.85, 1.0, foamNoise + (1.0 - clamp(slFoam, 0.0, 1.0)) * 0.15);
+            float foamAmt   = coverage * slopeAtten * u_shorelineFoamStrength;
+            lit = mix(lit, vec3(0.90, 0.93, 0.92), clamp(foamAmt, 0.0, 1.0) * (1.0 - pureConcrete));
         }
     }
-    // DIAG bit 2048: visualize the raw shoreline mask channels as RGB
-    // (R=dist, G=wet, B=foam) so authored bands are directly inspectable.
+    // DIAG bit 2048: visualize the elevation-band weights as RGB (R=height
+    // above water clamped [0,1], G=wet weight, B=foam weight) so the V3
+    // placement is directly inspectable without needing a mask loaded.
     if ((u_diag & 2048) != 0 && u_useShorelineMask != 0) {
-        vec2 slDbgUV;
-        slDbgUV.x = (v_worldPos.x - u_shorelineBounds.x) / max(u_shorelineBounds.z, 1e-5);
-        slDbgUV.y = (u_shorelineBounds.y - v_worldPos.y) / max(u_shorelineBounds.w, 1e-5);
-        vec3 dbgCol = vec3(0.0);
-        if (slDbgUV.x >= 0.0 && slDbgUV.x <= 1.0 && slDbgUV.y >= 0.0 && slDbgUV.y <= 1.0) {
-            dbgCol = texture(u_shorelineMask, slDbgUV).rgb;
-        }
+        float aboveWaterDbg = v_worldPos.z - u_waterElevation;
+        float wetHeightDbg  = max(u_shorelineWetHeight,  1e-4);
+        float foamHeightDbg = max(u_shorelineFoamHeight, 1e-4);
+        vec3 dbgCol = vec3(
+            clamp(aboveWaterDbg / max(wetHeightDbg, 1e-4), 0.0, 1.0),
+            1.0 - smoothstep(0.0, wetHeightDbg,  aboveWaterDbg),
+            1.0 - smoothstep(0.0, foamHeightDbg, aboveWaterDbg));
         fragColor = vec4(dbgCol, 1.0);
         if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
         return;
