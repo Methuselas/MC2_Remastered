@@ -117,17 +117,45 @@ tier: doctest, one binary, no GL — prefer it whenever the subject TU fits
 through the shim. A TU that fits neither tier is itself a finding (name the
 blocker in a recon doc, as fitini-inmem did).
 
-## Next 3 targets (recommended order)
+The doctest tier is CLI-runnable through the same builder (MINIMAL-VIABLE-
+HARNESS-2), but on its own code path (it is NOT in `REGISTERED_HARNESSES` — it
+has no per-harness `--json`/`status` contract and lives at `tests/unit/`, not
+`tools/<name>/`, so registering it there would report MISSING/FAIL by
+construction):
 
-1. **`mclib/csvfile.cpp`** (`CSVFile : File`) — zero new frontier (same shim,
-   same base class); completes the data-ingest spine (FIT/CSV/ini all
-   offline-verifiable).
-2. **FST round-trip test** (no new TU) — `ffile.cpp`'s `createFast/writeFast`
-   are already linked; write a tiny .fst in scratch, then prove the
-   `File::open` loose-vs-FST resolution ladder end-to-end.
-3. **`mclib/paths.cpp`** (leaf path globals) — enables tests of engine path
-   composition, precursor to exercising `TryModOpen`'s mod-index resolution
-   order offline.
+```
+py -3 tools/build_contract_harnesses.py --unit-only --run   # doctest tier only
+py -3 tools/build_contract_harnesses.py --run --unit        # both tiers
+```
+
+Exit code is authoritative (doctest returns non-zero on any failed assertion),
+so it composes cleanly with a gate.
+
+**CI / slice_gate proposal (not yet wired):** add `py -3
+tools/build_contract_harnesses.py --unit-only --run` as a fast, GL-free
+pre-merge check — it needs no game boot, no GL context, and no deploy, so it is
+a cheap always-on guard for the engine-logic TUs already under the shim. (Note:
+the file/mod/FST tests write scratch files to CWD with an `mvh_scratch_` prefix
+and self-clean; run the binary from a writable working directory.)
+
+## Next 3 targets — SHIPPED (MINIMAL-VIABLE-HARNESS-2)
+
+1. **`mclib/csvfile.cpp`** (`CSVFile : File`) — DONE. Zero new link frontier as
+   predicted. `tests/unit/test_csvfile.cpp` parses a Buildings.csv-shaped
+   fixture (`fixtures/buildings_smoke.csv`, CRLF), and locks two real dialect
+   findings: the parser is NOT RFC-4180 (splits on every comma, no quote
+   awareness → an embedded comma shifts later columns) and `countCols()`
+   returns the COMMA count, so the final column (index == column count) is
+   unreachable via `seekRowCol` and reads back 0.
+2. **FST round-trip test** — DONE. `tests/unit/test_fst_roundtrip.cpp` authors a
+   compressed `.fst` (`create`→`reserve`→`writeFast`→`close`), registers it via
+   `FastFileInit`, and proves the ladder end to end: **packed serves when loose
+   absent; loose overrides packed** (plus `fileExists` tier-1-vs-tier-2).
+3. **`mclib/paths.cpp`** (leaf path globals) — DONE, linked as a leaf TU.
+   `tests/unit/test_paths_mod.cpp` also exercises the `mods/` resolution order
+   (`InitModSearchPaths`/`TryModOpen`, which live in the already-linked
+   file.cpp): an active-mod override wins over loose base data, stock mode falls
+   back, and `ShouldSearchMods` gates out absolute/`..` paths.
 
 Deferred/blocked: `heap.cpp` itself (by design — shim replaces it here),
 `utilities.cpp` (drags `txmmgr.h`/`mclib.h`; needs a leaf-TU carve first,
