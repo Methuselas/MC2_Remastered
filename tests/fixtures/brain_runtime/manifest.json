@@ -598,6 +598,76 @@
         "mission-local key shadows the global key",
         "TechSpecial.Call reaches a global library body"
       ]
+    },
+    {
+      "name": "variantof-inherit",
+      "file": "mc2_01_variantof_specials.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": [
+        "MC2_BRAIN_DISPATCH=1",
+        "MC2_BRAIN_VARIANTOF=1"
+      ],
+      "expected_bodyHasCoreGuard": true,
+      "expected_bodyHasEffect": true,
+      "expected_trace_substrings": [
+        "[BRAIN_VARIANTOF] child=variant_scenario_main parent=base.guard.template inherited=1 verb(s)",
+        "[BRAIN_VARIANTOF] entry body variant_scenario_main resolved to 1 verb(s)",
+        "[BRAIN_DISPATCH] verb=OPORD.CoreGuard"
+      ],
+      "notes": "BRAINSPECIAL-VARIANTOF-1: empty-body variant inherits the parent body wholesale; the inherited verb drives a real GUARD order.",
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_GUARD",
+        "expected_count": 1,
+        "notes": "Inherited OPORD.CoreGuard -> exactly one GUARD. A/B identity."
+      },
+      "harness_proven": [
+        "variantOf= field parsed",
+        "empty-body child inherits parent verbs",
+        "entry body re-synced post-resolution"
+      ]
+    },
+    {
+      "name": "variantof-override",
+      "file": "mc2_01_variantof_override_specials.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": [
+        "MC2_BRAIN_DISPATCH=1",
+        "MC2_BRAIN_VARIANTOF=1"
+      ],
+      "expected_bodyHasCoreGuard": true,
+      "expected_bodyHasEffect": true,
+      "expected_trace_substrings": [
+        "[BRAIN_VARIANTOF_OVERRIDE] child=override_scenario_main parent=base.retreat.template (body re-declared)"
+      ],
+      "notes": "BRAINSPECIAL-VARIANTOF-1: re-declared Body overrides the parent entirely (spec-delta: Body-level override).",
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_GUARD",
+        "expected_count": 1,
+        "notes": "Child's own GUARD only; parent's Retreat NOT inherited (count would be 2 on a merge bug)."
+      },
+      "harness_proven": [
+        "re-declared Body suppresses inheritance"
+      ]
+    },
+    {
+      "name": "variantof-cycle",
+      "file": "mc2_01_variantof_cycle_specials.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": [
+        "MC2_BRAIN_DISPATCH=1",
+        "MC2_BRAIN_VARIANTOF=1"
+      ],
+      "expected_trace_substrings": [
+        "[BRAIN_VARIANTOF_CYCLE] child=cycle.a",
+        "[BRAIN_VARIANTOF_CYCLE] child=cycle.b"
+      ],
+      "notes": "BRAINSPECIAL-VARIANTOF-1: cyclic chains trip the guard and are left as-authored.",
+      "harness_proven": [
+        "cycle guard fires on mutual variantOf"
+      ]
     }
   ]
 }

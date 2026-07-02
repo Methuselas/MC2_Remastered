@@ -503,6 +503,9 @@ int main(int argc, char** argv) {
     // Safe for all other fixtures: global keys are namespaced global.* (no collisions),
     // and merge only appends Call targets — entry-body selection is unaffected.
     (void)_putenv("MC2_BRAIN_SCOPE_GLOBAL=1");
+    // BRAINSPECIAL-VARIANTOF-1: resolve variantOf inheritance for the variantof-* fixtures.
+    // Safe for all other fixtures: resolution only touches entries carrying a variantOf field.
+    (void)_putenv("MC2_BRAIN_VARIANTOF=1");
     if (applyMode) {
         (void)_putenv("MC2_BRAIN_DISPATCH_APPLY=1");
     }

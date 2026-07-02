@@ -2071,7 +2071,8 @@ static std::string parseQuotedField(const char* p) {
 }
 
 static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody& outBody,
-                                           SpecialIndex* outIndex) {
+                                           SpecialIndex* outIndex,
+                                           std::string* outChosenKey = nullptr) {
     std::ifstream inFile(fitPath);
     if (!inFile.is_open())
         return false;
@@ -2090,7 +2091,8 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
     // Per-block state (reset on each TechSpecial {).
     std::string currentKey;
     std::string currentType;
-    std::string currentAlias;   // BRAINSPECIAL-ALIAS-1: per-block alias= field
+    std::string currentAlias;      // BRAINSPECIAL-ALIAS-1: per-block alias= field
+    std::string currentVariantOf;  // BRAINSPECIAL-VARIANTOF-1: per-block variantOf= field
     std::vector<std::string> currentVerbs;
     // BRAINSPECIAL-SCOPE-GLOBAL-1 (quirk fix): pre-slice, a TechSpecial WITH a Body was
     // committed twice — once (with verbs) at the Body's closing brace, and once more
@@ -2107,7 +2109,8 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
     struct RawBlock {
         std::string key;
         std::string type;
-        std::string alias;   // BRAINSPECIAL-ALIAS-1
+        std::string alias;      // BRAINSPECIAL-ALIAS-1
+        std::string variantOf;  // BRAINSPECIAL-VARIANTOF-1
         std::vector<std::string> verbs;
     };
     std::vector<RawBlock> rawBlocks;
@@ -2152,6 +2155,7 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     currentKey.clear();
                     currentType.clear();
                     currentAlias.clear();
+                    currentVariantOf.clear();
                     currentVerbs.clear();
                     bodyCommittedThisSpecial = false;
                 }
@@ -2216,6 +2220,16 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     ++q;
                     currentAlias = parseQuotedField(q);
                 }
+            } else if (std::strncmp(p, "variantOf", 9) == 0) {
+                // BRAINSPECIAL-VARIANTOF-1: parent Special key. Parsed unconditionally;
+                // inheritance resolved only when MC2_BRAIN_VARIANTOF=1 (parse-unconditional /
+                // resolve-gated model, same as the CALL-CHAIN index and the alias registry).
+                const char* q = p + 9;
+                while (*q == ' ' || *q == '\t') ++q;
+                if (*q == '=') {
+                    ++q;
+                    currentVariantOf = parseQuotedField(q);
+                }
             } else if (std::strncmp(p, "Body", 4) == 0) {
                 const char* q = p + 4;
                 while (*q == ' ' || *q == '\t') ++q;
@@ -2228,9 +2242,10 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                 // committed for this TechSpecial (body-less block); see quirk-fix note above.
                 if (!bodyCommittedThisSpecial) {
                     RawBlock rb;
-                    rb.key   = currentKey;
-                    rb.type  = currentType;
-                    rb.alias = currentAlias;
+                    rb.key       = currentKey;
+                    rb.type      = currentType;
+                    rb.alias     = currentAlias;
+                    rb.variantOf = currentVariantOf;
                     // no verbs
                     rawBlocks.push_back(std::move(rb));
                 }
@@ -2241,10 +2256,11 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                 // End of Body block — commit the block.
                 {
                     RawBlock rb;
-                    rb.key   = currentKey;
-                    rb.type  = currentType;
-                    rb.alias = currentAlias;
-                    rb.verbs = currentVerbs;
+                    rb.key       = currentKey;
+                    rb.type      = currentType;
+                    rb.alias     = currentAlias;
+                    rb.variantOf = currentVariantOf;
+                    rb.verbs     = currentVerbs;
                     rawBlocks.push_back(std::move(rb));
                     bodyCommittedThisSpecial = true;  // suppress the empty duplicate commit
                 }
@@ -2287,7 +2303,8 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
         for (const RawBlock& rb : rawBlocks) {
             SpecialIndexEntry entry;
             entry.key        = rb.key;
-            entry.alias      = rb.alias;   // BRAINSPECIAL-ALIAS-1
+            entry.alias      = rb.alias;       // BRAINSPECIAL-ALIAS-1
+            entry.variantOf  = rb.variantOf;   // BRAINSPECIAL-VARIANTOF-1
             entry.body.verbs = rb.verbs;
             entry.body.loaded = !rb.verbs.empty();
             outIndex->push_back(std::move(entry));
@@ -2316,6 +2333,12 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
     // (verbs from ALL blocks were previously all merged; now only the entry-body is outBody.
     //  Callers that want all verbs should iterate the index.)
     outBody.verbs = chosen->verbs;
+
+    // BRAINSPECIAL-VARIANTOF-1: report the chosen entry key so the caller can re-sync
+    // outBody after variantOf inheritance resolves (the chosen block may be an
+    // empty-body variant whose verbs only exist post-resolution).
+    if (outChosenKey)
+        *outChosenKey = chosen->key;
 
     return !outBody.verbs.empty() || !rawBlocks.empty();
 }
@@ -2419,6 +2442,101 @@ static bool parseGlobalSpecials(const char* missionFitPath, SpecialIndex& gIndex
     return !gIndex.empty();
 }
 
+// ---------------------------------------------------------------------------
+// BRAINSPECIAL-VARIANTOF-1 — variantOf inheritance (gate MC2_BRAIN_VARIANTOF).
+//
+// Spec (discussion #18): "A variantOf Special inherits the full body of its parent
+// and can override specific behavior by re-declaring sections." Engine adaptation
+// (SPEC-DELTA, documented in .claude/TECHSCRIPT-GAP-CLOSURE-1.md #14):
+//   - child with EMPTY Body inherits the parent chain's verbs wholesale;
+//   - child that re-declares a Body overrides it entirely (engine blocks have
+//     exactly one overridable section — Body — so override granularity = whole Body);
+//   - resolution runs AFTER the global merge, so a mission variant can inherit a
+//     GlobalSpecial parent ("protected core Specials": extend without overwriting);
+//   - parent chain depth <= 8, cycle-guarded (mirrors the Call-chain guards).
+// Gate OFF (default): variantOf fields are parsed but ignored — byte-identical.
+//
+// FORBIDDEN-CALL CONTRACT: index walk + string copies + fprintf only. No order functions.
+static bool s_brainVariantOfGate() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_VARIANTOF");
+        return v && std::atoi(v) != 0;
+    })();
+    return kGate;
+}
+
+static void resolveVariantInheritance(SpecialIndex* index) {
+    if (!index || !s_brainVariantOfGate()) return;
+    static constexpr int kVariantMaxDepth = 8;
+    for (SpecialIndexEntry& e : *index) {
+        if (e.variantOf.empty()) continue;
+        if (!e.body.verbs.empty()) {
+            std::fprintf(stderr, "[BRAIN_VARIANTOF_OVERRIDE] child=%s parent=%s (body re-declared)\n",
+                         e.key.c_str(), e.variantOf.c_str());
+            std::fflush(stderr);
+            continue;
+        }
+        // Walk the parent chain until a body-bearing ancestor (or guard trip).
+        std::vector<std::string> visited;
+        visited.push_back(e.key);
+        std::string parentKey = e.variantOf;
+        const SpecialIndexEntry* src = nullptr;
+        bool cycle = false, unknown = false;
+        int depth = 0;
+        while (depth < kVariantMaxDepth) {
+            const SpecialIndexEntry* p = specialIndexFind(*index, parentKey);
+            if (!p) { unknown = true; break; }
+            for (const std::string& v : visited) {
+                if (v == p->key) { cycle = true; break; }
+            }
+            if (cycle) break;
+            visited.push_back(p->key);
+            if (!p->body.verbs.empty() || p->variantOf.empty()) { src = p; break; }
+            parentKey = p->variantOf;
+            ++depth;
+        }
+        if (unknown) {
+            std::fprintf(stderr, "[BRAIN_VARIANTOF_UNKNOWN] child=%s parent=%s (not in index)\n",
+                         e.key.c_str(), parentKey.c_str());
+            std::fflush(stderr);
+        } else if (cycle) {
+            std::fprintf(stderr, "[BRAIN_VARIANTOF_CYCLE] child=%s parent=%s (chain cycles; left as-authored)\n",
+                         e.key.c_str(), parentKey.c_str());
+            std::fflush(stderr);
+        } else if (depth >= kVariantMaxDepth) {
+            std::fprintf(stderr, "[BRAIN_VARIANTOF_DEPTH] child=%s depth=%d max=%d (left as-authored)\n",
+                         e.key.c_str(), depth, kVariantMaxDepth);
+            std::fflush(stderr);
+        } else if (src && !src->body.verbs.empty()) {
+            e.body.verbs  = src->body.verbs;   // same-vector element copy: no push, no realloc
+            e.body.loaded = true;
+            std::fprintf(stderr, "[BRAIN_VARIANTOF] child=%s parent=%s inherited=%d verb(s)\n",
+                         e.key.c_str(), src->key.c_str(), (int)src->body.verbs.size());
+            std::fflush(stderr);
+        } else {
+            std::fprintf(stderr, "[BRAIN_VARIANTOF_EMPTY] child=%s parent=%s (parent chain has no body)\n",
+                         e.key.c_str(), e.variantOf.c_str());
+            std::fflush(stderr);
+        }
+    }
+}
+
+// Re-sync the entry body after variantOf resolution: the chosen block may have been an
+// empty-body variant. Fill outBody from the (now-resolved) chosen index entry.
+// Gate-guarded no-op; only fills an EMPTY outBody (override bodies are already correct).
+static void resyncEntryBodyAfterVariants(BrainSpecialBody& outBody, const SpecialIndex* index,
+                                          const std::string& chosenKey) {
+    if (!index || chosenKey.empty() || !s_brainVariantOfGate()) return;
+    if (!outBody.verbs.empty()) return;
+    const SpecialIndexEntry* ce = specialIndexFind(*index, chosenKey);
+    if (ce && !ce->body.verbs.empty()) {
+        outBody.verbs = ce->body.verbs;
+        std::fprintf(stderr, "[BRAIN_VARIANTOF] entry body %s resolved to %d verb(s)\n",
+                     chosenKey.c_str(), (int)outBody.verbs.size());
+        std::fflush(stderr);
+    }
+}
+
 // Append non-colliding global entries into the mission index (mission-local wins).
 static void appendGlobalSpecials(SpecialIndex* outIndex, SpecialIndex& gIndex) {
     if (!outIndex || gIndex.empty()) return;
@@ -2472,7 +2590,8 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
 
     // Try raw brace-block scanner first.
     // CALL-CHAIN-1A: outIndex forwarded (may be nullptr if caller doesn't need it).
-    bool ok = parseBrainSpecialBody_RawScan(fitPath, outBody, outIndex);
+    std::string chosenKey;  // BRAINSPECIAL-VARIANTOF-1: entry-body key for post-resolve re-sync
+    bool ok = parseBrainSpecialBody_RawScan(fitPath, outBody, outIndex, &chosenKey);
 
     if (!ok) {
         // No TechSpecial brace blocks found — try legacy bracket-form fallback.
@@ -2492,6 +2611,13 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
     // Only when the mission itself loaded — globals never provide the entry body.
     if (ok && haveGlobal)
         appendGlobalSpecials(outIndex, gIndex);
+
+    // BRAINSPECIAL-VARIANTOF-1: resolve inheritance AFTER the global merge (a mission
+    // variant may inherit a GlobalSpecial parent), then re-sync the entry body.
+    if (ok) {
+        resolveVariantInheritance(outIndex);
+        resyncEntryBodyAfterVariants(outBody, outIndex, chosenKey);
+    }
 
     if (ok) {
         outBody.loaded = true;
@@ -2562,7 +2688,8 @@ bool parseBrainSpecialBodyFromPath(const char* fitPath, BrainSpecialBody& outBod
     SpecialIndex gIndex;
     bool haveGlobal = parseGlobalSpecials(fitPath, gIndex);
 
-    bool ok = parseBrainSpecialBody_RawScan(fitPath, outBody, outIndex);
+    std::string chosenKey;  // BRAINSPECIAL-VARIANTOF-1
+    bool ok = parseBrainSpecialBody_RawScan(fitPath, outBody, outIndex, &chosenKey);
     if (!ok) {
         std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] no TechSpecial blocks in %s — trying FitIni fallback\n", fitPath);
         std::fflush(stderr);
@@ -2575,6 +2702,11 @@ bool parseBrainSpecialBodyFromPath(const char* fitPath, BrainSpecialBody& outBod
     }
     if (ok && haveGlobal)
         appendGlobalSpecials(outIndex, gIndex);
+    // BRAINSPECIAL-VARIANTOF-1: resolve inheritance after global merge; re-sync entry body.
+    if (ok) {
+        resolveVariantInheritance(outIndex);
+        resyncEntryBodyAfterVariants(outBody, outIndex, chosenKey);
+    }
     if (ok) {
         outBody.loaded = true;
         std::fprintf(stderr, "[BRAIN_DISPATCH] parsed %s: %d verbs (index=%d blocks)\n",

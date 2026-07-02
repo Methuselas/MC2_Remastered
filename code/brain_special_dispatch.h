@@ -38,6 +38,11 @@
 //       directory as the mission specials) merged into the special index as a shared
 //       Call-target library. Mission-local keys win on collision. Globals never provide
 //       the entry body. OFF (default): no global parse — byte-identical.
+//   MC2_BRAIN_VARIANTOF=1 (BRAINSPECIAL-VARIANTOF-1) → variantOf= inheritance resolved
+//       after parse + global merge: empty-body child inherits the parent chain's verbs;
+//       a re-declared Body overrides (Body-level override; spec-delta documented in
+//       .claude/TECHSCRIPT-GAP-CLOSURE-1.md #14). Depth<=8 + cycle guard.
+//       OFF (default): variantOf fields parsed but ignored — byte-identical.
 //
 // FORBIDDEN-CALL GUARD (1A — executeSpecialBody_TraceOnly / executeSpecialBody_TraceOnlyChained):
 //   MUST NOT call ANY of: setGeneralTacOrder, setPlayerTacOrder, setAlarmTacOrder,
@@ -121,6 +126,13 @@ struct SpecialIndexEntry {
     // BRAINSPECIAL-ALIAS-1: per-block alias= field (carver: alias = "Scenario.Main").
     // Resolved by specialIndexFind as a fallback when MC2_BRAIN_ALIAS=1; unused otherwise.
     std::string     alias;
+    // BRAINSPECIAL-VARIANTOF-1: per-block variantOf= field (parent Special key).
+    // Resolved after parse+global-merge when MC2_BRAIN_VARIANTOF=1:
+    //   child with EMPTY Body inherits the parent chain's verbs wholesale;
+    //   child that re-declares a Body overrides it (spec-delta: Body-level override —
+    //   engine blocks have exactly one overridable section).
+    // Unused (parsed but ignored) when the gate is OFF.
+    std::string     variantOf;
     BrainSpecialBody body; // verbs collected from that block's Body { DO ... } section
 };
 
