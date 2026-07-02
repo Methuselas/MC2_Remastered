@@ -3741,10 +3741,16 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// We then create each object and place it in the world at the 
 	// position we read in with the frame we read in.
 	result = missionFile->seekBlock("Parts");
-	gosASSERT(result == NO_ERR);
-		
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1):
+	// the SP object-instantiation pass; a missing [Parts] block leaves numParts
+	// uninitialized and sizes the parts[] Malloc below off garbage.
+	MC2_VERIFY(result == NO_ERR, "Mission::init: mission .fit missing [Parts] block (load pass)");
+
 	result = missionFile->readIdULong("NumParts",numParts);
-	gosASSERT(result == NO_ERR);
+	// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1):
+	// numParts sizes missionHeap->Malloc(sizeof(Part)*(numParts+1)) below and
+	// bounds every part loop; a failed read leaves it uninitialized.
+	MC2_VERIFY(result == NO_ERR, "Mission::init: [Parts] NumParts read failed (load pass)");
 
 	//--------------------------------------------------------------------------------
 	// IMPORTANT NOTE: mission parts should always start with Part 1.
@@ -3791,7 +3797,9 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			sprintf(partName,"Part%d",i);
 
 			result = missionFile->seekBlock(partName);
-			gosASSERT(result == NO_ERR);
+			// MC2_VERIFY reclassified from gosASSERT (slice MISSION-DATA-DEREF-HARDEN-1):
+			// alternatives-prep pass; NumParts promised this Part block.
+			MC2_VERIFY(result == NO_ERR, "Mission::init: mission .fit missing [%s] block (alt-prep pass)", partName);
 			unsigned long squadNum;
 			result = missionFile->readIdULong("squadNum", squadNum);
 			long squadIndex = 0;
