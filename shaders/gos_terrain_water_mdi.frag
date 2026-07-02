@@ -58,7 +58,7 @@ uniform float u_waterReflStrength;     // WATER-SKY-REFLECTION-1: 0 = exact no-o
 // u_waterHdriLod < 0 => HDRI unavailable, fall back to SH-L2 only.
 uniform sampler2D u_hdri;        // HDRI equirect (unit 3, with mipmaps)
 uniform float     u_skyYaw;      // azimuth rotation (rad) matching renderHdriSkyboxInvVP
-uniform float     u_waterHdriLod; // sample LOD; MC2_WATER_HDRI_LOD env (default 2.5)
+uniform float     u_waterHdriLod; // sample LOD; C++ default 2.0 (WATER-HDRI-REFL-SHARPEN-1), MC2_WATER_HDRI_LOD env overrides
 
 // water-v1 style params. WATER-TUNING-UI-1: the user-tunable subset is promoted
 // from compile-time const to uniform (live ImGui control in Graphics Options >

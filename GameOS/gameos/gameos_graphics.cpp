@@ -3645,7 +3645,17 @@ void gosRenderer::renderWaterFastPath(
                 } else {
                     const char* full = getenv("MC2_WATER_HDRI_REFL_FULL");
                     const bool fullRate = (full && full[0] && full[0] != '0');
-                    s_waterHdriLod = fullRate ? 1.0f : 4.0f;
+                    // WATER-HDRI-REFL-SHARPEN-1: default bumped 4.0 -> 2.0. LOD 4.0
+                    // (256x128 mip) read as flat/dull; the user prefers the sharper,
+                    // "shinier" reflection. LOD 2.0 (1024x512 mip of the 4K source)
+                    // restores visible sky/sun structure at ~1/4 the texel bandwidth
+                    // of the full-rate LOD 1.0 path (~10ms/frame at LOD1 per
+                    // WATER-HDRI-REFL-PERF-1 451c9e49; LOD2 is 4x less texel traffic
+                    // than LOD1, still far cheaper than the original hot path).
+                    // MC2_WATER_HDRI_REFL_FULL=1 restores LOD 1.0; MC2_WATER_HDRI_LOD
+                    // (explicit float) overrides both. Per-mission override possible
+                    // later via a visual_tuning key if a mission wants it duller.
+                    s_waterHdriLod = fullRate ? 1.0f : 2.0f;
                 }
             }
             const bool hdriAvail = (ppRefl && ppRefl->isHdriReady());
