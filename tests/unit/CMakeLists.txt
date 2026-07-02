@@ -51,6 +51,7 @@ add_executable(mc2_tests
     test_file_inifile.cpp   # MINIMAL-VIABLE-HARNESS-1: real file/inifile/packet stack, game-free
     test_csvfile.cpp        # MINIMAL-VIABLE-HARNESS-2: real csvfile.cpp (Buildings.csv-shaped)
     test_fst_roundtrip.cpp  # MINIMAL-VIABLE-HARNESS-2: FST create/writeFast -> loose-vs-FST ladder
+    test_paths_mod.cpp      # MINIMAL-VIABLE-HARNESS-2: paths.cpp globals + mod-index (TryModOpen) resolution
 
     # MINIMAL-VIABLE-HARNESS-1: malloc-backed heap + GameOS-global shim.
     # Replaces heap.cpp (won't compile standalone -- see
@@ -84,6 +85,12 @@ add_executable(mc2_tests
     # MINIMAL-VIABLE-HARNESS-2: csvfile.cpp is a File subclass -> zero new link
     # frontier (same shim, same base class). Completes the data-ingest spine.
     ${MC2_WORKTREE_ROOT}/mclib/csvfile.cpp    # CSVFile (Excel-CSV reader, Buildings.csv)
+
+    # MINIMAL-VIABLE-HARNESS-2: paths.cpp is a pure leaf TU (path string globals
+    # only -- no TryModOpen/mod-index; that logic lives in file.cpp, already
+    # linked above). Linking it lets tests reference the engine's real path
+    # globals (objectPath/artPath/...) instead of stand-ins.
+    ${MC2_WORKTREE_ROOT}/mclib/paths.cpp      # path string globals (leaf)
 )
 
 target_include_directories(mc2_tests PRIVATE
