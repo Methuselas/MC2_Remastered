@@ -44,7 +44,6 @@ static bool glStateGuardTerrainEnabled() {
 // throughout this file (e.g. s_v1Env/s_v2Env). The per-frame block reads these
 // instead of hitting getenv. Uniform VALUES uploaded are unchanged.
 namespace {
-struct TerrainGateBool { int on; };  // -1 = uniform-loc-absent sentinel unused here
 inline bool tglc_envOn(const char* name) {
     const char* e = std::getenv(name);
     return e && e[0] && e[0] != '0';
@@ -1246,11 +1245,9 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             glUniform1i(s_locUseCement, (cementReady && s_cementSsbo.glName != 0) ? 1 : 0);
         // CEMENT-DIAG-CONNECT-1: env gate MC2_TERRAIN_CEMENT_DIAG_CONNECT, default OFF
         // -> uploads 0 -> frag diagonal-fill block skipped (byte-identical).
-        if (s_locCementDiagConnect >= 0) {
-            int diagOn = 0;
-            if (const char* e = getenv("MC2_TERRAIN_CEMENT_DIAG_CONNECT")) diagOn = (e[0] && e[0] != '0') ? 1 : 0;
-            glUniform1i(s_locCementDiagConnect, diagOn);
-        }
+        // REDUNDANT-PASS-HUNT-1: env resolved once (kTglcCementDiagConnect).
+        if (s_locCementDiagConnect >= 0)
+            glUniform1i(s_locCementDiagConnect, kTglcCementDiagConnect ? 1 : 0);
         if (cementReady) {
             if (s_locCementGridSide >= 0)
                 glUniform1i(s_locCementGridSide, gos_terrain_indirect_getCementAtlasGridSide());
@@ -1495,68 +1492,34 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         // TERRAIN-SLOPE-BIAS-VISUAL-1 (B4a): env gate MC2_TERRAIN_SLOPE_BIAS, default
         // OFF. When unset/0 the gate uploads 0 and the frag block is a no-op
         // (byte-identical). Strength via MC2_TERRAIN_SLOPE_BIAS_STRENGTH (default 1.0).
+        // REDUNDANT-PASS-HUNT-1: env resolved once (kTglcSlopeBias/Str), not per frame.
         {
-            int sbOn = 0;
-            if (const char* e = getenv("MC2_TERRAIN_SLOPE_BIAS")) sbOn = (e[0] && e[0] != '0') ? 1 : 0;
-            if (s_locUseRockSlopeBias >= 0) glUniform1i(s_locUseRockSlopeBias, sbOn);
-            if (s_locRockSlopeBiasStr >= 0) {
-                float sbStr = 1.0f;
-                if (const char* s = getenv("MC2_TERRAIN_SLOPE_BIAS_STRENGTH")) {
-                    float v = (float)atof(s);
-                    if (v > 0.0f) sbStr = v;
-                }
-                glUniform1f(s_locRockSlopeBiasStr, sbStr);
-            }
+            if (s_locUseRockSlopeBias >= 0) glUniform1i(s_locUseRockSlopeBias, kTglcSlopeBias ? 1 : 0);
+            if (s_locRockSlopeBiasStr >= 0) glUniform1f(s_locRockSlopeBiasStr, kTglcSlopeBiasStr);
         }
         // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1: env gate MC2_TERRAIN_CLIFF_TRIPLANAR,
         // default OFF -> uploads 0 -> frag block no-op (byte-identical). Strength via
         // MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH (default 1.0).
+        // REDUNDANT-PASS-HUNT-1: env resolved once (kTglcCliffTriplanar/Str).
         {
-            int tcOn = 0;
-            if (const char* e = getenv("MC2_TERRAIN_CLIFF_TRIPLANAR")) tcOn = (e[0] && e[0] != '0') ? 1 : 0;
-            if (s_locUseTriplanarCliff >= 0) glUniform1i(s_locUseTriplanarCliff, tcOn);
-            if (s_locCliffTriplanarStr >= 0) {
-                float tcStr = 1.0f;
-                if (const char* s = getenv("MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH")) {
-                    float v = (float)atof(s);
-                    if (v > 0.0f) tcStr = v;
-                }
-                glUniform1f(s_locCliffTriplanarStr, tcStr);
-            }
+            if (s_locUseTriplanarCliff >= 0) glUniform1i(s_locUseTriplanarCliff, kTglcCliffTriplanar ? 1 : 0);
+            if (s_locCliffTriplanarStr >= 0) glUniform1f(s_locCliffTriplanarStr, kTglcCliffTriplanarStr);
         }
         // TERRAIN-MACRO-VARIATION-1: env gate MC2_TERRAIN_MACRO_VARIATION, default
         // OFF -> uploads 0 -> frag block skipped (byte-identical). Strength via
         // MC2_TERRAIN_MACRO_VARIATION_STRENGTH (default 1.0).
-        if (s_locMacroVariation >= 0) {
-            float mvStr = 0.0f;
-            if (const char* e = getenv("MC2_TERRAIN_MACRO_VARIATION")) {
-                if (e[0] && e[0] != '0') {
-                    mvStr = 1.0f;
-                    if (const char* s = getenv("MC2_TERRAIN_MACRO_VARIATION_STRENGTH")) {
-                        float v = (float)atof(s);
-                        if (v > 0.0f) mvStr = v;
-                    }
-                }
-            }
-            glUniform1f(s_locMacroVariation, mvStr);
-        }
+        // REDUNDANT-PASS-HUNT-1: env resolved once (kTglcMacroVariation).
+        if (s_locMacroVariation >= 0)
+            glUniform1f(s_locMacroVariation, kTglcMacroVariation);
         // TERRAIN-EDGE-FEATHER-1: env gate MC2_TERRAIN_EDGE_FEATHER, default OFF
         // -> uploads 0 -> frag block skipped (byte-identical). Fades the terrain
         // colormap to sky/haze over the last ~tile band so the hard straight
         // map-perimeter line dissolves into the fog. Strength via
         // MC2_TERRAIN_EDGE_FEATHER_STRENGTH (default 1.0).
+        // REDUNDANT-PASS-HUNT-1: env resolved once (kTglcEdgeFeather/Str).
         {
-            int efOn = 0;
-            if (const char* e = getenv("MC2_TERRAIN_EDGE_FEATHER")) efOn = (e[0] && e[0] != '0') ? 1 : 0;
-            if (s_locEdgeFeather >= 0) glUniform1i(s_locEdgeFeather, efOn);
-            if (s_locEdgeFeatherStr >= 0) {
-                float efStr = 1.0f;
-                if (const char* s = getenv("MC2_TERRAIN_EDGE_FEATHER_STRENGTH")) {
-                    float v = (float)atof(s);
-                    if (v > 0.0f) efStr = v;
-                }
-                glUniform1f(s_locEdgeFeatherStr, efStr);
-            }
+            if (s_locEdgeFeather >= 0) glUniform1i(s_locEdgeFeather, kTglcEdgeFeather ? 1 : 0);
+            if (s_locEdgeFeatherStr >= 0) glUniform1f(s_locEdgeFeatherStr, kTglcEdgeFeatherStr);
         }
         if (s_locPomParams   >= 0) glUniform4f(s_locPomParams,   gos_GetTerrainPOMScale(), 8.0f, 32.0f, 0.0f);
         if (s_locMatProfile  >= 0) glUniform1i(s_locMatProfile,  g_terrainMaterialProfile);
