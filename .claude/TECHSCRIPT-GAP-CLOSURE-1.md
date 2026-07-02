@@ -69,14 +69,29 @@ THIS ARC converts to shipped: alias registry (planned-S), GlobalSpecial scope (n
 
 ---
 
-## Closure log (Phase B — one commit per slice)
+## Closure log (Phase B — one commit per slice; all LANDED)
 
 | Slice | Gate | Commit | Proof |
 |---|---|---|---|
-| BRAINSPECIAL-ALIAS-1 (S) | `MC2_BRAIN_ALIAS` | (pending) | harness fixture `alias-registry` + A/B apply |
-| BRAINSPECIAL-SCOPE-GLOBAL-1 (M) | `MC2_BRAIN_SCOPE_GLOBAL` | (pending) | harness fixture `scope-global-call` + shadow test |
-| BRAINSPECIAL-VARIANTOF-1 (M) | `MC2_BRAIN_VARIANTOF` | (pending) | harness fixtures `variantof-inherit` / `variantof-override` |
-| BRAINSPECIAL-FLOW-WAIT-1 (M) | `MC2_BRAIN_FLOW` | (pending) | harness `flowSequential` fixtures `flow-wait` / `flow-wait-until` / `flow-stop` |
-| FITBLOCK-WRITER-1 (M) | (pure utility, zero engine callers) | (pending) | writer self-test in harness (`--fitwriter-selftest`): emit → reparse round-trip |
+| (prep) HARNESS-STUB-REPAIR-1 | — | `9ce8ba27` | offline harness build restored (BRAIN-ENGAGE-1 had broken it at base); baseline 27 fixtures 25/0/2 both intent gates |
+| BRAINSPECIAL-ALIAS-1 (S) | `MC2_BRAIN_ALIAS` | `9bd8ad17` | fixture `alias-registry` (Aliases{} registry rewrite → real GUARD, case-insensitive catalog shorthand → WITHDRAW, block `alias=` Call resolution); 28 fixtures 26/0/2 |
+| BRAINSPECIAL-SCOPE-GLOBAL-1 (M) | `MC2_BRAIN_SCOPE_GLOBAL` | `a5147373` | fixtures `scope-global-call`/`-libfile` (global-only Call target + mission-wins shadowing); also fixed pre-existing RawScan double-commit quirk; 30 fixtures 28/0/2 |
+| BRAINSPECIAL-VARIANTOF-1 (M) | `MC2_BRAIN_VARIANTOF` | `089f1099` | fixtures `variantof-inherit`/`-override`/`-cycle` (inherited verb drives a real GUARD; re-declared Body suppresses inheritance; cycle guard); 33 fixtures 31/0/2 |
+| BRAINSPECIAL-FLOW-WAIT-1 (M) | `MC2_BRAIN_FLOW` | `f9a3a67f` | harness `flow_sequential` mode (3 passes, stub sim-time 0/1000/6000 ms): `flow-wait` (arm→gate→latch→single GUARD), `flow-wait-until` (Var condition latch), `flow-stop`; 36 fixtures 34/0/2 |
+| FITBLOCK-WRITER-1 (M, keystone) | (pure utility, zero engine callers) | `364fbbcc` | `--fitwriter-selftest` 13/13: writer-emitted TechSpecial re-parsed by the REAL scanner (key/alias/variantOf/quoted-args/WAIT/STOP round-trip) + Brain{} golden-string + unbalanced-save negative |
 
-All slices: default-OFF, gate-OFF byte-identical, no new `setGeneralTacOrder` call-sites (relaxed-guard checker count stays 6), `check_brain_relaxed_guard_doc.py` + harness suite green per commit; smoke pair on a spare lane at arc end.
+All slices: default-OFF, gate-OFF byte-identical, no new `setGeneralTacOrder` call-sites (relaxed-guard checker: 6/6/6/6 green every commit), fixture-manifest checker green (36 entries / 36 files), `mc2` target builds green every commit.
+
+### Post-arc gap arithmetic (confirmed)
+
+Before this branch: ~65% shipped/in-flight, ~20% planned, ~15% new (recon baseline).
+After `9bd8ad17..364fbbcc`: **~80% shipped, ~14% planned-and-slotted, ~6% deferred-by-ruling.**
+
+Remaining for "100% as written" (all slotted, none blocked):
+- `BRAINSPECIAL-IF-1` (S/M) — generic IF/ELSE/ENDIF over the WAIT_UNTIL condition evaluator (ledger #6)
+- Hybrid arbitration 1M (M), verb families 1L-A/B/C (M), Selectors (M), RequestOrders 1N / OPORD-advance 1O (M) — roadmap slices
+- `BRAIN-SAVELOAD-1` (M/L) — now explicitly includes wait-latch + var-store serialization (ledger #21)
+- `BRAINSPECIAL-SCOPE-CAMPAIGN-1` (M) — deferred until campaign-progression need is real (ledger #13)
+- `EDITOR-BRAIN-PANEL-1` → `EDITOR-BRAINSPECIAL-LINEEDIT-1` (L+L) — now UNBLOCKED by FITBLOCK-WRITER-1
+- Core-content pack (M/L, content) — 40-special registry authored against the engine spec (ledger #16)
+- Permanently resolved-not-implemented (documented deltas): GOTO/LABEL (#9), in-engine ABL converter (#23), ServiceJobs timeline (#17), infantry patch (#25)
