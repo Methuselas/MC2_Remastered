@@ -15,6 +15,11 @@ HERE = Path(__file__).resolve().parent
 TOOL = HERE / "control_map_tool.py"
 CARVER5_MISSIONS = Path("A:/Games/Carver5-feasibility/data/missions")
 
+sys.path.insert(0, str(HERE))
+from control_map_tool import (  # noqa: E402
+    compute_slope_deg, classify_weights, area_average_downsample, weights_to_rgba,
+)
+
 
 def run(*args) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -170,4 +175,175 @@ def test_generate_output_validates(tmp_path):
     out = tmp_path / "mc2_01_cm.png"
     run("generate", "--pak", str(CARVER5_MISSIONS / "mc2_01.pak"), "--out", str(out))
     r = run("validate", "--png", str(out), "--pak", str(CARVER5_MISSIONS / "mc2_01.pak"))
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+# --- generate-from-height: slope math sanity --------------------------------
+def test_slope_math_flat_plane_is_zero():
+    res = 64
+    h = np.full((res, res), 0.5)
+    slope = compute_slope_deg(h, size_wu=8192.0)
+    assert np.allclose(slope, 0.0)
+
+
+def test_slope_math_synthetic_ramp():
+    """A linear ramp of known rise-over-run must produce the exact analytic
+    slope angle (wu-correct: step_wu = size_wu / (res-1))."""
+    res = 100
+    size_wu = 1280.0
+    height_wu = np.tile(np.linspace(0.0, 1.0, res), (res, 1))  # 1 wu of rise, left->right
+    slope = compute_slope_deg(height_wu, size_wu=size_wu)
+    step_wu = size_wu / (res - 1)
+    expected_deg = np.degrees(np.arctan((1.0 / (res - 1)) / step_wu))
+    # interior columns only (np.gradient uses one-sided differences at edges,
+    # which are still correct here since the ramp is perfectly linear).
+    assert np.allclose(slope[10:90, 10:90], expected_deg, atol=1e-9)
+
+
+def test_slope_math_steeper_ramp_yields_larger_angle():
+    res = 100
+    gentle = np.tile(np.linspace(0.0, 0.1, res), (res, 1))
+    steep = np.tile(np.linspace(0.0, 1.0, res), (res, 1))
+    slope_gentle = compute_slope_deg(gentle, size_wu=1280.0)
+    slope_steep = compute_slope_deg(steep, size_wu=1280.0)
+    assert slope_steep[50, 50] > slope_gentle[50, 50]
+
+
+def test_slope_math_size_wu_scales_inversely():
+    """Doubling the world-unit extent (same texel grid) halves the step slope
+    for a fixed height delta -> smaller angle."""
+    res = 64
+    h = np.tile(np.linspace(0.0, 1.0, res), (res, 1))
+    slope_small_extent = compute_slope_deg(h, size_wu=1000.0)
+    slope_large_extent = compute_slope_deg(h, size_wu=4000.0)
+    assert slope_small_extent[30, 30] > slope_large_extent[30, 30]
+
+
+# --- generate-from-height: classifier determinism ---------------------------
+def test_classify_weights_deterministic():
+    rs = np.random.RandomState(42)
+    h = rs.uniform(0.0, 1.0, (48, 48))
+    w1 = classify_weights(h, size_wu=6144.0, max_elev_wu=1200.0)
+    w2 = classify_weights(h, size_wu=6144.0, max_elev_wu=1200.0)
+    assert np.array_equal(w1["rock"], w2["rock"])
+    assert np.array_equal(w1["grass"], w2["grass"])
+    assert np.array_equal(w1["dirt"], w2["dirt"])
+
+
+def test_classify_weights_sum_to_one():
+    rs = np.random.RandomState(7)
+    h = rs.uniform(0.0, 1.0, (32, 32))
+    w = classify_weights(h, size_wu=4096.0, max_elev_wu=1200.0)
+    total = w["rock"] + w["grass"] + w["dirt"]
+    assert np.allclose(total, 1.0, atol=1e-9)
+
+
+def test_classify_weights_flat_low_is_grass_dominant():
+    """A perfectly flat, low-altitude plateau should classify overwhelmingly
+    as grass (low slope AND low altitude -> grass rule)."""
+    h = np.full((32, 32), 0.05)  # flat, well below low_frac=0.35 default
+    w = classify_weights(h, size_wu=4096.0, max_elev_wu=1200.0)
+    assert w["grass"].mean() > 0.9
+
+
+def test_classify_weights_steep_high_is_rock_dominant():
+    """A steep, high-altitude ramp (mountains) should classify overwhelmingly
+    as rock (steep OR high -> rock rule) -- the "mountains read as mountains"
+    acceptance criterion."""
+    res = 48
+    ramp = np.tile(np.linspace(0.7, 1.0, res), (res, 1))  # steep + high (>0.65 high_frac)
+    w = classify_weights(ramp, size_wu=1536.0, max_elev_wu=1200.0)  # small extent -> steep
+    assert w["rock"].mean() > 0.8
+
+
+def test_classify_weights_rock_mask_boosts_rock():
+    h = np.full((32, 32), 0.05)  # would otherwise be grass-dominant
+    mask = np.ones((32, 32))
+    w_plain = classify_weights(h, size_wu=4096.0, max_elev_wu=1200.0)
+    w_masked = classify_weights(h, size_wu=4096.0, max_elev_wu=1200.0, rock_mask=mask)
+    assert w_masked["rock"].mean() > w_plain["rock"].mean()
+
+
+def test_classify_weights_sediment_mask_boosts_dirt():
+    h = np.full((32, 32), 0.05)
+    mask = np.ones((32, 32))
+    w_plain = classify_weights(h, size_wu=4096.0, max_elev_wu=1200.0)
+    w_masked = classify_weights(h, size_wu=4096.0, max_elev_wu=1200.0, sediment_mask=mask)
+    assert w_masked["dirt"].mean() > w_plain["dirt"].mean()
+
+
+# --- generate-from-height: downsample + packing ------------------------------
+def test_area_average_downsample_preserves_mean():
+    rs = np.random.RandomState(3)
+    a = rs.uniform(0.0, 1.0, (256, 256))
+    ds = area_average_downsample(a, 64)
+    assert ds.shape == (64, 64)
+    assert abs(float(ds.mean()) - float(a.mean())) < 0.02
+
+
+def test_area_average_downsample_noop_when_same_size():
+    a = np.arange(16, dtype=np.float64).reshape(4, 4)
+    ds = area_average_downsample(a, 4)
+    assert np.array_equal(ds, a)
+
+
+def test_weights_to_rgba_packs_and_sums_255():
+    rock = np.full((8, 8), 0.5)
+    grass = np.full((8, 8), 0.3)
+    dirt = np.full((8, 8), 0.2)
+    rgba = weights_to_rgba(rock, grass, dirt)
+    assert rgba.shape == (8, 8, 4)
+    assert np.all(rgba[..., 3] == 0)  # A=concrete always 0 from this classifier
+    total = rgba[..., :3].astype(np.int32).sum(axis=-1)
+    assert np.all(np.abs(total.astype(np.int64) - 255) <= 1)  # rounding tolerance
+
+
+# --- generate-from-height: CLI end-to-end (synthetic, no external assets) ---
+def test_cli_generate_from_height_synthetic_r32(tmp_path):
+    res, side = 64, 20
+    rs = np.random.RandomState(1)
+    h = rs.uniform(0.0, 1.0, (res, res)).astype("<f4")
+    r32 = tmp_path / "synthetic.r32"
+    h.tofile(r32)
+    out = tmp_path / "cm.png"
+    r = run("generate-from-height", "--r32", str(r32), "--res", str(res),
+            "--side", str(side), "--size", "8192", "--out", str(out))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert out.is_file()
+    img = Image.open(out)
+    assert img.mode == "RGBA"
+    assert img.size == (side, side)
+
+
+def test_cli_generate_from_height_deterministic(tmp_path):
+    res, side = 32, 20
+    rs = np.random.RandomState(2)
+    h = rs.uniform(0.0, 1.0, (res, res)).astype("<f4")
+    r32 = tmp_path / "synthetic.r32"
+    h.tofile(r32)
+    out1, out2 = tmp_path / "a.png", tmp_path / "b.png"
+    r1 = run("generate-from-height", "--r32", str(r32), "--res", str(res),
+              "--side", str(side), "--size", "4096", "--out", str(out1))
+    r2 = run("generate-from-height", "--r32", str(r32), "--res", str(res),
+              "--side", str(side), "--size", "4096", "--out", str(out2))
+    assert r1.returncode == 0 and r2.returncode == 0
+    assert np.array_equal(np.array(Image.open(out1)), np.array(Image.open(out2)))
+
+
+def test_cli_generate_from_height_requires_source(tmp_path):
+    out = tmp_path / "cm.png"
+    r = run("generate-from-height", "--side", "20", "--out", str(out))
+    assert r.returncode != 0
+
+
+def test_cli_generate_from_height_output_validates(tmp_path):
+    res, side = 40, 20
+    rs = np.random.RandomState(5)
+    h = rs.uniform(0.0, 1.0, (res, res)).astype("<f4")
+    r32 = tmp_path / "synthetic.r32"
+    h.tofile(r32)
+    out = tmp_path / "cm.png"
+    run("generate-from-height", "--r32", str(r32), "--res", str(res),
+        "--side", str(side), "--size", "2560", "--out", str(out))
+    r = run("validate", "--png", str(out), "--side", str(side))
     assert r.returncode == 0, r.stdout + r.stderr

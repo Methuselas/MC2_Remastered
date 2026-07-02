@@ -65,7 +65,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mission_terrain_analyzer import (  # noqa: E402
     read_packets, locate_mapdata, extract_layers, read_water_elevation,
-    VALID_GRID_SIDES,
+    VALID_GRID_SIDES, WORLD_UNITS_PER_VERTEX,
 )
 
 # Mirrors mclib/terrain.cpp terrainTypeToMaterial lambda EXACTLY (search
@@ -99,6 +99,162 @@ def material_to_rgba(material: np.ndarray) -> np.ndarray:
     return rgba
 
 
+# --- generate-from-height (TERRAIN-CONTROLMAP-GENERATE-1) ---------------------
+# Hi-res heightfield classifier: slope + altitude bands -> soft rock/grass/dirt
+# weights, optionally blended with authored Gaea deposition masks, smoothed,
+# normalized, and area-averaged down to the mission's vertex-resolution grid.
+# A (concrete) is left at 0 here -- concrete/cement is a separate authored/runtime
+# axis (see TERRAIN-CONTROLMAP-GENERATE-1-RECON.md landmine #3), this classifier
+# only ever proposes R/G/B.
+
+def _read_r32(path: Path, res: int) -> np.ndarray:
+    """Read a single-channel float32 Gaea raw export, res x res, row-major.
+    Falls back to PIL for image-container masks (PNG/TIFF/EXR)."""
+    suffix = path.suffix.lower()
+    if suffix in (".png", ".tif", ".tiff", ".exr", ".jpg", ".jpeg"):
+        arr = np.asarray(Image.open(path)).astype(np.float64)
+        if arr.ndim == 3:
+            arr = arr[..., :3].mean(axis=-1)
+        if arr.max() > 1.0:
+            arr = arr / 255.0 if arr.max() <= 255.0 else arr / arr.max()
+        if arr.shape[0] != res or arr.shape[1] != res:
+            arr = np.asarray(Image.fromarray(arr.astype(np.float32), "F")
+                              .resize((res, res), Image.BILINEAR), dtype=np.float64)
+        return arr
+    raw = np.fromfile(path, dtype="<f4")
+    if raw.size != res * res:
+        raise ValueError(f"{path}: {raw.size} floats != res^2 ({res * res}); wrong --res?")
+    return raw.reshape(res, res).astype(np.float64)
+
+
+def _gaussian_kernel1d(sigma: float) -> np.ndarray:
+    radius = max(1, int(round(3.0 * sigma)))
+    x = np.arange(-radius, radius + 1, dtype=np.float64)
+    k = np.exp(-(x ** 2) / (2.0 * sigma * sigma))
+    return k / k.sum()
+
+
+def _gaussian_blur(a: np.ndarray, sigma: float) -> np.ndarray:
+    """Separable gaussian blur, edge-replicated padding, numpy/PIL only (no scipy)."""
+    if sigma <= 0.0:
+        return a
+    k = _gaussian_kernel1d(sigma)
+    radius = (len(k) - 1) // 2
+    padded = np.pad(a, radius, mode="edge")
+    # horizontal pass
+    tmp = np.zeros_like(a)
+    for i, w in enumerate(k):
+        tmp += w * padded[radius:radius + a.shape[0], i:i + a.shape[1]]
+    padded2 = np.pad(tmp, radius, mode="edge")
+    out = np.zeros_like(a)
+    for i, w in enumerate(k):
+        out += w * padded2[i:i + a.shape[0], radius:radius + a.shape[1]]
+    return out
+
+
+def compute_slope_deg(height_wu: np.ndarray, size_wu: float) -> np.ndarray:
+    """Slope in degrees from a world-unit heightfield, wu-correct: the gradient
+    step in world units is size_wu / (res - 1) (res-1 cells span the full
+    world-unit extent, matching mission_terrain_analyzer's worldToTile
+    convention where extent = (side) * WORLD_UNITS_PER_VERTEX)."""
+    res = height_wu.shape[0]
+    step_wu = size_wu / max(1, res - 1)
+    gy, gx = np.gradient(height_wu, step_wu)
+    grad = np.sqrt(gx ** 2 + gy ** 2)
+    return np.degrees(np.arctan(grad))
+
+
+def classify_weights(height01: np.ndarray, size_wu: float, max_elev_wu: float,
+                      steep_deg: float = 35.0, flat_deg: float = 10.0,
+                      high_frac: float = 0.65, low_frac: float = 0.35,
+                      smooth_sigma: float = 2.0,
+                      rock_mask: np.ndarray = None,
+                      sediment_mask: np.ndarray = None) -> dict:
+    """v0 classifier: slope + altitude bands -> soft rock/grass/dirt weights.
+
+    height01: [0,1]-normalized heightfield (as Gaea exports it).
+    size_wu: world-unit extent of the heightfield (edge to edge) for wu-correct
+             slope math.
+    max_elev_wu: converts height01 -> world-unit elevation for the altitude
+             bands (elevation_wu = height01 * max_elev_wu).
+    Rules (soft, blended via smoothstep-like weights, then gaussian-smoothed):
+      - steep OR high altitude       -> rock
+      - low-slope AND low altitude   -> grass
+      - everything else (mid-slope / mid-altitude / deposition) -> dirt
+      - rock_mask / sediment_mask (0..1, same res) additively boost rock / dirt
+        respectively before smoothing+normalize (authored Gaea masks override
+        the coarse slope/altitude heuristic where present).
+    Returns dict of raw (pre-smooth) and final normalized weight arrays plus
+    stats, all shape (res, res) float64 in [0,1], not yet re-summed to 255.
+    """
+    height_wu = height01 * max_elev_wu
+    slope_deg = compute_slope_deg(height_wu, size_wu)
+
+    elev_norm = np.clip(height01, 0.0, 1.0)
+
+    def smoothstep(edge0, edge1, x):
+        t = np.clip((x - edge0) / max(1e-9, (edge1 - edge0)), 0.0, 1.0)
+        return t * t * (3.0 - 2.0 * t)
+
+    steep_w = smoothstep(flat_deg, steep_deg, slope_deg)
+    high_w = smoothstep(low_frac, high_frac, elev_norm)
+    low_alt_w = 1.0 - high_w
+    flat_w = 1.0 - steep_w
+
+    rock = np.maximum(steep_w, high_w)
+    grass = flat_w * low_alt_w
+    dirt = np.clip(1.0 - np.maximum(rock, grass), 0.0, None)
+
+    if rock_mask is not None:
+        rock = np.clip(rock + rock_mask, 0.0, 1.0)
+    if sediment_mask is not None:
+        dirt = np.clip(dirt + sediment_mask, 0.0, 1.0)
+
+    rock_s = _gaussian_blur(rock, smooth_sigma)
+    grass_s = _gaussian_blur(grass, smooth_sigma)
+    dirt_s = _gaussian_blur(dirt, smooth_sigma)
+
+    total = rock_s + grass_s + dirt_s
+    total_safe = np.where(total <= 1e-9, 1.0, total)
+    rock_n = np.where(total <= 1e-9, 1.0 / 3.0, rock_s / total_safe)
+    grass_n = np.where(total <= 1e-9, 1.0 / 3.0, grass_s / total_safe)
+    dirt_n = np.where(total <= 1e-9, 1.0 / 3.0, dirt_s / total_safe)
+
+    return {
+        "slope_deg": slope_deg, "elev_norm": elev_norm,
+        "rock": rock_n, "grass": grass_n, "dirt": dirt_n,
+    }
+
+
+def area_average_downsample(a: np.ndarray, side: int) -> np.ndarray:
+    """Downsample a (res,res) float array to (side,side) by area-averaging
+    (box filter over each output cell's footprint), preferred over point
+    sampling because it preserves mask/detail energy instead of aliasing it."""
+    res = a.shape[0]
+    if res == side:
+        return a.astype(np.float64)
+    img = Image.fromarray(a.astype(np.float32), "F")
+    # PIL's BOX resize is a true area-average for downsampling.
+    resized = img.resize((side, side), Image.BOX if res > side else Image.BILINEAR)
+    return np.asarray(resized, dtype=np.float64)
+
+
+def weights_to_rgba(rock: np.ndarray, grass: np.ndarray, dirt: np.ndarray) -> np.ndarray:
+    """Normalize (rock,grass,dirt) to sum<=255 and pack RGBA8 (A=concrete=0)."""
+    total = rock + grass + dirt
+    total_safe = np.where(total <= 1e-9, 1.0, total)
+    r = np.clip(rock / total_safe * 255.0, 0, 255)
+    g = np.clip(grass / total_safe * 255.0, 0, 255)
+    b = np.clip(dirt / total_safe * 255.0, 0, 255)
+    h, w = rock.shape
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    rgba[..., 0] = np.round(r).astype(np.uint8)
+    rgba[..., 1] = np.round(g).astype(np.uint8)
+    rgba[..., 2] = np.round(b).astype(np.uint8)
+    rgba[..., 3] = 0
+    return rgba
+
+
 # --- generate -----------------------------------------------------------------
 def cmd_generate(args) -> int:
     pak = Path(args.pak)
@@ -126,6 +282,96 @@ def cmd_generate(args) -> int:
     counts = {name: int((material == idx).sum())
               for idx, name in enumerate(("rock", "grass", "dirt", "concrete"))}
     print(f"[generate] {mission}: side={side} -> {out_path} counts={counts}")
+    return 0
+
+
+# --- generate-from-height ---------------------------------------------------
+def cmd_generate_from_height(args) -> int:
+    side = args.side
+    if side <= 1:
+        print(f"[generate-from-height] ERROR --side must be > 1, got {side}", file=sys.stderr)
+        return 4
+
+    if args.r32:
+        r32_path = Path(args.r32)
+        if not r32_path.is_file():
+            print(f"[generate-from-height] ERROR r32 not found: {r32_path}", file=sys.stderr)
+            return 4
+        res = args.res
+        if not res:
+            print("[generate-from-height] ERROR --res required with --r32", file=sys.stderr)
+            return 4
+        height01 = _read_r32(r32_path, res)
+        source = f"r32:{r32_path.name}"
+    elif args.pak:
+        pak = Path(args.pak)
+        if not pak.is_file():
+            print(f"[generate-from-height] ERROR pak not found: {pak}", file=sys.stderr)
+            return 4
+        packets = read_packets(pak)
+        md = locate_mapdata(packets)
+        if md is None:
+            print(f"[generate-from-height] ERROR no MapData packet in {pak}", file=sys.stderr)
+            return 4
+        _, pak_side, blocks = md
+        water_elev = read_water_elevation(pak.with_suffix(".fit"))
+        layers = extract_layers(pak_side, blocks, water_elev)
+        elev = layers["elev"]
+        emin, emax = float(elev.min()), float(elev.max())
+        rng = (emax - emin) if (emax - emin) > 1e-9 else 1.0
+        height01 = (elev - emin) / rng
+        res = pak_side
+        source = f"pak:{pak.name} (fallback float-elev, no hi-res source)"
+    else:
+        print("[generate-from-height] ERROR one of --r32 or --pak is required", file=sys.stderr)
+        return 4
+
+    size_wu = args.size if args.size else float(side) * WORLD_UNITS_PER_VERTEX
+    max_elev_wu = args.max_elev
+
+    rock_mask = None
+    if args.rock_mask:
+        rmp = Path(args.rock_mask)
+        if not rmp.is_file():
+            print(f"[generate-from-height] ERROR --rock-mask not found: {rmp}", file=sys.stderr)
+            return 4
+        rock_mask = np.clip(_read_r32(rmp, res), 0.0, 1.0)
+
+    sediment_mask = None
+    if args.sediment_mask:
+        smp = Path(args.sediment_mask)
+        if not smp.is_file():
+            print(f"[generate-from-height] ERROR --sediment-mask not found: {smp}", file=sys.stderr)
+            return 4
+        sediment_mask = np.clip(_read_r32(smp, res), 0.0, 1.0)
+
+    weights = classify_weights(
+        height01, size_wu=size_wu, max_elev_wu=max_elev_wu,
+        steep_deg=args.steep_deg, flat_deg=args.flat_deg,
+        high_frac=args.high_frac, low_frac=args.low_frac,
+        smooth_sigma=args.smooth_sigma,
+        rock_mask=rock_mask, sediment_mask=sediment_mask,
+    )
+
+    rock_ds = area_average_downsample(weights["rock"], side)
+    grass_ds = area_average_downsample(weights["grass"], side)
+    dirt_ds = area_average_downsample(weights["dirt"], side)
+
+    rgba = weights_to_rgba(rock_ds, grass_ds, dirt_ds)
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(rgba, mode="RGBA").save(out_path)
+
+    total = rgba[..., :3].astype(np.float64).sum(axis=-1)
+    total_safe = np.where(total <= 0, 1.0, total)
+    pct_rock = float((rgba[..., 0] / total_safe * 100.0).mean())
+    pct_grass = float((rgba[..., 1] / total_safe * 100.0).mean())
+    pct_dirt = float((rgba[..., 2] / total_safe * 100.0).mean())
+
+    print(f"[generate-from-height] source={source} res={res} -> side={side} "
+          f"size_wu={size_wu:.1f} max_elev_wu={max_elev_wu:.1f} -> {out_path} "
+          f"pct_rock={pct_rock:.1f} pct_grass={pct_grass:.1f} pct_dirt={pct_dirt:.1f}")
     return 0
 
 
@@ -296,6 +542,36 @@ def main() -> int:
     p.add_argument("--pak", required=True)
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_generate)
+
+    p = sub.add_parser("generate-from-height",
+                        help="classify a hi-res heightfield (Gaea r32, or --pak fallback) "
+                             "into an RGBA control map (slope+altitude, area-avg downsample)")
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--r32", help="single-channel float32 Gaea raw export (or PNG/TIFF/EXR)")
+    src.add_argument("--pak", help="mission .pak fallback (uses coarse float elevation, no hi-res source)")
+    p.add_argument("--res", type=int, help="r32 resolution (required with --r32, e.g. 512)")
+    p.add_argument("--side", type=int, required=True, help="output vertex resolution, e.g. 120")
+    p.add_argument("--size", type=float, default=0.0,
+                   help="world-unit extent of the heightfield (edge-to-edge), for wu-correct "
+                        "slope math; default = --side * 128 (WORLD_UNITS_PER_VERTEX)")
+    p.add_argument("--max-elev", dest="max_elev", type=float, default=1200.0,
+                   help="world-unit elevation the height01=1.0 texel represents (altitude bands)")
+    p.add_argument("--rock-mask", dest="rock_mask",
+                   help="optional Gaea rock/sandstone mask r32 (0..1), same --res, additively boosts rock")
+    p.add_argument("--sediment-mask", dest="sediment_mask",
+                   help="optional Gaea deposition/sediment mask r32 (0..1), same --res, additively boosts dirt")
+    p.add_argument("--steep-deg", dest="steep_deg", type=float, default=35.0,
+                   help="slope (deg) at/above which a texel is fully classified steep->rock")
+    p.add_argument("--flat-deg", dest="flat_deg", type=float, default=10.0,
+                   help="slope (deg) at/below which a texel is fully classified flat")
+    p.add_argument("--high-frac", dest="high_frac", type=float, default=0.65,
+                   help="normalized height (0..1) at/above which a texel is fully 'high altitude'")
+    p.add_argument("--low-frac", dest="low_frac", type=float, default=0.35,
+                   help="normalized height (0..1) at/below which a texel is fully 'low altitude'")
+    p.add_argument("--smooth-sigma", dest="smooth_sigma", type=float, default=2.0,
+                   help="gaussian blur sigma (in hi-res texels) applied to weights before normalize")
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_generate_from_height)
 
     p = sub.add_parser("pattern", help="synthetic test control map")
     p.add_argument("--side", type=int, required=True)
