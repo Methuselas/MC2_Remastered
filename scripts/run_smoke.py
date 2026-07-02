@@ -1624,6 +1624,15 @@ def main():
                             # (default OFF). Must be allowlisted or Popen drops
                             # it and the gate-ON smoke emits nothing.
                             "MC2_IFACE_COST_SPLIT",
+                            # [PICK_CAP] per-walk numTiles/admitted/contained
+                            # trace in Camera::inverseProject (pre-existing,
+                            # default OFF) -- sizes the picker walk stages.
+                            "MC2_PICK_CAP_TRACE",
+                            # MISSION-INTERFACE-PERF-1: coarse-to-fine
+                            # closest-vertex fallback picker (default OFF).
+                            # Must be allowlisted or Popen drops it and the
+                            # gate-ON smoke measures the legacy brute force.
+                            "MC2_PICK_FALLBACK_COARSE",
                             "MC2_PICK_RECON",
                             # Diagnostic JSONL trace (diagnostic_trace.cpp).
                             # MC2_DIAGNOSTIC_TRACE_FILE is handled above (absolute

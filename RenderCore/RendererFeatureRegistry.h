@@ -1062,6 +1062,20 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "code/missiongui.cpp + code/controlgui.cpp. Zero cost unset."
     },
     {
+        "MC2_PICK_FALLBACK_COARSE",
+        "MC2_PICK_FALLBACK_COARSE",
+        EnvVarKind::Feature,
+        false,
+        "MISSION-INTERFACE-PERF-1: coarse-to-fine closest-vertex fallback in "
+        "Camera::inverseProject (mclib/camera.cpp). The off-map fallback is the "
+        "PRODUCTION ground picker when the quadList is empty (LOD-chunk terrain); "
+        "legacy code brute-force-projects ALL realVerticesMapSide^2 vertices per "
+        "cache-miss frame (~890us on mc2_24, 85-95% of Mission.Interface). ON = "
+        "stride-8 coarse pass + full-res +/-9 refine, same nearest-projected-"
+        "vertex answer in practice. With MC2_PICK_CAP_TRACE=1 every 32nd walk "
+        "re-runs the brute force and logs [PICK_FALLBACK] parity. Default OFF."
+    },
+    {
         "MC2_XFORM_PARITY_FATAL",
         "MC2_XFORM_PARITY_FATAL",
         EnvVarKind::Trace,
