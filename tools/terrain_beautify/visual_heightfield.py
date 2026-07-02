@@ -23,9 +23,31 @@ Outputs (in <out>/<mission>.beauty/):
     visual_height_preview.png   grayscale normalized
     visual_delta_heatmap.png    |visual - nearest-coarse| (the smoothing introduced)
     visual_height_report.json   dims + corner-error proof + delta stats
+    visual_damp.r32             (--reauth only) float32 [N*N] object-proximity damp
+                                0=no displacement (on/near buildings) .. 1=full
+
+TERRAIN-REAUTH-UNPIN-1 adds `--reauth`: terrain-AWARE, corner-UNpinned re-authoring
+(user ruling: "UN PIN THE CORNERS. KEEP THE SHAPE"). Taubin lambda|mu band-pass
+smoothing on the 4x grid flattens coarse-cell faceting and rounds pyramid facet
+edges into curves, while the LANDFORM is kept by construction + constraint:
+  - Taubin pair passes are volume-preserving band-pass (landform band ~untouched);
+  - coarse local extrema (peaks/pits) may move at most --shape-tolerance of their
+    local relief; residual loss is re-injected as smooth Gaussian fields
+    (multi-point / neighborhood-aware, NOT a per-vertex clamp);
+  - total deviation from the bilinear baseline is soft-bounded (C1 tanh limiter)
+    by --max-drift;
+  - roads/overlay + building footprints stay pinned to the bilinear baseline
+    (feathered, crease-free).
+Gameplay height (MapData::blocks[]) is NEVER touched: render-only sidecar for the
+MC2_TERRAIN_VISUAL_DISPLACE consumer. The companion visual_damp.r32 is the engine
+Half-B seed: static object-proximity displacement fade (units/buildings stand on
+true gameplay height).
 
 Run:
   python visual_heightfield.py <mission> [--missions-dir DIR] [--out DIR] [--factor 4]
+  python visual_heightfield.py mc2_17 --reauth [--shape-tolerance 0.10]
+         [--max-drift 24] [--reauth-passes 150] [--objfade-radius-wu 256]
+         [--mountainify] [--mountainify-amp 14] [--seed 1337]
 """
 from __future__ import annotations
 
@@ -127,6 +149,278 @@ def reshape_visual(base: np.ndarray, elev: np.ndarray, factor: int,
     return work
 
 
+# --- TERRAIN-REAUTH-UNPIN-1: corner-UNpinned landform-preserving re-authoring ---
+
+def _filter3(a: np.ndarray, reduce_fn, iterations: int) -> np.ndarray:
+    """Iterated 3x3 morphological max/min filter (edge-padded, numpy-only)."""
+    n = a.shape[0]
+    for _ in range(iterations):
+        p = np.pad(a, 1, mode="edge")
+        a = reduce_fn.reduce([p[dr:dr + n, dc:dc + n]
+                              for dr in range(3) for dc in range(3)])
+    return a
+
+
+def _crease_energy(a: np.ndarray) -> float:
+    """Mean squared 3-point second difference (row+col): faceting/crease metric.
+    A bilinear upsample concentrates ALL of its curvature at coarse gridlines
+    (creases); a rounded surface spreads (and shrinks) it."""
+    sr = np.zeros_like(a)
+    sc = np.zeros_like(a)
+    sr[1:-1, :] = a[2:, :] - 2 * a[1:-1, :] + a[:-2, :]
+    sc[:, 1:-1] = a[:, 2:] - 2 * a[:, 1:-1] + a[:, :-2]
+    return float((sr * sr + sc * sc).mean())
+
+
+def detect_coarse_extrema(elev: np.ndarray, min_prominence: float = 4.0,
+                          relief_win_iters: int = 3) -> list:
+    """Peaks and pits of the coarse landform, each with its LOCAL relief (7x7 by
+    default) so the shape tolerance scales with how prominent the feature is.
+
+    Flat-top mesas / terraces satisfy `elev >= nmax` for MANY connected cells; a
+    representative-per-connected-component dedup keeps ONE guard point per
+    feature (the raw per-cell mask floods terrace edges and makes the Gaussian
+    corrections fight each other). Returns [{r, c, kind, h0, relief}]."""
+    from mission_terrain_analyzer import label_components
+    n = elev.shape[0]
+    p = np.pad(elev, 1, mode="edge")
+    neigh = [p[dr:dr + n, dc:dc + n]
+             for dr in range(3) for dc in range(3) if (dr, dc) != (1, 1)]
+    nmax = np.maximum.reduce(neigh)
+    nmin = np.minimum.reduce(neigh)
+    rmax = _filter3(elev, np.maximum, relief_win_iters)
+    rmin = _filter3(elev, np.minimum, relief_win_iters)
+    relief = rmax - rmin
+    peaks = (elev >= nmax) & ((elev - rmin) >= min_prominence)
+    pits = (elev <= nmin) & ((rmax - elev) >= min_prominence)
+    out = []
+    for kind, mask in (("peak", peaks), ("pit", pits)):
+        labels, count = label_components(mask)
+        for lid in range(1, count + 1):
+            ys, xs = np.where(labels == lid)
+            comp = elev[ys, xs]
+            i = int(np.argmax(comp)) if kind == "peak" else int(np.argmin(comp))
+            r, c = int(ys[i]), int(xs[i])
+            out.append({"r": r, "c": c, "kind": kind, "h0": float(elev[r, c]),
+                        "relief": float(relief[r, c])})
+    return out
+
+
+def _smoothstep(edge0: float, edge1: float, x: np.ndarray) -> np.ndarray:
+    t = np.clip((x - edge0) / max(1e-9, (edge1 - edge0)), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _ridged_fbm(V: int, base_cells: int, seed: int, octaves: int = 5,
+                gain: float = 0.5, lacunarity: float = 2.0) -> np.ndarray:
+    """Deterministic ridged multifractal in [0,1] (numpy value-noise octaves,
+    ridged = (1-|n|)^2 so crests form at noise zero-crossings)."""
+    total = np.zeros((V, V), np.float64)
+    amp, freq, norm = 1.0, float(base_cells), 0.0
+    for o in range(octaves):
+        n = _value_noise(V, max(4, int(round(freq))), seed + 101 * o)
+        r = (1.0 - np.abs(n)) ** 2
+        total += amp * r
+        norm += amp
+        amp *= gain
+        freq *= lacunarity
+    return total / norm
+
+
+def mountain_rock_mask(work: np.ndarray, elev: np.ndarray, factor: int,
+                       water_coarse=None, flat_deg: float = 10.0,
+                       steep_deg: float = 35.0, low_frac: float = 0.35,
+                       high_frac: float = 0.65) -> np.ndarray:
+    """Rock-channel weight on the fine grid — same slope+altitude heuristic as
+    control_map_tool.classify_weights (steep OR high -> rock), recomputed inline
+    at fine resolution from the current visual surface. Water (and a feathered
+    band around it) is excluded."""
+    spacing = WORLD_UNITS_PER_VERTEX / factor
+    gy, gx = np.gradient(work)
+    slope_deg = np.degrees(np.arctan(np.hypot(gx, gy) / spacing))
+    lo, hi = float(elev.min()), float(elev.max())
+    elev_norm = np.clip((work - lo) / max(1e-9, hi - lo), 0.0, 1.0)
+    rock = np.maximum(_smoothstep(flat_deg, steep_deg, slope_deg),
+                      _smoothstep(low_frac, high_frac, elev_norm))
+    if water_coarse is not None and water_coarse.any():
+        wf = _fine_mask(_dilate(water_coarse), factor).astype(np.float64)
+        for _ in range(factor):
+            wf = _box3(wf)
+        rock *= np.clip(1.0 - wf, 0.0, 1.0)
+        rock[_fine_mask(water_coarse, factor)] = 0.0
+    return rock
+
+
+def reauth_visual(elev: np.ndarray, factor: int, protect_coarse,
+                  shape_tolerance: float = 0.10, max_drift: float = 24.0,
+                  passes: int = 60, lam: float = 0.5, mu: float = -0.52,
+                  min_prominence: float = 4.0,
+                  mountainify_amp: float = 0.0, seed: int = 1337,
+                  water_coarse=None):
+    """Corner-UNpinned, landform-preserving re-authoring of the visual surface.
+
+    1) Taubin lambda|mu smoothing on the fine grid: a volume-preserving BAND-PASS
+       (per pass-pair transfer f(k) = (1-lambda*k)(1-mu*k)); coarse-cell faceting
+       (high k) is attenuated hard, the landform band (low k) passes ~unchanged.
+       This is the "flatten faceting + soften pyramid edges" half. All coarse
+       vertices are free to move (UNpinned).
+    2) C1 soft drift bound: |out - bilinear| smoothly limited to max_drift via
+       tanh (a hard clip would re-introduce facets at the clip isolines).
+    3) Extrema re-injection (multi-point, neighborhood-aware): each coarse
+       peak/pit may move at most shape_tolerance * local_relief; any excess loss
+       is restored with a smooth Gaussian correction field (sigma ~ 1.25 coarse
+       cells), 2 rounds for overlapping features.
+    4) Feathered structural pin: overlay (roads) + building footprints ride the
+       bilinear baseline; feather width ~1 coarse cell so no crease at the pin
+       boundary.
+
+    MOUNTAINIFY (mountainify_amp > 0): feature-ADDING pass between (2) and (3).
+    Ridged multifractal detail (deterministic from `seed`), amplitude-modulated
+    by the rock-channel mask (steep OR high — control_map_tool classifier logic
+    recomputed inline on the fine grid), zero-centered so ridges add and ravines
+    carve. Flat valleys get ~nothing; steep faces get ridge/spur/talus break-up.
+    Still bounded by max_drift (re-limited) and still subject to the extrema
+    guarantee + structural pin ("same mountain, more mountain-like").
+
+    Returns (work, info) — info carries the shape-fidelity metrics."""
+    base = upsample_corner_pinned(elev, factor)
+    V = base.shape[0]
+    work = base.copy()
+
+    # 1) Taubin band-pass pairs.
+    for _ in range(passes):
+        work += lam * (_box3(work) - work)
+        work += mu * (_box3(work) - work)
+
+    # 2) soft drift bound.
+    if max_drift > 0:
+        dev = work - base
+        work = base + max_drift * np.tanh(dev / max_drift)
+
+    # facet-flattening proof point: crease energy of the SMOOTHED surface,
+    # before any feature-ADDING detail (ridges are legitimate new curvature and
+    # would pollute this metric).
+    crease_smooth = _crease_energy(work)
+
+    # 2b) MOUNTAINIFY: synthesize mountain character where the terrain is
+    #     steep/high, then re-apply the drift bound to the composite.
+    minfo = None
+    if mountainify_amp > 0.0:
+        rock = mountain_rock_mask(work, elev, factor, water_coarse=water_coarse)
+        detail = (_ridged_fbm(V, max(6, V // 16), seed) - 0.5) * 2.0  # [-1,1]
+        add = mountainify_amp * rock * detail
+        work += add
+        if max_drift > 0:
+            dev = work - base
+            work = base + max_drift * np.tanh(dev / max_drift)
+        rock_cells = rock > 0.35
+        minfo = {
+            "seed": seed,
+            "amp_wu": mountainify_amp,
+            "rock_area_frac": float(rock_cells.mean()),
+            "detail_rms_on_rock_wu": (float(np.sqrt((add[rock_cells] ** 2).mean()))
+                                      if rock_cells.any() else 0.0),
+        }
+
+    # 3) extrema re-injection: shrinking-sigma rounds so nearby guard points stop
+    #    fighting (a wide correction for A can push neighbour B out of ITS budget;
+    #    each round narrows the support and re-measures honestly).
+    extrema = detect_coarse_extrema(elev, min_prominence=min_prominence)
+    for sigma in (1.25 * factor, 0.9 * factor, 0.6 * factor, 0.4 * factor):
+        win = max(2, int(3 * sigma))
+        yy, xx = np.mgrid[-win:win + 1, -win:win + 1]
+        kern = np.exp(-(xx * xx + yy * yy) / (2.0 * sigma * sigma))
+        fld = np.zeros_like(work)
+        any_fix = False
+        for e in extrema:
+            fr, fc = e["r"] * factor, e["c"] * factor
+            tol = max(0.5, shape_tolerance * e["relief"]) * 0.75  # keep margin
+            err = e["h0"] - work[fr, fc]
+            excess = err - np.clip(err, -tol, tol)
+            if excess == 0.0:
+                continue
+            any_fix = True
+            r0, r1 = max(0, fr - win), min(V, fr + win + 1)
+            c0, c1 = max(0, fc - win), min(V, fc + win + 1)
+            fld[r0:r1, c0:c1] += excess * kern[r0 - fr + win:r1 - fr + win,
+                                               c0 - fc + win:c1 - fc + win]
+        if not any_fix:
+            break
+        work += fld
+
+    # 4) feathered structural pin.
+    if protect_coarse is not None and protect_coarse.any():
+        pf = _fine_mask(protect_coarse, factor).astype(np.float64)
+        for _ in range(factor):
+            pf = _box3(pf)
+        pf = np.clip(pf, 0.0, 1.0)
+        pf[_fine_mask(protect_coarse, factor)] = 1.0
+        work = pf * base + (1.0 - pf) * work
+
+    # --- honest post-everything metrics (the PASS-gate inputs) ---
+    corners = work[::factor, ::factor]
+    corner_move = np.abs(corners - elev)
+    ev, cv = elev.ravel(), corners.ravel()
+    corr = float(np.corrcoef(ev, cv)[0, 1]) if ev.std() > 1e-9 else 1.0
+    viol = 0
+    worst_frac = 0.0
+    max_move = 0.0
+    for e in extrema:
+        tol = max(0.5, shape_tolerance * e["relief"])
+        mv = abs(float(work[e["r"] * factor, e["c"] * factor]) - e["h0"])
+        max_move = max(max_move, mv)
+        worst_frac = max(worst_frac, mv / max(1e-9, e["relief"]))
+        if mv > tol + 1e-6:
+            viol += 1
+    drift = np.abs(work - base)
+    info = {
+        "mode": "reauth",
+        "shape_tolerance": shape_tolerance,
+        "max_drift_wu": max_drift,
+        "passes": passes,
+        "taubin_lambda": lam,
+        "taubin_mu": mu,
+        "min_prominence_wu": min_prominence,
+        "landform_correlation": corr,
+        "extrema": {"count": len(extrema), "violations": viol,
+                    "worst_move_frac_of_relief": worst_frac,
+                    "max_move_wu": max_move},
+        "corner_move_wu": {"max": float(corner_move.max()),
+                           "mean": float(corner_move.mean())},
+        "facet_crease_energy": {"bilinear_base": _crease_energy(base),
+                                "smoothed": crease_smooth,
+                                "reauth": _crease_energy(work)},
+        "drift_vs_bilinear_wu": {"mean": float(drift.mean()),
+                                 "p99": float(np.percentile(drift, 99)),
+                                 "max": float(drift.max())},
+        "mountainify": minfo,
+    }
+    return work, info
+
+
+def build_object_damp(side: int, foot: np.ndarray, radius_wu: float = 256.0,
+                      core_dilate: int = 1) -> np.ndarray:
+    """Static object-proximity displacement damp map (engine Half-B seed).
+
+    0.0 on/next to building footprints (displacement fully OFF -> units and
+    buildings stand on true gameplay height), smoothstep ramp to 1.0 at
+    radius_wu away. Distance = 4-connected (manhattan) cell distance from the
+    dilated footprint core; numpy-only."""
+    core = foot.copy()
+    for _ in range(core_dilate):
+        core = _dilate(core)
+    radius_cells = max(1, int(np.ceil(radius_wu / WORLD_UNITS_PER_VERTEX)))
+    dist = np.full((side, side), np.float64(radius_cells + 1))
+    dist[core] = 0.0
+    cur = core.copy()
+    for k in range(1, radius_cells + 1):
+        nxt = _dilate(cur)
+        dist[nxt & ~cur] = k
+        cur = nxt
+    t = np.clip(dist / radius_cells, 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)   # smoothstep
+
+
 def nearest_coarse(elev: np.ndarray, factor: int) -> np.ndarray:
     """The blocky reference: each visual cell = its containing coarse value."""
     N = elev.shape[0]
@@ -148,7 +442,11 @@ def _pyramid_top_score(elev, water_mask, land_mask):
 
 def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
          reshape: bool = False, corner_clamp: float = 0.0,
-         max_delta: float = 40.0, passes: int = 24) -> dict:
+         max_delta: float = 40.0, passes: int = 24,
+         reauth: bool = False, shape_tolerance: float = 0.10,
+         max_drift: float = 24.0, reauth_passes: int = 60,
+         objfade_radius_wu: float = 256.0,
+         mountainify_amp: float = 0.0, seed: int = 1337) -> dict:
     pak = missions_dir / f"{mission}.pak"
     if not pak.is_file():
         return {"mission": mission, "error": f"not found: {pak}"}
@@ -164,7 +462,29 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
     V = visual.shape[0]
 
     reshape_info = None
-    if reshape:
+    reauth_info = None
+    damp = None
+    if reauth:
+        # TERRAIN-REAUTH-UNPIN-1: corner-UNpinned landform-preserving re-auth.
+        foot, _o, _ = read_object_footprints(read_packets(pak), side)
+        protect = _dilate(layers["overlay"] | foot)
+        visual, reauth_info = reauth_visual(
+            elev, factor, protect, shape_tolerance=shape_tolerance,
+            max_drift=max_drift, passes=reauth_passes,
+            mountainify_amp=mountainify_amp, seed=seed,
+            water_coarse=layers["water"])
+        # pyramid score before/after on the coarse-sampled landform (same metric
+        # the reshape path reports; reauth should LOWER it a bit -- rounded facets
+        # weaken the radial-monotonic pyramid signature -- while corr stays high).
+        masks = derive_masks(elev, layers["water"], layers["overlay"])
+        reauth_info["pyramid_top_score_before"] = _pyramid_top_score(
+            elev, layers["water"], masks["land"])
+        reauth_info["pyramid_top_score_after"] = _pyramid_top_score(
+            visual[::factor, ::factor][:side, :side], layers["water"], masks["land"])
+        # Half-B companion: static object-proximity damp (buildings).
+        reauth_info["objfade_radius_wu"] = objfade_radius_wu
+        damp = build_object_damp(side, foot, radius_wu=objfade_radius_wu)
+    elif reshape:
         masks = derive_masks(elev, layers["water"], layers["overlay"])
         _pyr, pyr_mask = detect_pyramid_islands(elev, masks["land"], layers["water"])
         foot, _o, _ = read_object_footprints(read_packets(pak), side)
@@ -188,7 +508,7 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
         }
 
     # Corner-pin proof: visual[i*factor, j*factor] vs elev (== for bilinear; <=
-    # corner_clamp for reshape).
+    # corner_clamp for reshape; UNpinned but drift-bounded for reauth).
     corners = visual[::factor, ::factor]
     max_corner_err = float(np.abs(corners - elev).max())
 
@@ -199,7 +519,21 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
     visual.astype("<f4").tofile(beauty / f"visual_height_{factor}x.r32")
     _save_gray(visual, beauty / "visual_height_preview.png")
     _save_gray(np.abs(delta), beauty / "visual_delta_heatmap.png")
+    if damp is not None:
+        damp.astype("<f4").tofile(beauty / "visual_damp.r32")
+        _save_gray(damp, beauty / "visual_damp_preview.png")
 
+    if reauth:
+        note = ("REAUTH (TERRAIN-REAUTH-UNPIN-1): corner-UNpinned Taubin band-pass "
+                "smoothing; landform kept (extrema within shape_tolerance of local "
+                "relief, drift tanh-bounded); overlay/footprints feather-pinned; "
+                "visual_damp.r32 = static object displacement fade; render-only.")
+    elif reshape:
+        note = ("reshaped (de-pyramid) visual height; coarse corners clamped to "
+                "corner_clamp; protected pinned; render-only.")
+    else:
+        note = ("boring bilinear bake; corners exact; render-only "
+                "(gameplay heightfield untouched).")
     report = {
         "mission": mission,
         "coarse_side": int(side),
@@ -207,17 +541,16 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
         "visual_side": int(V),
         "world_units_per_vertex_coarse": WORLD_UNITS_PER_VERTEX,
         "world_units_per_vertex_visual": WORLD_UNITS_PER_VERTEX / factor,
-        "corner_pinned": not reshape,
-        "max_corner_error_wu": max_corner_err,    # 0 for bilinear; <=corner_clamp for reshape
+        "corner_pinned": not (reshape or reauth),
+        "max_corner_error_wu": max_corner_err,    # 0 bilinear; <=corner_clamp reshape; <=~max_drift reauth
         "reshape": reshape_info,
+        "reauth": reauth_info,
         "elevation_wu": {"min": float(elev.min()), "max": float(elev.max())},
         "visual_delta_wu": {"max_abs": float(np.abs(delta).max()),
                             "mean_abs": float(np.abs(delta).mean())},
         "visual_height_file": f"visual_height_{factor}x.r32",
-        "note": ("reshaped (de-pyramid) visual height; coarse corners clamped to "
-                 "corner_clamp; protected pinned; render-only.") if reshape else
-                ("boring bilinear bake; corners exact; render-only "
-                 "(gameplay heightfield untouched)."),
+        "visual_damp_file": ("visual_damp.r32" if damp is not None else None),
+        "note": note,
     }
     (beauty / "visual_height_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
@@ -233,25 +566,75 @@ def main() -> int:
     ap.add_argument("--corner-clamp", type=float, default=0.0, help="max coarse-vertex move (wu)")
     ap.add_argument("--max-delta", type=float, default=40.0, help="max visual deviation (wu)")
     ap.add_argument("--passes", type=int, default=24)
+    # TERRAIN-REAUTH-UNPIN-1 knobs (own the mode; --corner-clamp is the seed only)
+    ap.add_argument("--reauth", action="store_true",
+                    help="corner-UNpinned landform-preserving re-auth (Taubin band-pass)")
+    ap.add_argument("--shape-tolerance", type=float, default=0.10,
+                    help="max extremum move as fraction of local relief")
+    ap.add_argument("--max-drift", type=float, default=24.0,
+                    help="soft bound on |visual - bilinear| (wu, tanh limiter)")
+    ap.add_argument("--reauth-passes", type=int, default=150, help="Taubin pass pairs")
+    ap.add_argument("--objfade-radius-wu", type=float, default=256.0,
+                    help="static object damp fade radius (visual_damp.r32)")
+    ap.add_argument("--mountainify", action="store_true",
+                    help="feature-ADDING ridged detail on rock-channel regions "
+                         "(implies --reauth)")
+    ap.add_argument("--mountainify-amp", type=float, default=14.0,
+                    help="mountainify detail amplitude (wu) at full rock weight")
+    ap.add_argument("--seed", type=int, default=1337, help="mountainify noise seed")
     args = ap.parse_args()
+    if args.mountainify:
+        args.reauth = True
+    if args.reauth and args.reshape:
+        print("[visual-bake] --reauth and --reshape are mutually exclusive", file=sys.stderr)
+        return 2
     missions_dir = Path(args.missions_dir)
     out_root = Path(args.out)
     rc = 0
     for m in args.missions:
         rep = bake(m, missions_dir, out_root, args.factor, args.reshape,
-                   args.corner_clamp, args.max_delta, args.passes)
+                   args.corner_clamp, args.max_delta, args.passes,
+                   reauth=args.reauth, shape_tolerance=args.shape_tolerance,
+                   max_drift=args.max_drift, reauth_passes=args.reauth_passes,
+                   objfade_radius_wu=args.objfade_radius_wu,
+                   mountainify_amp=(args.mountainify_amp if args.mountainify else 0.0),
+                   seed=args.seed)
         if rep.get("error"):
             print(f"[visual-bake] {m}: ERROR {rep['error']}", file=sys.stderr); rc = 1; continue
-        cap = (0.0 if not args.reshape else args.corner_clamp) + 1e-4
-        ok = rep["max_corner_error_wu"] <= cap
         extra = ""
-        if rep.get("reshape"):
-            ri = rep["reshape"]
-            extra = (f" pyr_score {ri['pyramid_top_score_before']:.2f}->{ri['pyramid_top_score_after']:.2f}"
-                     f" corner_move<={ri['max_corner_move_wu']:.1f}wu")
+        if rep.get("reauth"):
+            ra = rep["reauth"]
+            # reauth PASS = landform kept (corr + extrema) AND corners actually
+            # unpinned AND drift inside the soft bound (+tanh slack).
+            # corner cap: extrema re-injection may locally exceed the tanh soft
+            # bound while restoring a peak (that is the guarantee WORKING) ->
+            # allow 25% headroom over max_drift; p99 drift stays well inside.
+            ok = (ra["extrema"]["violations"] == 0
+                  and ra["landform_correlation"] >= 0.99
+                  and rep["max_corner_error_wu"] <= args.max_drift * 1.25
+                  and rep["max_corner_error_wu"] > 0.05)
+            ce = ra["facet_crease_energy"]
+            extra = (f" corr={ra['landform_correlation']:.4f}"
+                     f" extrema_viol={ra['extrema']['violations']}/{ra['extrema']['count']}"
+                     f" crease {ce['bilinear_base']:.2f}->{ce['smoothed']:.2f}"
+                     f" drift mean={ra['drift_vs_bilinear_wu']['mean']:.2f}"
+                     f"/p99={ra['drift_vs_bilinear_wu']['p99']:.1f}wu"
+                     f" pyr {ra['pyramid_top_score_before']:.2f}->{ra['pyramid_top_score_after']:.2f}")
+            if ra.get("mountainify"):
+                mi = ra["mountainify"]
+                extra += (f" mtn[seed={mi['seed']} rock={100*mi['rock_area_frac']:.0f}%"
+                          f" detail_rms={mi['detail_rms_on_rock_wu']:.1f}wu]")
+        else:
+            cap = (0.0 if not args.reshape else args.corner_clamp) + 1e-4
+            ok = rep["max_corner_error_wu"] <= cap
+            if rep.get("reshape"):
+                ri = rep["reshape"]
+                extra = (f" pyr_score {ri['pyramid_top_score_before']:.2f}->{ri['pyramid_top_score_after']:.2f}"
+                         f" corner_move<={ri['max_corner_move_wu']:.1f}wu")
         print(f"[visual-bake] {m}: coarse={rep['coarse_side']} -> visual={rep['visual_side']} "
               f"(x{rep['factor']}) corner_err={rep['max_corner_error_wu']:.3g} "
-              f"{'PASS' if ok else 'FAIL'}  delta_max={rep['visual_delta_wu']['max_abs']:.2f}wu{extra} "
+              f"{'PASS' if ok else 'FAIL'}  delta_max={rep['visual_delta_wu']['max_abs']:.2f}wu "
+              f"delta_mean={rep['visual_delta_wu']['mean_abs']:.2f}wu{extra} "
               f"-> {out_root / (m + '.beauty')}")
         if not ok:
             rc = 1

@@ -279,6 +279,8 @@ ALLOWLIST=(
     MC2_TERRAIN_SHORELINE_FOAM_HEIGHT # override -- legacy alias for _FOAM_RUN (now horizontal-run units)
     MC2_TERRAIN_VISUAL_DISPLACE # feature -- TERRAIN-VISUAL-HEIGHT displacement from 4x bake (default OFF)
     MC2_TERRAIN_VISUAL_DISPLACE_FAR  # override -- far-band displacement scale knob
+    MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE  # feature -- TERRAIN-REAUTH-UNPIN-1 near-object displacement fade (default ON when displacing; 0 disables)
+    MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE_RADIUS  # override -- objfade mover fade radius in wu (default 256)
     MC2_TERRAIN_MASK_DISPATCH   # feature -- promote-to-registry
     MC2_TERRAIN_MASK_DISPATCH_SOLID  # feature -- promote-to-registry
     MC2_TERRAIN_MASK_DISPATCH_TRACE  # trace

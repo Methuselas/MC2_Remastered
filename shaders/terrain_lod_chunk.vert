@@ -36,9 +36,17 @@ layout(binding = 24, std430) readonly buffer TerrainTypeBuf {
 layout(binding = 26, std430) readonly buffer TerrainVisualHeightBuf {
     float heightsFine[];
 };
-uniform int u_visualDisplace;  // 0=off (byte-identical); 1=LOD0 corner-pinned 4x-fine displace;
+// TERRAIN-REAUTH-UNPIN-1 Half B: coarse-grid object-proximity displacement damp
+// (binding 27). 0 = displacement fully OFF (on/near buildings + movers -> units
+// stand on true gameplay height), 1 = full bake displacement. Read ONLY when
+// u_visualDampOn != 0 (buffer bound iff active).
+layout(binding = 27, std430) readonly buffer TerrainVisualDampBuf {
+    float damp01[];
+};
+uniform int u_visualDisplace;  // 0=off (byte-identical); 1=LOD0 4x-fine displace;
                                 // 2=coarser-band displace at EXISTING (unsubdivided) vertex density
 uniform int u_visualSide;      // V = (mapSide-1)*4+1
+uniform int u_visualDampOn;    // 1 = near-object displacement fade active (binding 27 bound)
 // TERRAIN-VISUAL-HEIGHT-S2-ALLLOD: far-band fade knob. 1.0 = full bake displacement
 // (default); 0.0 = coarse heightfield only (mode-2 verts fall back to `h`, matching
 // the byte-identical coarse path's Z). Only affects u_visualDisplace==2 verts.
@@ -52,15 +60,45 @@ float sampleH(int mx, int my) {
     return heights[mx + my * u_mapSide];
 }
 
+float sampleHFine(int cx, int cy) {   // bake height AT a coarse grid point
+    return heightsFine[clamp(cx * 4, 0, u_visualSide - 1)
+                       + clamp(cy * 4, 0, u_visualSide - 1) * u_visualSide];
+}
+
+float dampAt(int cx, int cy) {        // exact coarse-cell damp read
+    cx = clamp(cx, 0, u_mapSide - 1);
+    cy = clamp(cy, 0, u_mapSide - 1);
+    return damp01[cx + cy * u_mapSide];
+}
+
+float dampBilinearF(int fx, int fy) { // damp at a FINE grid point (bilinear)
+    int cx = fx >> 2, cy = fy >> 2;
+    float tx = float(fx & 3) * 0.25;
+    float ty = float(fy & 3) * 0.25;
+    return mix(mix(dampAt(cx, cy),     dampAt(cx + 1, cy),     tx),
+               mix(dampAt(cx, cy + 1), dampAt(cx + 1, cy + 1), tx), ty);
+}
+
 void main() {
-    // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: corner-pinned interior subdivision. When on,
-    // this patch is a 4x-finer grid: localOffset is in FINE (1/4-coarse) units.
-    // INTERIOR verts take the 4x visual height (binding 26). CHUNK-EDGE verts (and
-    // skirts) stay on the COARSE line — coarse-interpolated between coarse verts at
-    // the neighbour's stitch stride (else stride 1) — so stitch / skirt / LOD seams
-    // are pixel-identical to the coarse path and no cracks form. Default OFF ->
-    // falls through to the original coarse path below (byte-identical).
-    if (u_visualDisplace != 0) {
+    // TERRAIN-VISUAL-HEIGHT-SAMPLE-1 + TERRAIN-REAUTH-UNPIN-1: when on, this
+    // patch is a 4x-finer grid: localOffset is in FINE (1/4-coarse) units.
+    // The bake is no longer corner-pinned ("UN PIN THE CORNERS"), so chunk-edge
+    // verts pin onto the BAKE line instead of the coarse heightfield line:
+    //   - same-band edge (no coarser neighbour): both sides evaluate identical
+    //     math at identical (fx,fy) -> full bake fidelity, crack-free.
+    //   - stitched edge (coarser neighbour): interpolate DAMPED ENDPOINT heights
+    //     linearly. The coarse (mode-2) side's edge is linear in final Z between
+    //     the same endpoints (mix(coarse,bake,far*damp) per endpoint vertex), so
+    //     endpoint mixing matches it exactly; any per-vert nonlinear damp mixing
+    //     would crack at band seams.
+    // Near-object fade (Half B): damp 0..1 (binding 27) mixes each vert between
+    // the coarse (gameplay) surface and the bake surface; damp==0 within object
+    // footprints -> units/buildings stand on true gameplay height.
+    // Default OFF -> falls through to the original coarse path (byte-identical).
+    // NOTE: this branch is mode 1 (LOD0 fine patches) ONLY. It previously tested
+    // `!= 0`, which swallowed mode-2 chunks (coarse-stride localOffsets indexed
+    // as fine) and made the S2-ALLLOD block below dead code.
+    if (u_visualDisplace == 1) {
         int qx4 = u_quadCountX * 4;
         int qy4 = u_quadCountY * 4;
         int lx  = localOffset.x;
@@ -75,23 +113,69 @@ void main() {
             else if (ly == qy4) { coarseAlong = float(lx) * 0.25; alongX = true;  Sc = (u_edgeStitch >> 8)  & 0xFF; }
             else if (lx == 0)   { coarseAlong = float(ly) * 0.25; alongX = false; Sc = (u_edgeStitch >> 16) & 0xFF; }
             else                { coarseAlong = float(ly) * 0.25; alongX = false; Sc = (u_edgeStitch >> 24) & 0xFF; }
-            if (Sc < 1) Sc = 1;
-            float c0 = floor(coarseAlong / float(Sc)) * float(Sc);
-            float c1 = c0 + float(Sc);
-            float tt = (coarseAlong - c0) / float(Sc);
-            float h0, h1;
-            if (alongX) {
-                int fyC = u_blockOriginY + (ly == 0 ? 0 : u_quadCountY);
-                h0 = sampleH(u_blockOriginX + int(c0), fyC);
-                h1 = sampleH(u_blockOriginX + int(c1), fyC);
+            if (Sc <= 1) {
+                // Same-band neighbour (or none): edge vert IS a bake grid point.
+                float hb = heightsFine[fx + fy * u_visualSide];
+                if (u_visualDampOn != 0) {
+                    // coarse line along the edge (stride-1 mix == coarse
+                    // bilinear on the gridline) as the damp target.
+                    float c0 = floor(coarseAlong);
+                    float tt = coarseAlong - c0;
+                    float h0, h1;
+                    if (alongX) {
+                        int fyC = u_blockOriginY + (ly == 0 ? 0 : u_quadCountY);
+                        h0 = sampleH(u_blockOriginX + int(c0),     fyC);
+                        h1 = sampleH(u_blockOriginX + int(c0) + 1, fyC);
+                    } else {
+                        int fxC = u_blockOriginX + (lx == 0 ? 0 : u_quadCountX);
+                        h0 = sampleH(fxC, u_blockOriginY + int(c0));
+                        h1 = sampleH(fxC, u_blockOriginY + int(c0) + 1);
+                    }
+                    hh = mix(mix(h0, h1, tt), hb, dampBilinearF(fx, fy));
+                } else {
+                    hh = hb;
+                }
             } else {
-                int fxC = u_blockOriginX + (lx == 0 ? 0 : u_quadCountX);
-                h0 = sampleH(fxC, u_blockOriginY + int(c0));
-                h1 = sampleH(fxC, u_blockOriginY + int(c1));
+                // Stitched against a coarser (mode-2) neighbour: damped-endpoint
+                // linear mix; far multiplies in so the seam matches the mode-2
+                // side even when u_visualDisplaceFar < 1.
+                float c0 = floor(coarseAlong / float(Sc)) * float(Sc);
+                float c1 = c0 + float(Sc);
+                float tt = (coarseAlong - c0) / float(Sc);
+                float h0, h1, f0, f1, d0, d1;
+                float kFar = clamp(u_visualDisplaceFar, 0.0, 1.0);
+                if (alongX) {
+                    int fyC = u_blockOriginY + (ly == 0 ? 0 : u_quadCountY);
+                    int cA  = u_blockOriginX + int(c0);
+                    int cB  = u_blockOriginX + int(c1);
+                    h0 = sampleH(cA, fyC);      h1 = sampleH(cB, fyC);
+                    f0 = sampleHFine(cA, fyC);  f1 = sampleHFine(cB, fyC);
+                    d0 = (u_visualDampOn != 0) ? dampAt(cA, fyC) : 1.0;
+                    d1 = (u_visualDampOn != 0) ? dampAt(cB, fyC) : 1.0;
+                } else {
+                    int fxC = u_blockOriginX + (lx == 0 ? 0 : u_quadCountX);
+                    int cA  = u_blockOriginY + int(c0);
+                    int cB  = u_blockOriginY + int(c1);
+                    h0 = sampleH(fxC, cA);      h1 = sampleH(fxC, cB);
+                    f0 = sampleHFine(fxC, cA);  f1 = sampleHFine(fxC, cB);
+                    d0 = (u_visualDampOn != 0) ? dampAt(fxC, cA) : 1.0;
+                    d1 = (u_visualDampOn != 0) ? dampAt(fxC, cB) : 1.0;
+                }
+                hh = mix(mix(h0, f0, kFar * d0), mix(h1, f1, kFar * d1), tt);
             }
-            hh = mix(h0, h1, tt);
         } else {
-            hh = heightsFine[fx + fy * u_visualSide];
+            float hb = heightsFine[fx + fy * u_visualSide];
+            if (u_visualDampOn != 0) {
+                // coarse bilinear surface as the damp target.
+                int cx = fx >> 2, cy = fy >> 2;
+                float tx = float(fx & 3) * 0.25;
+                float ty = float(fy & 3) * 0.25;
+                float hc = mix(mix(sampleH(cx, cy),     sampleH(cx + 1, cy),     tx),
+                               mix(sampleH(cx, cy + 1), sampleH(cx + 1, cy + 1), tx), ty);
+                hh = mix(hc, hb, dampBilinearF(fx, fy));
+            } else {
+                hh = hb;
+            }
         }
         hh -= float(isSkirtFlag) * u_skirtDepth;
         float wX = float(fx) * 32.0 - u_halfMap;
@@ -154,11 +238,14 @@ void main() {
     // so shared edges with ANY neighbour band (LOD0 fine-corner-pinned or another
     // coarse band) still agree by construction -- zero new crack risk introduced.
     if (u_visualDisplace == 2 && isSkirtFlag == 0) {
-        float hv;
-        int fxV, fyV;
+        float kFar2 = clamp(u_visualDisplaceFar, 0.0, 1.0);
         // Re-derive the same edge-stitch decision to pick between a single bake
         // sample (interior / non-stitched) and a bake-based mix (stitched edge),
         // mirroring the coarse block above exactly but reading heightsFine.
+        // TERRAIN-REAUTH-UNPIN-1 Half B: near-object damp multiplies into the
+        // displacement factor; stitched edges mix DAMPED ENDPOINTS linearly
+        // (same contract as the mode-1 stitched edge above) so band seams stay
+        // crack-free with a spatially-varying damp field.
         int  Sc2 = 0, along2 = 0; bool alongX2 = true;
         if      (localOffset.y == 0            && ((u_edgeStitch)       & 0xFF) > 0) { Sc2 = (u_edgeStitch)       & 0xFF; along2 = localOffset.x; alongX2 = true;  }
         else if (localOffset.y == u_quadCountY && ((u_edgeStitch >> 8)  & 0xFF) > 0) { Sc2 = (u_edgeStitch >> 8)  & 0xFF; along2 = localOffset.x; alongX2 = true;  }
@@ -168,29 +255,30 @@ void main() {
             int c0 = (along2 / Sc2) * Sc2;
             int c1 = c0 + Sc2;
             float t2 = float(along2 - c0) / float(Sc2);
-            float hv0, hv1;
+            float hC0, hC1, hv0, hv1, d0, d1;
             if (alongX2) {
                 int fyC = u_blockOriginY + localOffset.y;
-                fxV = clamp((u_blockOriginX + c0) * 4, 0, u_visualSide - 1);
-                int fyVc = clamp(fyC * 4, 0, u_visualSide - 1);
-                hv0 = heightsFine[fxV + fyVc * u_visualSide];
-                int fxV1 = clamp((u_blockOriginX + c1) * 4, 0, u_visualSide - 1);
-                hv1 = heightsFine[fxV1 + fyVc * u_visualSide];
+                int cA  = u_blockOriginX + c0;
+                int cB  = u_blockOriginX + c1;
+                hC0 = sampleH(cA, fyC);      hC1 = sampleH(cB, fyC);
+                hv0 = sampleHFine(cA, fyC);  hv1 = sampleHFine(cB, fyC);
+                d0 = (u_visualDampOn != 0) ? dampAt(cA, fyC) : 1.0;
+                d1 = (u_visualDampOn != 0) ? dampAt(cB, fyC) : 1.0;
             } else {
                 int fxC = u_blockOriginX + localOffset.x;
-                int fxVc = clamp(fxC * 4, 0, u_visualSide - 1);
-                int fyV0 = clamp((u_blockOriginY + c0) * 4, 0, u_visualSide - 1);
-                hv0 = heightsFine[fxVc + fyV0 * u_visualSide];
-                int fyV1 = clamp((u_blockOriginY + c1) * 4, 0, u_visualSide - 1);
-                hv1 = heightsFine[fxVc + fyV1 * u_visualSide];
+                int cA  = u_blockOriginY + c0;
+                int cB  = u_blockOriginY + c1;
+                hC0 = sampleH(fxC, cA);      hC1 = sampleH(fxC, cB);
+                hv0 = sampleHFine(fxC, cA);  hv1 = sampleHFine(fxC, cB);
+                d0 = (u_visualDampOn != 0) ? dampAt(fxC, cA) : 1.0;
+                d1 = (u_visualDampOn != 0) ? dampAt(fxC, cB) : 1.0;
             }
-            hv = mix(hv0, hv1, t2);
+            h = mix(mix(hC0, hv0, kFar2 * d0), mix(hC1, hv1, kFar2 * d1), t2);
         } else {
-            fxV = clamp(mapX * 4, 0, u_visualSide - 1);
-            fyV = clamp(mapY * 4, 0, u_visualSide - 1);
-            hv = heightsFine[fxV + fyV * u_visualSide];
+            float hv = sampleHFine(mapX, mapY);
+            float d  = (u_visualDampOn != 0) ? dampAt(mapX, mapY) : 1.0;
+            h = mix(h, hv, kFar2 * d);
         }
-        h = mix(h, hv, clamp(u_visualDisplaceFar, 0.0, 1.0));
     }
 
     // Phase 6: skirt bottom verts are pulled below the (possibly stitched) surface.

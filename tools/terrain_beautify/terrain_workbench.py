@@ -41,6 +41,9 @@ from mission_terrain_analyzer import (  # noqa: E402
     detect_pyramid_islands, read_object_footprints, read_water_elevation,
     _dilate, WORLD_UNITS_PER_VERTEX, CLIFF_SLOPE_DEG,
 )
+from visual_heightfield import (  # noqa: E402  TERRAIN-REAUTH-UNPIN-1 gates
+    upsample_corner_pinned, detect_coarse_extrema, mountain_rock_mask, _box3,
+)
 
 PANEL = 220   # panel pixel size
 
@@ -185,11 +188,76 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
             visual = np.fromfile(vf, "<f4").reshape(V, V).astype(np.float64)
             cs = coarse_from_visual(visual, side, factor)
             cerr = float(np.abs(cs - elev).max())
-            # Reshaped bakes intentionally move corners up to corner_clamp; bilinear
-            # bakes must be exact. Read the bound from the report.
-            clamp = (vmeta.get("reshape") or {}).get("corner_clamp_wu", 0.0)
-            chk("corner_pin", "PASS" if cerr <= clamp + 1e-4 else "FAIL",
-                f"max corner move = {cerr:.3g}wu (clamp {clamp:.1f})")
+            reauth = vmeta.get("reauth")
+            if reauth:
+                # TERRAIN-REAUTH-UNPIN-1: corners are intentionally UNpinned;
+                # the guarantee flips to landform fidelity. All gates below are
+                # RECOMPUTED from the .r32 (report values not trusted).
+                md = float(reauth.get("max_drift_wu", 24.0))
+                chk("corner_unpinned",
+                    "PASS" if (0.05 < cerr <= md * 1.25) else "FAIL",
+                    f"max corner move = {cerr:.2f}wu (want >0.05 and <= {md * 1.25:.1f} "
+                    f"= 1.25*max_drift)")
+                corr = float(np.corrcoef(elev.ravel(), cs.ravel())[0, 1])
+                chk("shape_fidelity_corr", "PASS" if corr >= 0.99 else "FAIL",
+                    f"coarse landform correlation before/after = {corr:.4f} (want >= 0.99)")
+                tol_frac = float(reauth.get("shape_tolerance", 0.10))
+                extrema = detect_coarse_extrema(elev)
+                viol, worst = 0, 0.0
+                for e in extrema:
+                    tol = max(0.5, tol_frac * e["relief"])
+                    mv = abs(float(visual[e["r"] * factor, e["c"] * factor]) - e["h0"])
+                    worst = max(worst, mv / max(1e-9, e["relief"]))
+                    if mv > tol + 1e-6:
+                        viol += 1
+                chk("extrema_preserved", "PASS" if viol == 0 else "FAIL",
+                    f"{viol}/{len(extrema)} peaks/pits moved past "
+                    f"{100 * tol_frac:.0f}% of local relief (worst {100 * worst:.1f}%)")
+                # facet-flattening proof (pyramid edges become curves): the
+                # SMOOTH-stage crease energy from the bake report must beat the
+                # bilinear baseline (final surface may legitimately add ridge
+                # curvature under --mountainify).
+                ce = reauth.get("facet_crease_energy") or {}
+                cb, csm = ce.get("bilinear_base"), ce.get("smoothed")
+                if cb is not None and csm is not None:
+                    chk("facet_crease_reduced", "PASS" if csm < cb * 0.85 else "WARN",
+                        f"smooth-stage crease energy {csm:.2f} vs bilinear {cb:.2f} "
+                        f"({100 * (1 - csm / (cb + 1e-9)):.0f}% lower, want >=15%)")
+                if reauth.get("mountainify"):
+                    # feature-ADDING proof: recompute the smooth-only surface
+                    # with the SAME (deterministic) pipeline parameters and
+                    # measure the detail actually added on the rock channel.
+                    # (A bilinear high-freq comparison is invalid: coarse-cell
+                    # creases are themselves high-frequency, so the smoothing
+                    # removes about as much energy as the ridges add.)
+                    from visual_heightfield import reauth_visual
+                    plain, _ = reauth_visual(
+                        elev, factor, protect_struct,
+                        shape_tolerance=tol_frac,
+                        max_drift=float(reauth.get("max_drift_wu", 24.0)),
+                        passes=int(reauth.get("passes", 150)),
+                        water_coarse=layers["water"])
+                    rockw = mountain_rock_mask(plain, elev, factor,
+                                               water_coarse=layers["water"])
+                    rock = rockw > 0.35
+                    calm = rockw < 0.05
+                    if rock.any():
+                        d = visual - plain
+                        rms_rock = float(np.sqrt((d[rock] ** 2).mean()))
+                        rms_calm = (float(np.sqrt((d[calm] ** 2).mean()))
+                                    if calm.any() else 0.0)
+                        ok = rms_rock >= 0.8 and rms_rock >= 2.0 * max(0.05, rms_calm)
+                        chk("mountain_detail_present", "PASS" if ok else "FAIL",
+                            f"added detail RMS on rock {rms_rock:.2f}wu "
+                            f"(calm {rms_calm:.2f}wu; want >=0.8wu and >=2x calm)")
+                    else:
+                        chk("mountain_detail_present", "WARN", "no rock-channel cells found")
+            else:
+                # Reshaped bakes intentionally move corners up to corner_clamp;
+                # bilinear bakes must be exact. Read the bound from the report.
+                clamp = (vmeta.get("reshape") or {}).get("corner_clamp_wu", 0.0)
+                chk("corner_pin", "PASS" if cerr <= clamp + 1e-4 else "FAIL",
+                    f"max corner move = {cerr:.3g}wu (clamp {clamp:.1f})")
             # blockiness: compare visual (sampled at coarse) vs original — should be == (bilinear
             # preserves coarse), and visual-fine should be smoother than nearest-up.
             b_near = blockiness(nearest_up(elev, factor))
@@ -219,31 +287,42 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
     sheet = compose_grid(panels, cols=4)
 
     # --- cross-section profiles: worst pyramid H/V + largest cliff ---
+    # For reauth bakes the bilinear baseline is drawn too: "pyramid edges become
+    # curves while summit height preserved" must be visible against the
+    # straight-line (corner-pinned) baseline.
     prof_imgs = []
     PW, PH = 360, 200
+    base_fine = None
+    if visual is not None and vmeta.get("reauth"):   # vmeta defined whenever visual is
+        base_fine = upsample_corner_pinned(elev, factor)
+
+    def _vis_series(row=None, col=None):
+        ser = []
+        if visual is None:
+            return ser
+        for name, arr, colr in (("bilinear", base_fine, (110, 110, 120)),
+                                ("visual(fine)", visual, (255, 150, 80))):
+            if arr is None:
+                continue
+            v = arr[row * factor, :] if row is not None else arr[:, col * factor]
+            ser.append((name, np.interp(np.linspace(0, len(v) - 1, side),
+                                        np.arange(len(v)), v), colr))
+        return ser
+
     if pyramids:
         py = pyramids[0]["peak_rc"]
         r0, c0 = py
         xs = np.arange(side)
-        ser = [("orig", elev[r0, :], (120, 200, 255))]
-        if visual is not None:
-            vrow = visual[r0 * factor, :][::1]   # full-res row at the pinned coarse row
-            ser.append(("visual(fine)", np.interp(np.linspace(0, len(vrow) - 1, side), np.arange(len(vrow)), vrow), (255, 150, 80)))
+        ser = [("orig", elev[r0, :], (120, 200, 255))] + _vis_series(row=r0)
         prof_imgs.append(profile_plot(PW, PH, f"pyramid#1 H-slice row={r0}", xs, ser))
-        ser = [("orig", elev[:, c0], (120, 200, 255))]
-        if visual is not None:
-            vcol = visual[:, c0 * factor]
-            ser.append(("visual(fine)", np.interp(np.linspace(0, len(vcol) - 1, side), np.arange(len(vcol)), vcol), (255, 150, 80)))
+        ser = [("orig", elev[:, c0], (120, 200, 255))] + _vis_series(col=c0)
         prof_imgs.append(profile_plot(PW, PH, f"pyramid#1 V-slice col={c0}", np.arange(side), ser))
-    # largest cliff candidate row
-    cliffrows = np.where((masks["slope_deg"] > CLIFF_SLOPE_DEG).any(axis=1))[0]
-    if len(cliffrows):
-        rc = int(cliffrows[len(cliffrows) // 2])
-        ser = [("orig", elev[rc, :], (120, 200, 255))]
-        if visual is not None:
-            vrow = visual[rc * factor, :]
-            ser.append(("visual(fine)", np.interp(np.linspace(0, len(vrow) - 1, side), np.arange(len(vrow)), vrow), (255, 150, 80)))
-        prof_imgs.append(profile_plot(PW, PH, f"cliff slice row={rc}", np.arange(side), ser))
+    # steepest face row (max cliff-cell count = the most mountainous slice)
+    cliffmask = (masks["slope_deg"] > CLIFF_SLOPE_DEG)
+    if cliffmask.any():
+        rc = int(np.argmax(cliffmask.sum(axis=1)))
+        ser = [("orig", elev[rc, :], (120, 200, 255))] + _vis_series(row=rc)
+        prof_imgs.append(profile_plot(PW, PH, f"steepest-face slice row={rc}", np.arange(side), ser))
     profiles = compose_grid([p.resize((PANEL * 2, PANEL)) for p in prof_imgs], cols=2) if prof_imgs else None
 
     out = out_root / mission
