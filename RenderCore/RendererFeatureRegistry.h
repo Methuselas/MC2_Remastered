@@ -983,6 +983,81 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "SLICE 3 knob: max tessellation factor (float; C++ default 4.0, clamped to GL_MAX_TESS_GEN_LEVEL at program build). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
     },
+    // SLICE 3b: cliff DIRECTIONAL-FLUTING displacement tuning knobs. All floats,
+    // resolved once at first use, uploaded to the tess program in the once/frame
+    // mirror block. Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1 (default OFF
+    // -> tess program never built -> knobs never read -> byte-identical). Tunable
+    // without rebuild so the columnar-rock look can be dialled by eye.
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_AMP",
+        "MC2_TERRAIN_CLIFF_AMP",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3b knob: max outward cliff displacement in world units along the geometric face normal (C++ default 8.0). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_FLUTE_FREQ",
+        "MC2_TERRAIN_CLIFF_FLUTE_FREQ",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3b knob: columnar groove frequency (grooves per world unit across the face; C++ default 0.03). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_FLUTE_SHARP",
+        "MC2_TERRAIN_CLIFF_FLUTE_SHARP",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3b knob: groove contrast/sharpness exponent 1..4 (C++ default 2.0). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_DETAIL",
+        "MC2_TERRAIN_CLIFF_DETAIL",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3b knob: fbm detail amplitude fraction [0,1] mixed into the fluting (C++ default 0.4). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_SLOPE_LO",
+        "MC2_TERRAIN_CLIFF_SLOPE_LO",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3b knob: slope mask LOW abs(N.z) (displacement 0 at/below this; C++ default 0.55). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_SLOPE_HI",
+        "MC2_TERRAIN_CLIFF_SLOPE_HI",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3b knob: slope mask HIGH abs(N.z) (displacement full at/above steepness where abs(N.z)<=this; C++ default 0.85). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_CREST_FADE",
+        "MC2_TERRAIN_CLIFF_CREST_FADE",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3b knob: crest-lock fade band in world units (keeps the plateau top edge crisp; C++ default 12.0). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_DIST_NEAR",
+        "MC2_TERRAIN_CLIFF_DIST_NEAR",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3b knob: camera-distance fade band NEAR in world units (full displacement below; C++ default 1500). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_DIST_FAR",
+        "MC2_TERRAIN_CLIFF_DIST_FAR",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3b knob: camera-distance fade band FAR in world units (displacement 0 beyond; C++ default 3500). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_FOOT_Y",
+        "MC2_TERRAIN_CLIFF_FOOT_Y",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3b knob: world height (Z) of the cliff-face foot for the crest-lock keying, or negative = auto/skip (C++ default -1.0). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
     // TERRAIN-MATERIAL-TEXTURES-1: per-layer PBR albedo textures on the LIVE
     // LOD-chunk terrain path (gos_terrain_lod_chunk.cpp lazy loader + binder,
     // terrain_lod_chunk.frag u_useMatAlbedo branch). Gate OFF -> u_useMatAlbedo
