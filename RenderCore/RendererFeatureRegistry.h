@@ -644,6 +644,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "TERRAIN-DECAL-FILL-1: ambient/fill floor (float 0..1, default 0.20) for the CLIFF_WALL mesh-decal's shadow side. static_prop lighting is max(N-L,0) with no ambient floor, so faces pointing away from the sun render black; this raises the per-fragment floor so they read as dark rock. Applied ONLY to the MarbleCliff decal (per-instance kFlagDecalFill bit 3); all other static props are byte-identical regardless. Uniform u_terrainDecalFill; ImGui 'Cliff Decal' Fill slider drives it live via g_terrainDecalFill."
     },
     {
+        "MC2_TERRAIN_DECAL_COLORBLEND",
+        "MC2_TERRAIN_DECAL_COLORBLEND",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-DECAL-COLORBLEND-1: RVT-style terrain-colormap blend (float 0..1, default 0.35) for the CLIFF_WALL mesh-decal. Mixes the decal albedo toward the terrain COLORMAP sampled at the decal's world-XY (same colormap atlas + world->UV transform as terrain_lod_chunk.frag) so the cliff mesh melts into its surroundings instead of reading as raw light-marble. Applied ONLY to the MarbleCliff decal (per-instance kFlagDecalFill bit 3); all other static props are byte-identical regardless. 0.0 (or flag-unset) = byte-identical OFF. Uniform u_terrainDecalColorBlend; ImGui 'Cliff Decal' Color blend slider drives it live via g_terrainDecalColorBlend."
+    },
+    {
         "MC2_TERRAIN_DECAL_PITCH",
         "MC2_TERRAIN_DECAL_PITCH",
         EnvVarKind::Trace,

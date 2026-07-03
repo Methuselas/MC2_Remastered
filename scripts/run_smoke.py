@@ -1301,6 +1301,10 @@ def main():
                             # floor for the cliff decal (default 0.20). Flag-gated
                             # to the MarbleCliff decal only.
                             "MC2_TERRAIN_DECAL_FILL",
+                            # TERRAIN-DECAL-COLORBLEND-1 -- RVT-style terrain-colormap
+                            # blend for the cliff decal (default 0.35). Flag-gated to
+                            # the MarbleCliff decal only; 0.0 = byte-identical OFF.
+                            "MC2_TERRAIN_DECAL_COLORBLEND",
                             # TERRAIN-SHORELINE-MASK-1 -- authored land-side wet/foam
                             # shoreline mask sidecar override (default OFF). Must be
                             # allowlisted or Popen drops it and the gate-ON smoke

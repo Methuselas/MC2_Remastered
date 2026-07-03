@@ -155,6 +155,25 @@ uniform int   u_pathTint;  // MC2_SHADER_PATH_TINT: 1 = solid signature colour (
 uniform float u_terrainDecalFill;
 const uint kFlagDecalFill = (1u << 3);
 
+// TERRAIN-DECAL-COLORBLEND-1: RVT-style terrain-color match for the cliff mesh
+// decal. Blends the decal's sampled albedo toward the TERRAIN COLORMAP sampled
+// at the decal's world-XY position, so the cliff mesh melts into its
+// surroundings instead of reading as raw light-marble. Uses the SAME colormap
+// texture + world->UV transform as terrain_lod_chunk.frag (u_colormap /
+// u_atlasTopLeftX/Y / u_atlasOneOverWorldUnits): the batcher binds the merged
+// colormap atlas to kColormapTexUnit and uploads the atlas params.
+//   - Applied ONLY to fragments carrying kFlagDecalFill (bit 3).
+//   - u_terrainDecalColorBlend == 0.0 (default upload when MC2_TERRAIN_DECAL_
+//     COLORBLEND unset) OR flag-unset -> the whole block is skipped -> every
+//     other static prop (and the decal itself) is byte-identical.
+//   - Requires v_worldPos (MC2/terrain world frame, same as the chunk shader),
+//     which only exists under MC2_USE_VIEW_UNIFORMS; guarded accordingly.
+uniform sampler2D u_terrainColormap;    // merged colormap atlas (kColormapTexUnit)
+uniform float     u_decalAtlasTLX;      // = Terrain::mapTopLeft3d.x
+uniform float     u_decalAtlasTLY;      // = Terrain::mapTopLeft3d.y
+uniform float     u_decalAtlasOOW;      // = Terrain::oneOverWorldUnitsMapSide
+uniform float     u_terrainDecalColorBlend;  // 0 = off (byte-identical)
+
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 GBuffer1;
 #ifdef MC2_OBJECT_ID_BUFFER
@@ -361,6 +380,22 @@ void main() {
     if ((v_flags & kFlagDecalFill) != 0u && u_terrainDecalFill > 0.0) {
         litRgb = max(litRgb, vec3(u_terrainDecalFill));
     }
+
+    // TERRAIN-DECAL-COLORBLEND-1: mix the cliff-decal albedo toward the terrain
+    // colormap sampled at this fragment's world-XY (same atlas-UV reconstruction
+    // as terrain_lod_chunk.frag). Flag-gated + blend>0 gated -> non-decal props
+    // and the blend==0 default are byte-identical. v_worldPos is the MC2/terrain
+    // world frame (static_prop.vert world_mc2 = (-x,z,y)), identical to the
+    // frame the colormap UV transform expects.
+#if defined(MC2_USE_VIEW_UNIFORMS)
+    if ((v_flags & kFlagDecalFill) != 0u && u_terrainDecalColorBlend > 0.0) {
+        vec2 cmUV;
+        cmUV.x = (v_worldPos.x - u_decalAtlasTLX) * u_decalAtlasOOW;
+        cmUV.y = (u_decalAtlasTLY - v_worldPos.y) * u_decalAtlasOOW;
+        vec3 cmColor = texture(u_terrainColormap, cmUV).rgb;
+        tex_color.rgb = mix(tex_color.rgb, cmColor, clamp(u_terrainDecalColorBlend, 0.0, 1.0));
+    }
+#endif
 
     vec4 c = tex_color * vec4(litRgb, v_argb.a);
     c.rgb += v_highlight.rgb * v_highlight.a;

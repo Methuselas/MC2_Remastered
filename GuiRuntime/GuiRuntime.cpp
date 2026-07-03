@@ -413,6 +413,17 @@ static void DrawCliffDecalPanel() {
         ImGui::SliderFloat("Fill (shadow side)", &g_terrainDecalFill, 0.0f, 1.0f, "%.3f");
     }
 
+    // TERRAIN-DECAL-COLORBLEND-1: RVT-style terrain-colormap blend. Drives the
+    // batcher's g_terrainDecalColorBlend global (uploaded to
+    // u_terrainDecalColorBlend), applied per-fragment ONLY to the flag-tagged
+    // cliff decal: mixes the decal albedo toward the terrain colormap sampled at
+    // the decal's world position so the cliff matches its surroundings. 0.0 =>
+    // raw marble (byte-identical OFF); higher => more terrain-tinted.
+    {
+        extern float g_terrainDecalColorBlend;  // gos_static_prop_batcher.cpp
+        ImGui::SliderFloat("Color blend (terrain)", &g_terrainDecalColorBlend, 0.0f, 1.0f, "%.3f");
+    }
+
     ImGui::Separator();
     if (ImGui::Button("Copy current values (-> stderr)"))
         CliffDecalTuning::cliffDecal_logValues();
