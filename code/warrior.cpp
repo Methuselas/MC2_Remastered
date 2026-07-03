@@ -194,6 +194,15 @@ static uint32_t s_brainTicksThisFrame    = 0;       // ticks fired in current fr
 // BRAIN-DECISION-INTENT-QUEUE-1: accessor so brain_special_dispatch.cpp can stamp intents.
 uint32_t getBrainTickIndex() { return s_brainTickIndex; }
 
+// BRAINSPECIAL-FLOW-WAIT-1: sim-time accessor for WAIT deadlines (milliseconds).
+// scenarioTime is the deterministic mission sim clock (same time base the fixed-tick
+// accumulator above consumes); WAIT deadlines keyed on it hold under the determinism
+// model (the queue key already carries sim_frame_ms). Harness stubs this symbol.
+uint32_t getBrainTimeMs() {
+    if (scenarioTime <= 0.0f) return 0;
+    return (uint32_t)(scenarioTime * 1000.0f);
+}
+
 static void initBrainFixedTickGate() {
     if (s_brainFixedTickGateChecked) return;
     s_brainFixedTickGateChecked = true;
@@ -2509,6 +2518,24 @@ long MechWarrior::runBrain (void) {
 			const bool hasRetreat   = bodyHasUnitRetreat(brainRuntime->specialBody);
 			const bool hasEffect    = hasPowerdown || hasEject || hasGuard || hasMoveTo || hasAttack || hasRetreat;
 
+			// BRAINSPECIAL-FLOW-WAIT-1: flow-bearing bodies (WAIT/WAIT_UNTIL/STOP present,
+			// gate MC2_BRAIN_FLOW) re-dispatch EVERY tick — the class-level once-guard
+			// pre-set below would permanently suppress an effect a WAIT still gates.
+			// Apply's per-verb-index flowFired guards prevent order re-emission instead.
+			// flowFiredCount>0 means the dispatcher has claimed the GENERAL slot at some
+			// point — keep suppressing the synthetic HOLD exactly like alreadyDone does.
+			// Gate OFF: brainFlowActiveForBody is false (scanner emits no flow verbs) —
+			// this branch is untouched dead code, byte-identical behavior.
+			const bool flowActive = brainFlowActiveForBody(brainRuntime->specialBody);
+			if (flowActive) {
+				bool applied = executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
+				                                        &brainRuntime->varStore, idx, "");
+				if (s_intentQueue && !s_brainCommitPhase) commitBrainIntents(this, brainRuntime);
+				dispatcherAppliedEffect = applied || (brainRuntime->flowFiredCount > 0);
+				// (falls through to the shared dispatcherAppliedEffect drain below)
+			} else {
+			// (non-flow path below is the pre-slice code, unchanged)
+
 			// BRAIN-WORLD-SNAPSHOT-1: capture world state before once-guard reads (gate ON only).
 			// Gate OFF: snap is zero-initialised and unused — reads fall through to live runtime.
 			BrainWorldSnapshot snap = {};
@@ -2578,6 +2605,7 @@ long MechWarrior::runBrain (void) {
 				// Effect already applied — suppress HOLD without re-applying.
 				dispatcherAppliedEffect = true;
 			}
+			}  // BRAINSPECIAL-FLOW-WAIT-1: end of non-flow (pre-slice) path
 			if (dispatcherAppliedEffect) {
 				if (brainTaskQueue) {
 					BrainTaskEntry task;

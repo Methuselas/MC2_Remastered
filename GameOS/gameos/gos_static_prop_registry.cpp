@@ -169,7 +169,19 @@ static const bool s_perInstanceLight =
 
 // STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A: build cached immutable instance +
 // per-recipe actor-record content once and bulk-append per frame instead of
-// per-leaf rebuild. Default OFF until Tracy-proven; =1 enables.
+// per-leaf rebuild.
+//
+// STATUS 2026-07-01 (TXMMGR-PERF-EASYWINS-1 audit): SUBSUMED by
+// MC2_STATIC_PROP_PERSISTENT_BUCKETS (default-ON since 2026-06-03, soaked
+// tier1 5/5) — the cached-record branch keys on
+// (s_flushCachedBlob || s_persistentBuckets) below, so the cached path IS the
+// default path already. Do NOT flip this default: with PERSISTENT_BUCKETS=0
+// (the soaked kill-switch restoring the legacy per-leaf path) a default-ON
+// here would silently re-engage the cached bulk path (submitCachedInstanceRange
+// branch), a config that was never the soaked default. Kill-switch matrix:
+//   BUCKETS=1 (default)              -> cached records + persistent store
+//   BUCKETS=0                        -> legacy per-leaf path (full revert)
+//   BUCKETS=0 + CACHED_BLOB=1        -> cached records + per-frame bulk submit
 static const bool s_flushCachedBlob =
     parseEnvBoolWithDefault("MC2_STATIC_PROP_FLUSH_CACHED_BLOB", false);
 // Diagnostic compare (patch 8): when the cached path is active, ALSO build the

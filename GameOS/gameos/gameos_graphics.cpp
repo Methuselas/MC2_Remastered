@@ -2940,16 +2940,9 @@ unsigned int gos_GetTerrainNormalArrayTex() {
 // Defined here because the full gosRenderer type is visible in this TU.
 // Declarations live in gos_terrain_bridge.h.
 
-gosRenderMaterial* gos_terrain_bridge_getMaterial() {
-    return g_gos_renderer ? g_gos_renderer->getTerrainMaterial() : nullptr;
-}
-
-unsigned int gos_terrain_bridge_getShaderProgram() {
-    if (!g_gos_renderer) return 0;
-    gosRenderMaterial* mat = g_gos_renderer->getTerrainMaterial();
-    if (!mat || !mat->getShader()) return 0;
-    return (unsigned int)mat->getShader()->shp_;
-}
+// gos_terrain_bridge_getMaterial and gos_terrain_bridge_getShaderProgram deleted by
+// DEAD-BRIDGE-DELETE-1: zero external callers tree-wide (whole-repo grep incl. editor/
+// tools/shaders/scripts). Provably-dead public wrappers around live gosRenderer members.
 
 void gos_terrain_bridge_bindUniforms(gosRenderMaterial* material) {
     if (g_gos_renderer && material)
@@ -2996,19 +2989,15 @@ unsigned int gos_terrain_bridge_getThinShaderProgram() {
     return (p && p->shp_) ? (unsigned int)p->shp_ : 0u;
 }
 
-int gos_terrain_bridge_bindThinUniforms() {
-    if (!g_gos_renderer) return -1;
-    return g_gos_renderer->terrainBindThinUniformsForPatchStream();
-}
+// gos_terrain_bridge_bindThinUniforms deleted by DEAD-BRIDGE-DELETE-1: zero external
+// callers (the internal terrainBindThinUniformsForPatchStream IS live; this standalone
+// wrapper is not). Whole-repo grep clean.
 
 // gos_terrain_bridge_drawSingleBucketTriangles deleted by TERRAIN-BRIDGE-BODY-DELETE-2:
 // callerless after TerrainPatchStream::flush() retired (TERRAIN-BRIDGE-BODY-DELETE-1).
 
-unsigned int gos_terrain_bridge_getWaterFastShaderProgram() {
-    if (!g_gos_renderer) return 0u;
-    glsl_program* p = g_gos_renderer->getWaterFastProgram();
-    return (p && p->shp_) ? (unsigned int)p->shp_ : 0u;
-}
+// gos_terrain_bridge_getWaterFastShaderProgram deleted by DEAD-BRIDGE-DELETE-1:
+// zero external callers tree-wide. Wrapper around live getWaterFastProgram().
 
 // WaterPerCmd — per-draw data for glMultiDrawArraysIndirect, indexed by gl_DrawID.
 // 32 B std430-aligned; lockstep with gos_terrain_water_fast_mdi.vert binding 7.
@@ -3645,7 +3634,17 @@ void gosRenderer::renderWaterFastPath(
                 } else {
                     const char* full = getenv("MC2_WATER_HDRI_REFL_FULL");
                     const bool fullRate = (full && full[0] && full[0] != '0');
-                    s_waterHdriLod = fullRate ? 1.0f : 4.0f;
+                    // WATER-HDRI-REFL-SHARPEN-1: default bumped 4.0 -> 2.0. LOD 4.0
+                    // (256x128 mip) read as flat/dull; the user prefers the sharper,
+                    // "shinier" reflection. LOD 2.0 (1024x512 mip of the 4K source)
+                    // restores visible sky/sun structure at ~1/4 the texel bandwidth
+                    // of the full-rate LOD 1.0 path (~10ms/frame at LOD1 per
+                    // WATER-HDRI-REFL-PERF-1 451c9e49; LOD2 is 4x less texel traffic
+                    // than LOD1, still far cheaper than the original hot path).
+                    // MC2_WATER_HDRI_REFL_FULL=1 restores LOD 1.0; MC2_WATER_HDRI_LOD
+                    // (explicit float) overrides both. Per-mission override possible
+                    // later via a visual_tuning key if a mission wants it duller.
+                    s_waterHdriLod = fullRate ? 1.0f : 2.0f;
                 }
             }
             const bool hdriAvail = (ppRefl && ppRefl->isHdriReady());
@@ -6848,19 +6847,26 @@ static void uploadDynamicShadowUniforms(const Locs& tl, gosPostProcess* pp, GLin
 // does not implement (falls through to its normal render), which is safe.
 int mc2LightingDebugMode()
 {
-    const char* v = getenv("MC2_LIGHTING_DEBUG_VIEW");
-    if (!v || !*v) return -1;
-    if (!strcmp(v, "off") || !strcmp(v, "0")) return 0;   // explicit no-op render
-    if (!strcmp(v, "albedo"))     return 40;
-    if (!strcmp(v, "normal"))     return 41;   // final per-fragment N as RGB
-    if (!strcmp(v, "sun"))        return 42;   // sun N·L diffuse term
-    if (!strcmp(v, "ambient"))    return 43;   // hemisphere/ambient/SH fill only
-    if (!strcmp(v, "shadow"))     return 44;   // shadow factor (terrain) / no-shadow marker (props)
-    if (!strcmp(v, "final"))      return 45;   // == default lit render (falls through)
-    if (!strcmp(v, "overbright")) return 46;   // over/under-bright heatmap
-    if (!strcmp(v, "lightcount")) return 47;   // dynamic light-count heatmap (props/mech)
-    if (!strcmp(v, "lightindex")) return 48;   // baked-static-light-index palette (props/mech)
-    return -1;                                 // unknown -> safe fallback (keep existing)
+    // REDUNDANT-PASS-HUNT-1 (re-compute class): called per frame from 5 hot draw
+    // sites (terrain chunk, static-prop batcher x2, this TU x2), each hit doing a
+    // getenv() + up to 11 strcmp on a value that cannot change mid-process (no
+    // setenv/putenv/ImGui setter exists for MC2_LIGHTING_DEBUG_VIEW). Resolve once.
+    static const int s_mode = []() -> int {
+        const char* v = getenv("MC2_LIGHTING_DEBUG_VIEW");
+        if (!v || !*v) return -1;
+        if (!strcmp(v, "off") || !strcmp(v, "0")) return 0;   // explicit no-op render
+        if (!strcmp(v, "albedo"))     return 40;
+        if (!strcmp(v, "normal"))     return 41;   // final per-fragment N as RGB
+        if (!strcmp(v, "sun"))        return 42;   // sun N·L diffuse term
+        if (!strcmp(v, "ambient"))    return 43;   // hemisphere/ambient/SH fill only
+        if (!strcmp(v, "shadow"))     return 44;   // shadow factor (terrain) / no-shadow marker (props)
+        if (!strcmp(v, "final"))      return 45;   // == default lit render (falls through)
+        if (!strcmp(v, "overbright")) return 46;   // over/under-bright heatmap
+        if (!strcmp(v, "lightcount")) return 47;   // dynamic light-count heatmap (props/mech)
+        if (!strcmp(v, "lightindex")) return 48;   // baked-static-light-index palette (props/mech)
+        return -1;                                 // unknown -> safe fallback (keep existing)
+    }();
+    return s_mode;
 }
 
 // TERRAIN-DETAIL-ANTI-TILE-1: pack distance-fade + macro-noise knobs into the
@@ -8944,6 +8950,39 @@ static const bool s_lightSsboTrace =
 static constexpr GLsizeiptr kLightRecordStride = 3600;
 static constexpr GLsizeiptr kLightGrowHeadroomRecords = 128;
 
+// LIGHT-PREFIX-GPU-COPY-1 (TXMMGR-PERF-EASYWINS-1): keep a VRAM stash of the
+// immutable static light prefix [0..S) and, per frame, glCopyBufferSubData it
+// into the freshly-orphaned slot-20 SSBO instead of re-pushing it over PCIe.
+// Only the dynamic suffix [S..count) goes through glBufferSubData each frame.
+//
+// WHY: LIGHTSSBO-ORPHAN-1 (the NVIDIA implicit-sync stall fix) orphans the
+// whole store every frame, which defeated the STATIC_LIGHT_UPLOAD_SPLIT
+// prefix-skip — measured [RENDERLISTS_COST v1] light_upload ~950 µs/frame on
+// mc2_24 (~2.7k static records × 3600 B ≈ 9.7 MB PCIe re-upload per frame).
+//
+// NVIDIA-SAFETY (why this does NOT reintroduce the ORPHAN-1 stall): the orphan
+// still happens (fresh store, no in-flight readers), the prefix arrives via a
+// GPU-side VRAM->VRAM copy (no CPU-blocking PCIe write), and the stash itself
+// is only WRITTEN on prefixDirty frames (mission-load bake / re-bake) — it is
+// read-only in steady state, so no cross-frame in-flight-write hazard exists.
+// Contract: any [0..S) mutation sets mc2MarkStaticLightPrefixDirty()
+// (mclib/txmmgr.cpp:1583-1591), which refreshes the stash here.
+//
+// Default OFF pending soak; kill-switch by unsetting. Requires the split path
+// (MC2_STATIC_LIGHT_UPLOAD_SPLIT default-ON + MC2_LIGHTBAKE default-ON).
+// Subsumed by MC2_GPUBUF_LIGHT_GROWONCE when that ships (grow-once branch
+// runs first).
+static bool gosLightPrefixGpuCopyEnabled() {
+    static const bool s_on = []() {
+        const char* v = std::getenv("MC2_LIGHT_PREFIX_GPU_COPY");
+        return v && v[0] != '0';
+    }();
+    return s_on;
+}
+static GLuint     s_lightPrefixStash      = 0;  // immutable prefix mirror (VRAM)
+static GLsizeiptr s_lightPrefixStashBytes = 0;  // stash capacity
+static GLsizeiptr s_lightPrefixStashLive  = 0;  // live prefix bytes valid in stash
+
 // LIGHT-GROW-ONCE-SUBDATA-1: when MC2_GPUBUF_LIGHT_GROWONCE is ON, upload only
 // the live used bytes into the single persistent slot-20 SSBO via
 // glBufferSubData (no per-frame full glBufferData orphan re-spec). Grow ONLY
@@ -9112,11 +9151,63 @@ void __stdcall gos_LightDataSsbo_UploadSplit(const void* data, size_t prefixByte
 	// implicitly since the whole buffer is now fresh).
 	if (s_lightDataSsbo == 0 || (GLsizeiptr)totalBytes > s_lightDataSsboBytes) {
 		gos_LightDataSsbo_Upload(data, totalBytes);  // reuses create/grow + binding
+		// LIGHT-PREFIX-GPU-COPY-1: the caller CONSUMED prefixDirty before this
+		// early return. If a re-bake (S unchanged) landed on the same frame as a
+		// buffer grow, the stash would silently keep the stale prefix. Force a
+		// refresh on the next gated frame (cheap; grow frames are rare).
+		s_lightPrefixStashLive = 0;
 		if (s_lightSsboTrace) {
 			std::fprintf(stderr, "[LIGHTSSBO v2] event=full_on_grow total=%zu prefix=%zu\n",
 			             totalBytes, prefixBytes);
 			std::fflush(stderr);
 		}
+		return;
+	}
+
+	// LIGHT-PREFIX-GPU-COPY-1 (gated, default OFF): orphan-preserving prefix
+	// restore via VRAM->VRAM copy; PCIe traffic = dynamic suffix only.
+	if (gosLightPrefixGpuCopyEnabled() && prefixBytes > 0) {
+		// Refresh the stash when the prefix mutated (bake/re-bake sets the
+		// dirty flag), on first use, or when S extended (mission-load growth).
+		const bool stashStale = prefixDirty || s_lightPrefixStash == 0 ||
+		                        (GLsizeiptr)prefixBytes != s_lightPrefixStashLive;
+		if (stashStale) {
+			if ((GLsizeiptr)prefixBytes > s_lightPrefixStashBytes) {
+				// Grow with the same +128-record headroom cadence as the CPU
+				// backing store so mission-load growth amortizes.
+				const GLsizeiptr cap = (GLsizeiptr)prefixBytes +
+				    kLightGrowHeadroomRecords * kLightRecordStride;
+				if (s_lightPrefixStash) glDeleteBuffers(1, &s_lightPrefixStash);
+				glGenBuffers(1, &s_lightPrefixStash);
+				glBindBuffer(GL_COPY_READ_BUFFER, s_lightPrefixStash);
+				glBufferData(GL_COPY_READ_BUFFER, cap, nullptr, GL_STATIC_DRAW);
+				s_lightPrefixStashBytes = cap;
+			} else {
+				glBindBuffer(GL_COPY_READ_BUFFER, s_lightPrefixStash);
+			}
+			MC2_GL_BufferSubData(GL_COPY_READ_BUFFER, 0, (GLsizeiptr)prefixBytes, base);
+			s_lightPrefixStashLive = (GLsizeiptr)prefixBytes;
+			if (s_lightSsboTrace) {
+				std::fprintf(stderr,
+				    "[LIGHTSSBO v3] event=prefix_stash_refresh prefix=%zu cap=%td dirty=%d\n",
+				    prefixBytes, (ptrdiff_t)s_lightPrefixStashBytes, prefixDirty ? 1 : 0);
+				std::fflush(stderr);
+			}
+		} else {
+			glBindBuffer(GL_COPY_READ_BUFFER, s_lightPrefixStash);
+		}
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
+		// Same orphan discipline as ORPHAN-1: fresh store, no in-flight readers.
+		MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW, LightSsbo);
+		glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER,
+		                    0, 0, (GLsizeiptr)prefixBytes);
+		if (totalBytes > prefixBytes) {
+			glBufferSubData(GL_SHADER_STORAGE_BUFFER, (GLintptr)prefixBytes,
+			                (GLsizeiptr)(totalBytes - prefixBytes), base + prefixBytes);
+		}
+		glBindBuffer(GL_COPY_READ_BUFFER, 0);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 		return;
 	}
 
@@ -9151,6 +9242,14 @@ void __stdcall gos_LightDataSsbo_Destroy()
 		s_lightDataSsbo      = 0;
 		s_lightDataSsboBytes = 0;
 		invalidateLightDataSsbo();  // LIGHTDATA-SSBO-OWNER-1: mark registry slot unavailable on teardown
+	}
+	// LIGHT-PREFIX-GPU-COPY-1: tear down the prefix stash alongside the main
+	// SSBO; the next mission's first dirty frame recreates it.
+	if (s_lightPrefixStash) {
+		glDeleteBuffers(1, &s_lightPrefixStash);
+		s_lightPrefixStash      = 0;
+		s_lightPrefixStashBytes = 0;
+		s_lightPrefixStashLive  = 0;
 	}
 }
 

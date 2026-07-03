@@ -34,8 +34,9 @@
 #include "../../RenderCore/frame_executor.h"  // FRAME-GRAPH-EXECUTOR-ISLAND-1 IslandContract
 
 // === Item 1: Cascaded Shadow Maps gate (dynamic shadow path) ==============
-// MC2_SHADOW_CSM  : master gate, DEFAULT OFF. OFF => legacy single dynamic
-//                   map path is byte-identical (none of the CSM code runs).
+// MC2_SHADOW_CSM  : master gate, DEFAULT ON (reworked 2026-06-18, `8ff13a36`;
+//                   see docs/tier1_env_vars.md "Dynamic CSM"). Set "=0" to opt
+//                   out to the legacy single dynamic map path.
 // MC2_SHADOW_CSM_COUNT  : cascade count, default 3, clamp [1,3].
 // MC2_SHADOW_CSM_LAMBDA : log/uniform split blend, default 0.5, clamp [0,1].
 bool mc2ShadowCsmEnabled()
@@ -192,6 +193,20 @@ float mc2ShadowMechSoft()
     return s_s;
 }
 
+// PROP-SHADOW-RECEIVE-1: static props RECEIVE the dynamic CSM cascade shadow
+// (building self-shadow + prop-on-prop) in shadow_screen.frag instead of the
+// static map only. MC2_PROP_SHADOW_RECEIVE, DEFAULT OFF; =1 enables. OFF =
+// legacy: the GBuffer1.a=0.25 prop class skips sampleDynamicShadow entirely
+// (uniform uploads 0 -> shader branch unreachable -> pixel-identical).
+int mc2PropShadowReceive()
+{
+    static const int s_v = []() {
+        const char* v = getenv("MC2_PROP_SHADOW_RECEIVE");
+        return (v && v[0]) ? atoi(v) : 0;   // DEFAULT 0 (off)
+    }();
+    return s_v;
+}
+
 // Cloud-shadow master gate. MC2_CLOUD_SHADOW, DEFAULT ON (preserves the legacy
 // inline-cloud behavior that this fullscreen pass replaces). =0 disables the
 // whole pass (and the C++ early-return skips it entirely).
@@ -262,14 +277,20 @@ static void setSceneDrawBuffers(SceneDrawBufferMode mode,
 
 } // namespace
 
-// SKYBOX-FOG-EXCLUDE-1: gate helper (read once). Default OFF -> byte-identical
-// legacy path (no stencil write on sky, no stencil sample/exclusion in the
-// fog frags -- shader uniform u_skyExcludeEnabled resolves to 0).
+// SKYBOX-FOG-EXCLUDE-1: gate helper (read once).
+// SKYBOX-FOG-EXCLUDE-DEFAULT-ON-1: flipped default OFF->ON. The gate is inert
+// on non-HDRI missions -- renderHdriSkybox() early-returns before the stencil-
+// tag pass ("black sky baseline"), so no stencil is ever tagged, the fog frags'
+// stencil branch is a no-op, and fog_oob.frag's worldDir.z<-0.22 band fallback
+// is retained (byte-identical to legacy there). On HDRI missions it excludes
+// fog from true-sky pixels so the skybox is visible instead of being painted
+// over by the OOB cloud bank (the user-reported "can't see the skybox").
+// Kill-switch preserved: MC2_SKYBOX_FOG_EXCLUDE=0 restores the legacy OFF path.
 static bool skyboxFogExcludeEnabled()
 {
     static const bool s_on = []() {
         const char* v = ::getenv("MC2_SKYBOX_FOG_EXCLUDE");
-        return v && v[0] == '1';
+        return !(v && v[0] == '0');   // default ON; explicit "0" disables.
     }();
     return s_on;
 }
@@ -688,6 +709,36 @@ void gosPostProcess::init(int w, int h)
         if (const char* v = getenv("MC2_EDGE_FOG_MAX"))    edgeFogMax_    = std::atof(v);
         std::fprintf(stderr, "[EDGE_FOG v3] enabled=%d start=%.0f height=%.0f max=%.2f\n",
             edgeFogEnabled_ ? 1 : 0, edgeFogStart_, edgeFogHeight_, edgeFogMax_);
+    }
+
+    // FOG-HORIZON-CLAMP-1: elevation profile shared by OOB + edge fog. Rides the
+    // existing (default-ON) fog gates -- this is a tuning of the fog's SHAPE, not
+    // a new feature. Kill-switch MC2_FOG_HORIZON_CLAMP=0 restores the previous
+    // worldDir.z 0.22 exclusion band. Knobs are in DEGREES of elevation above the
+    // horizon; we precompute their sines here so the frag stays trig-free
+    // (elevSin = -worldDir.z for a normalized view ray).
+    {
+        if (const char* v = getenv("MC2_FOG_HORIZON_CLAMP"))
+            fogHorizonClampEnabled_ = !(v[0] == '0' && v[1] == '\0');
+        if (const char* v = getenv("MC2_FOG_HORIZON_FADE_START"))
+            fogHorizonFadeStartDeg_ = (float)std::atof(v);
+        if (const char* v = getenv("MC2_FOG_HORIZON_FADE_END"))
+            fogHorizonFadeEndDeg_   = (float)std::atof(v);
+        // Guard the ordering so smoothstep(edge0<edge1) always holds; a degenerate
+        // or inverted band would make the fade a hard step. Clamp to [-90,90].
+        auto clampDeg = [](float d) { return d < -90.0f ? -90.0f : (d > 90.0f ? 90.0f : d); };
+        fogHorizonFadeStartDeg_ = clampDeg(fogHorizonFadeStartDeg_);
+        fogHorizonFadeEndDeg_   = clampDeg(fogHorizonFadeEndDeg_);
+        if (fogHorizonFadeEndDeg_ <= fogHorizonFadeStartDeg_)
+            fogHorizonFadeEndDeg_ = fogHorizonFadeStartDeg_ + 0.5f; // minimum band
+        const float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+        fogHorizonFadeStartSin_ = std::sin(fogHorizonFadeStartDeg_ * kDeg2Rad);
+        fogHorizonFadeEndSin_   = std::sin(fogHorizonFadeEndDeg_   * kDeg2Rad);
+        std::fprintf(stderr,
+            "[FOG_HORIZON v1] clamp=%d fadeStart=%.2fdeg(sin=%.4f) fadeEnd=%.2fdeg(sin=%.4f)\n",
+            fogHorizonClampEnabled_ ? 1 : 0,
+            fogHorizonFadeStartDeg_, fogHorizonFadeStartSin_,
+            fogHorizonFadeEndDeg_,   fogHorizonFadeEndSin_);
     }
 
     // HZB-DEPTH-PYRAMID-MVP-1: reduction shader. Gate (hzbEnabled_) is resolved
@@ -2316,6 +2367,8 @@ void gosPostProcess::runScreenShadow()
     screenShadowProg_->setFloat("shadowSoftness", mc2ShadowCsmSoftness());  // match terrain default
     screenShadowProg_->setFloat("objNormalBiasScale", mc2ShadowObjNormalBias());
     screenShadowProg_->setFloat("mechSoft", mc2ShadowMechSoft());
+    // PROP-SHADOW-RECEIVE-1: default 0 (gate OFF) -> shader prop branch inert.
+    screenShadowProg_->setInt("propShadowReceive", mc2PropShadowReceive());
     {
         // SCREEN-SHADOW-LIGHTDIR-FRAME-FIX: the back-face guard + normal-offset
         // dot objN against lightDir. objN in shadow_screen.frag is the SAME
@@ -2590,6 +2643,14 @@ void gosPostProcess::runEdgeFog()
     edgeFogProg_->setFloat("u_fogMax",           edgeFogMax_);
     edgeFogProg_->setFloat("u_waterElevation",   waterElevation_);
 
+    // FOG-HORIZON-CLAMP-1: same elevation profile as the OOB pass. The edge-fog
+    // frag already refuses fog for rays looking up/horizontal (dz >= -0.001), so
+    // this narrows the surviving small-downward-elevation band toward the horizon
+    // exactly like fog_oob, keeping upward bleed out of the sky.
+    edgeFogProg_->setInt("u_horizonClampEnabled", fogHorizonClampEnabled_ ? 1 : 0);
+    edgeFogProg_->setFloat("u_horizonFadeStartSin", fogHorizonFadeStartSin_);
+    edgeFogProg_->setFloat("u_horizonFadeEndSin",   fogHorizonFadeEndSin_);
+
     // SKYBOX-FOG-EXCLUDE-1: gate-ON only; default OFF -> u_skyExcludeEnabled=0,
     // stencilTex left unbound (unit 1 stays whatever it was -- shader never
     // reads it when the uniform is 0, so this is byte-identical OFF).
@@ -2698,6 +2759,13 @@ void gosPostProcess::runFogOob()
     fogOobProg_->setFloat3("u_fogColor",  oobFogColor_);
     fogOobProg_->setFloat("u_fogOpacity", oobFogOpacity_);
     fogOobProg_->setFloat("u_time", fogTime);
+
+    // FOG-HORIZON-CLAMP-1: elevation profile. clamp=1 (default) selects the new
+    // shape (full at/below horizon, fade to zero in [startSin,endSin]); clamp=0
+    // restores the legacy worldDir.z 0.22 band in-shader.
+    fogOobProg_->setInt("u_horizonClampEnabled", fogHorizonClampEnabled_ ? 1 : 0);
+    fogOobProg_->setFloat("u_horizonFadeStartSin", fogHorizonFadeStartSin_);
+    fogOobProg_->setFloat("u_horizonFadeEndSin",   fogHorizonFadeEndSin_);
 
     // SKYBOX-FOG-EXCLUDE-1: gate-ON only; default OFF -> u_skyExcludeEnabled=0,
     // stencilTex left unbound (shader never reads it when the uniform is 0,
@@ -3621,8 +3689,10 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
     // SKYBOX-FOG-EXCLUDE-1: second, stencil-only pass. Tags stencil=1 for
-    // pixels the fog passes must hard-exclude (deep sky, worldDir.z < -0.22 --
-    // the same threshold fog_oob.frag already uses). Pixels at/below that
+    // pixels the fog passes must exclude (deep sky -- SKYBOX-FOG-EXCLUDE-2:
+    // elevation test worldDir.y > 0.22 in the skybox frame; equivalent to
+    // fog_oob's fog-frame worldDir.z < -0.22 band top, see the frag shader's
+    // fix note). Pixels at/below that
     // band (horizon + OOB void) are `discard`ed by the frag shader, leaving
     // their stencil at the frame-clear value (0) so fog behavior there is
     // unchanged. Color writes are masked off; only the stencil buffer is
@@ -3670,15 +3740,20 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
             hdriSkyboxStencilTagProg_->apply();
             hdriSkyboxStencilTagProg_->setMat4("invProj", invProjArray);
             hdriSkyboxStencilTagProg_->setMat3("invViewRot", invViewRot);
-            hdriSkyboxStencilTagProg_->setFloat("skyYaw", skyYaw);
+            // SKYBOX-FOG-EXCLUDE-2: skyYaw upload removed. The tag test is
+            // now elevation-only (worldDir.y > 0.22), which the sun-sync yaw
+            // (an azimuth rotation) cannot affect. v1 uploaded it and
+            // thresholded worldDir.z -- a HORIZONTAL axis in this frame --
+            // tagging an azimuth wedge of sky and hard-excluding the fog
+            // inside it (the vertical-edged dark-sky artifact).
 
             glBindVertexArray(quadVAO_ != 0 ? quadVAO_ : hdriDummyVao_);
             glDrawArrays(GL_TRIANGLES, 0, 3);
 
             static const bool s_tagLogOnce = []() {
                 std::fprintf(stderr,
-                    "[SKYBOX_FOG_EXCLUDE v1] enabled=1 stencil_tag_pass=active "
-                    "threshold=worldDir.z<-0.22\n");
+                    "[SKYBOX_FOG_EXCLUDE v2] enabled=1 stencil_tag_pass=active "
+                    "threshold=worldDir.y>0.22 (elevation; v1 wedge bug fixed)\n");
                 std::fflush(stderr);
                 return true;
             }();

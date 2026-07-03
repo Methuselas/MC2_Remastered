@@ -789,6 +789,83 @@ int main(int argc, char** argv)
         }
     }
 
+    // [LAUNCHER_ENV v1] MC2_NO_LAUNCHER launches skip the launcher GUI — and
+    // with it the launcher's env injection built from launcher_env.json next
+    // to the exe (CSM radius, cloud shadows, prop PBR/ambient, tex tier,
+    // shadow map size, fps cap, ...). Users following the CMD launch recipe
+    // therefore silently lost every launcher-curated gate. Fix: on the
+    // explicit MC2_NO_LAUNCHER path, read the same launcher_env.json directly
+    // and apply its MC2_* string keys to this process's environment.
+    // Precedence: a var already set in the shell ALWAYS wins (never
+    // overridden); empty values are skipped (launcher semantics: "" = unset);
+    // non-MC2_ keys (tex_pack_mod / last_*) are ignored. Scope guards: runs
+    // ONLY when MC2_NO_LAUNCHER is set and MC2_LAUNCHED is not — launcher
+    // launches (which already injected + stripped) and smoke/diagnostic
+    // launches (MC2_SMOKE_MODE / MC2_DEBUG_STATE_DUMP / MC2_LOG without
+    // MC2_NO_LAUNCHER) are untouched, so smoke baselines cannot drift.
+    // Kill-switch: MC2_LAUNCHER_ENV_JSON=0 restores the pure-shell-env launch.
+    {
+        const char* noLauncher = std::getenv("MC2_NO_LAUNCHER");
+        const bool  fromLauncher = std::getenv("MC2_LAUNCHED") != nullptr;
+        const char* jsGate = std::getenv("MC2_LAUNCHER_ENV_JSON");
+        const bool  jsOff = (jsGate && jsGate[0] == '0' && jsGate[1] == '\0');
+        if (noLauncher && !fromLauncher && !jsOff) {
+            char exePath[MAX_PATH] = {0};
+            char jsonPath[MAX_PATH] = {0};
+            DWORD n = GetModuleFileNameA(NULL, exePath, MAX_PATH);
+            if (n > 0 && n < MAX_PATH) {
+                strncpy(jsonPath, exePath, MAX_PATH); jsonPath[MAX_PATH-1] = '\0';
+                char* slash = strrchr(jsonPath, '\\');
+                if (!slash) slash = strrchr(jsonPath, '/');
+                if (slash) *(slash + 1) = '\0'; else jsonPath[0] = '\0';
+                strncat(jsonPath, "launcher_env.json", MAX_PATH - strlen(jsonPath) - 1);
+            }
+            FILE* jf = jsonPath[0] ? fopen(jsonPath, "rb") : NULL;
+            if (jf) {
+                // launcher_env.json is a small flat string map (<1 KB today);
+                // 64 KB bound keeps a corrupt/hostile file from ballooning.
+                static char jbuf[65536];
+                size_t got = fread(jbuf, 1, sizeof(jbuf) - 1, jf);
+                fclose(jf);
+                jbuf[got] = '\0';
+                int applied = 0, shellWins = 0;
+                const char* p = jbuf;
+                while ((p = strstr(p, "\"MC2_")) != NULL) {
+                    const char* keyStart = p + 1;
+                    const char* keyEnd = strchr(keyStart, '"');
+                    if (!keyEnd) break;
+                    p = keyEnd + 1;
+                    char key[128];
+                    size_t klen = (size_t)(keyEnd - keyStart);
+                    if (klen == 0 || klen >= sizeof(key)) continue;
+                    memcpy(key, keyStart, klen); key[klen] = '\0';
+                    const char* c = p;
+                    while (*c == ' ' || *c == '\t' || *c == ':') c++;
+                    if (*c != '"') continue;      // non-string value: skip
+                    const char* valStart = c + 1;
+                    const char* valEnd = strchr(valStart, '"');
+                    if (!valEnd) break;
+                    p = valEnd + 1;
+                    char val[256];
+                    size_t vlen = (size_t)(valEnd - valStart);
+                    if (vlen >= sizeof(val)) continue;
+                    memcpy(val, valStart, vlen); val[vlen] = '\0';
+                    if (!val[0]) continue;        // "" = unset (launcher semantics)
+                    if (std::getenv(key)) { shellWins++; continue; }  // shell wins
+                    if (_putenv_s(key, val) == 0) applied++;
+                }
+                // stderr is still live here (the MC2_LOG NUL-redirect below has
+                // not run yet) — gate on MC2_LOG so a plain double-click-style
+                // console stays quiet.
+                if (std::getenv("MC2_LOG")) {
+                    fprintf(stderr,
+                        "[LAUNCHER_ENV v1] applied=%d shell_override=%d src=%s\n",
+                        applied, shellWins, jsonPath);
+                }
+            }
+        }
+    }
+
     // Make stdout line-buffered (was fully buffered on Windows when redirected, hiding
     // output past the last explicit fflush before a crash). Harmless for interactive
     // runs; invaluable for diagnosing startup crashes when stdout is piped to a file.

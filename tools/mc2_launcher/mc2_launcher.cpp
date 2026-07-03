@@ -167,6 +167,7 @@ static const EnvVarDef k_envVars[] = {
     { "MC2_SHADOW_CSM",              "Cascaded shadow maps (CSM)",           true,  "1",    "Rendering" },
     { "MC2_CLOUD_SHADOW",            "Cloud shadows (default ON)",            true,  "1",    "Rendering" },
     { "MC2_SHADOW_BOUNDED_NEAR_FIT", "Crisp near shadows",                    true,  "",     "Rendering" },
+    { "MC2_PROP_SHADOW_RECEIVE",     "Building self/prop-on-prop shadows",    true,  "",     "Rendering" },
     { "MC2_STATIC_PROP_PBR_V1",      "Static prop PBR specular",              true,  "1",    "Rendering" },
     { "MC2_STATIC_PROP_AMBIENT_V1",  "Static prop hemisphere ambient",        true,  "1",    "Rendering" },
     { "MC2_STATIC_PROP_IBL_SH",      "Static prop SH-L2 IBL ambient (ON)",    true,  "1",    "Rendering" },

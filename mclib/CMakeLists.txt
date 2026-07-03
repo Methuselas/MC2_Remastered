@@ -96,6 +96,7 @@ set(SOURCES ${SOURCES}
     utilities.cpp
     model_override_registry.cpp
     anim_override_registry.cpp
+    fx_def_registry.cpp
     # LINK-CONFIG-FIX: msl.cpp (this lib) references isFrameJobsWorkerThread()
     # -> g_isFrameJobsWorker, whose only definition lived in code/frame_jobs.cpp
     # (compiled only into mc2.exe). Carrying it in mclib resolves every target

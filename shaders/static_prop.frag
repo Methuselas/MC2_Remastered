@@ -494,6 +494,9 @@ void main() {
     // Static props receive the static shadow map but NOT the dynamic-cascade
     // self-shadow (CPU never self-shadowed buildings; hard terminator on flat
     // facets looks wrong). a=0.25 routes to the no-self-shadow object path.
+    // PROP-SHADOW-RECEIVE-1: MC2_PROP_SHADOW_RECEIVE=1 opts the a=0.25 class
+    // back INTO the dynamic CSM sample inside shadow_screen.frag (softened,
+    // floor 0.4) — the mask class here is unchanged either way.
     GBuffer1  = rc_gbuffer1_screenShadowEligible_noSelfShadow(normalize(v_normal));
 #ifdef MC2_OBJECT_ID_BUFFER
     // M1.5: emit handle.raw() to attachment-2. Alpha-tested fragments

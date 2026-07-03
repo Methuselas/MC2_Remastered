@@ -583,6 +583,14 @@ static_assert(
 // The enforcement script greps BOTH tables for "MC2_" string literals.
 
 static constexpr EnvVarDesc kAuxEnvVars[] = {
+    // OVERLAY-TILE-HIRES-1: high-resolution terrain overlay tiles.
+    {
+        "MC2_OVERLAY_TILE_HIRES",
+        "MC2_OVERLAY_TILE_HIRES",
+        EnvVarKind::Feature,
+        false,
+        "OVERLAY-TILE-HIRES-1: honor the overlay tile TGA's actual dimensions instead of the legacy hard-assumed 64px (initOverlay header resync mirrors initTexture), probing data/textures/<N>Overlays/ first with per-file fallback to 64Overlays/. =1 selects 256; other pow2 values in [128,1024] select that folder/edge. Also derives the overlay emit half-texel UV inset from the actual tile edge (quad.cpp + decal static VBO). Default-OFF: exact legacy 64px path, byte-identical."
+    },
     // GOSFX-TUBE-RIBBON-1: gosFX Tube swept-quad ribbon oracle.
     {
         "MC2_VFX_ORACLE_TUBE",
@@ -712,6 +720,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "SHADOW-BOUNDED-NEAR-FIT-1 tunable: bounded near-fit radius in world units (default 2500, clamped 512..mapClampR). Only consulted when MC2_SHADOW_BOUNDED_NEAR_FIT=1. Resolved once at process start."
     },
     {
+        "MC2_FEATURE_PROP_SHADOW_RECEIVE",
+        "MC2_PROP_SHADOW_RECEIVE",
+        EnvVarKind::Feature,
+        false,
+        "PROP-SHADOW-RECEIVE-1: static props RECEIVE the dynamic CSM cascade shadow in shadow_screen.frag (building self-shadow + prop-on-prop; the cascades already carry the full prop caster set via the DynShadowCSM replay). Default-OFF; =1 enables. OFF = legacy static-map-only reception for the GBuffer1.a=0.25 prop class (pixel-identical). Shares the existing PCF ledger (MC2_SHADOW_CSM_SOFTNESS, MC2_SHADOW_OBJ_NORMAL_BIAS) + the MC2_SHADOW_MECH_SOFT terminator smoothstep; floor 0.4 min-combined with the static map (no double-darken)."
+    },
+    {
         "MC2_FEATURE_SHADOW_STATIC_BUILDINGS",
         "MC2_STATIC_PROP_BUILDING_SHADOW",
         EnvVarKind::Feature,
@@ -787,6 +802,64 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         EnvVarKind::Trace,
         false,
         "TERRAIN-RESAMPLE-1: CPU bilinear resample factor for the per-mission terrain height texture used by TERRAIN-NORMALS-FROM-HEIGHT-1. Accepted values 1, 2, 4 (anything else clamps to 1). Default 1 (byte-equivalent to pre-slice). Render texture side becomes (sourceSide-1)*factor + 1, with source samples preserved EXACTLY at corner positions (factor multiples). Bilinear interpolation between source taps fills intermediate render samples. Resample is read at every gos_uploadTerrainHeightTex() call (i.e. per mission load); toggling mid-mission does not re-upload. Only affects the height-derived normal path: gameplay height (Terrain::getTerrainElevation) is unchanged; no displacement, no geometry move. Memory: 4× factor on a 120² source = ~890 KB; bounded by source-grid * 16. Inspector shows source/render/factor."
+    },
+    // TERRAIN-CHUNK-POM-1: real view-vector parallax occlusion mapping on the
+    // LIVE LOD-chunk terrain path (gos_terrain_lod_chunk.cpp uploads,
+    // terrain_lod_chunk.frag chunkParallaxView). Gate OFF preserves the legacy
+    // faux-view-vector chunkParallax output VERBATIM (supervisor ruling:
+    // byte-identity INCLUDES the faux shear — pomParams is NOT zeroed when OFF).
+    {
+        "MC2_FEATURE_TERRAIN_POM",
+        "MC2_TERRAIN_POM",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-CHUNK-POM-1: real per-fragment tangent-space view-vector POM on the LOD-chunk terrain (rock/grass detail layers). Default-OFF = legacy faux constant viewDirTS(0.15,0.85,0.15) march runs VERBATIM (byte-identical incl. the faux shear; pomParams upload unchanged). =1 swaps in the real camera vector (gos_GetTerrainCameraPos, Stuff/MLR frame -> MC2 world (-x,z,y)) with a world-distance fade (MC2_TERRAIN_POM_NEAR/_FAR), triplanar-cliff slope exclusion (|Nz| 0.85->0.55 band), cement/concrete exclusion (w.w), and LOD0/1-only belt. Shading-only parallax: NEVER writes gl_FragDepth (AMD early-Z landmine); shadows sample the true surface point. Read once per process (static). Debug viz: MC2_TERRAIN_LOD_CHUNK_DIAG bit 4096 = |pomOff| heat, bit 8192 = view-vector swizzle oracle (RGB = MC2-world frag->camera dir)."
+    },
+    {
+        "MC2_TUNE_TERRAIN_POM_SCALE",
+        "MC2_TERRAIN_POM_SCALE",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CHUNK-POM-1 knob: POM march scale override (float > 0). Default unset = gos_GetTerrainPOMScale() (0.02). Only consumed when MC2_TERRAIN_POM=1; gate-OFF upload is the stock line regardless. Expect retune vs legacy: the faux up=0.85 divided the effective offset, a real grazing view yields larger P."
+    },
+    {
+        "MC2_TUNE_TERRAIN_POM_STEPS",
+        "MC2_TERRAIN_POM_STEPS",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CHUNK-POM-1 knob: max POM march layers, accepted 4..16 (else default 16; hard compile-constant cap 16). min layers = min(value,8). More layers at grazing view (oracle orientation, mix(max,min,up)). Only consumed when MC2_TERRAIN_POM=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_POM_NEAR",
+        "MC2_TERRAIN_POM_NEAR",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CHUNK-POM-1 knob: POM distance-fade band start in world units (default 1500; 1 tile = 384 wu). Camera ground distance + 0.7*altitude boost (dead-frag LOD semantics); full POM strength inside NEAR. NaN/negative -> default. Only consumed when MC2_TERRAIN_POM=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_POM_FAR",
+        "MC2_TERRAIN_POM_FAR",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CHUNK-POM-1 knob: POM distance-fade band end in world units (default 3500). Beyond FAR the march is skipped entirely (strength 0 early-out). Clamped to > NEAR (NEAR+1 floor). NaN/non-positive -> default. Only consumed when MC2_TERRAIN_POM=1."
+    },
+    // TERRAIN-MATERIAL-TEXTURES-1: per-layer PBR albedo textures on the LIVE
+    // LOD-chunk terrain path (gos_terrain_lod_chunk.cpp lazy loader + binder,
+    // terrain_lod_chunk.frag u_useMatAlbedo branch). Gate OFF -> u_useMatAlbedo
+    // uploads 0 -> the colormap-tint composition runs VERBATIM (byte-identical).
+    {
+        "MC2_FEATURE_TERRAIN_MATERIAL_TEXTURES",
+        "MC2_TERRAIN_MATERIAL_TEXTURES",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-MATERIAL-TEXTURES-1: 6-layer BC7 sRGB GL_TEXTURE_2D_ARRAY albedo (rock/grass/dirt/concrete/snow/cliff from data/terrain_layers/<channel>_albedo.ktx2, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM -- sampler does the sRGB decode) sampled world-space with the material-lib per-layer tiling (matTiling; rock /3 matches the detail-normal path). matWeights (classifier or control map) + HSV snow select layers; the colormap stays the MACRO tint (2x multiply keeps burn-in shading); steep slopes take the CLIFF layer triplanar (the 'cliffs look like rock' payoff). Mix knob u_matAlbedoStrength: env MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH > JSON matAlbedoStrength (terrain_materials.json; also supports textureRoot + layers.<channel>.albedo path overrides via the TinyJson nested-layers extension) > 0.7 default. Fail-soft: missing/mismatched/non-BC7-sRGB layer files log [TERRAIN_MAT_TEX] and leave the gate visually OFF. VRAM ~32 MiB (6x2048^2 BC7 + mips). Default-OFF byte-identical."
+    },
+    {
+        "MC2_TUNE_TERRAIN_MATERIAL_TEXTURES_STRENGTH",
+        "MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-MATERIAL-TEXTURES-1 knob: albedo mix strength override (float, clamped 0..1). 0 = legacy tinted colormap, 1 = full textured composite. Wins over the JSON matAlbedoStrength key; unset/NaN falls to JSON then the 0.7 default. Only consumed when MC2_TERRAIN_MATERIAL_TEXTURES=1."
     },
     {
         "MC2_DIAG_VFX_DEBUG_MODE",
@@ -1015,6 +1088,36 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "Emits [FX_FORCE_SPAWN v1] event=mech_fire (stdout -> needs MC2_LOG=1 to see). "
         "=0/unset disables; zero cost unset."
     },
+    // FX-DEFS-SIDECAR-1: EffectDef JSON overlay (VFX-MODERNIZATION-PROPOSAL-1 slice 1)
+    {
+        "MC2_FX_DEFS",
+        "MC2_FX_DEFS",
+        EnvVarKind::Feature,
+        false,
+        "FX-DEFS-SIDECAR-1: per-effect JSON sidecar overlay for the gosFX spec catalog "
+        "(mc2::particles::SpecLibrary). Default-OFF; when unset, code/mechcmd2.cpp skips "
+        "the overlay entirely and the loaded mc2.fx blob is byte-identical to stock. "
+        "When =1, after gosFX::EffectLibrary::Instance->Load() completes, "
+        "mc2fxdefs::EffectDefRegistry::instance().applyAll() overlays every "
+        "data/effects/defs/<EffectName>.fxdef.json (+ the active mod's own "
+        "data/effects/defs/, MC2_ACTIVE_MOD, mod wins on dup key -- mclib/fx_def_registry."
+        "{h,cpp}) onto the matching spec found via SpecLibrary::Find (case-insensitive "
+        "name match, same as EffectLibrary::Find). v1 overlay fields: disabled (forces "
+        "lifeSpan to 0, functional no-op -- SpecLibrary's array has no public remove), "
+        "texture (rebinds spec->m_state via MLRTexturePool::Add/lookup, the exact call "
+        "MLRState::Load itself makes when parsing a texture name off the stream), blend "
+        "(additive=OneOneMode / alpha=AlphaInvAlphaMode via MLRState::SetAlphaMode), and "
+        "curves.{alpha,red,green,blue,scale,lifeSpan} (constant-only overrides, collapses "
+        "the age curve to a flat value -- mirrors tools/mc2fx's patch.json 'constant' "
+        "tier). Unknown top-level JSON keys and reserved v2 keys (flipbook/erosion/"
+        "distortion/light) are tolerated for forward-compat; unrecognized 'curves' "
+        "sub-keys and unresolved effect names are logged [FXDEF]-prefixed to stderr and "
+        "skipped, never fatal. Per-effect failure never blocks other defs or blocks the "
+        "level load. No gameplay/emission/lifetime/timing semantics change beyond the "
+        "authored curve values themselves (same knobs tools/mc2fx already edits offline); "
+        "this just moves the sparse named-effect override in-engine and per-mod-additive. "
+        "See docs/modding-effects.md and .claude/VFX-MODERNIZATION-PROPOSAL-1.md §3.1."
+    },
     // PPC / direct-fire projectile knobs (gameplay; launcher-toggleable)
     {
         "MC2_PROJECTILE_SPEED_MULT",
@@ -1048,6 +1151,32 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "particle/tube path (forces/integrate/birth, animate, bridge flush) -> "
         "[FX_COST v1] stderr summary every 600 frames. "
         "mclib/fx_trace/fx_cost_split.*. Zero cost unset."
+    },
+    {
+        "MC2_TRACE_IFACE_COST_SPLIT",
+        "MC2_IFACE_COST_SPLIT",
+        EnvVarKind::Trace,
+        false,
+        "MISSION-INTERFACE-PERF-1: chrono cost-split of MissionInterfaceManager::"
+        "update() (the GameLogic.Mission.Interface Tracy zone) incl. ControlGui "
+        "sub-phases (pauseWnd/btnHover/rosterScan/moverState/tacMap/infoWnd/"
+        "vehicleTab/fgBar). Emits one [IFACE_PERF v1] line per 900 frames + at "
+        "mission end. Superset of MC2_MIF_SPLIT (either env enables both). "
+        "code/missiongui.cpp + code/controlgui.cpp. Zero cost unset."
+    },
+    {
+        "MC2_PICK_FALLBACK_COARSE",
+        "MC2_PICK_FALLBACK_COARSE",
+        EnvVarKind::Feature,
+        false,
+        "MISSION-INTERFACE-PERF-1: coarse-to-fine closest-vertex fallback in "
+        "Camera::inverseProject (mclib/camera.cpp). The off-map fallback is the "
+        "PRODUCTION ground picker when the quadList is empty (LOD-chunk terrain); "
+        "legacy code brute-force-projects ALL realVerticesMapSide^2 vertices per "
+        "cache-miss frame (~890us on mc2_24, 85-95% of Mission.Interface). ON = "
+        "stride-8 coarse pass + full-res +/-9 refine, same nearest-projected-"
+        "vertex answer in practice. With MC2_PICK_CAP_TRACE=1 every 32nd walk "
+        "re-runs the brute force and logs [PICK_FALLBACK] parity. Default OFF."
     },
     {
         "MC2_XFORM_PARITY_FATAL",
@@ -1116,6 +1245,50 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "before default-on: SubData into the in-flight whole-frame/cross-phase light "
         "buffer STALLS on NVIDIA (the stall the orphan dodged); tolerated on AMD."
     },
+    {
+        "MC2_LIGHT_PREFIX_GPU_COPY",
+        "MC2_LIGHT_PREFIX_GPU_COPY",
+        EnvVarKind::Feature,
+        false,
+        "LIGHT-PREFIX-GPU-COPY-1 (TXMMGR-PERF-EASYWINS-1): keep a VRAM stash of the "
+        "immutable static light prefix [0..S) and glCopyBufferSubData it into the "
+        "freshly-orphaned slot-20 light SSBO each frame instead of re-pushing it over "
+        "PCIe; only the dynamic suffix goes through glBufferSubData. Fixes the "
+        "STATIC_LIGHT_UPLOAD_SPLIT prefix-skip that LIGHTSSBO-ORPHAN-1 defeated "
+        "(measured light_upload ~950us/frame on mc2_24 = ~9.7MB/frame). NVIDIA-safe "
+        "by the same orphan discipline: writes only into the fresh store; the stash "
+        "is read-only except on prefixDirty (bake/re-bake) frames. Default-OFF "
+        "pending soak; unset/=0 -> ORPHAN-1 path byte-identical. Requires "
+        "MC2_STATIC_LIGHT_UPLOAD_SPLIT + MC2_LIGHTBAKE (both default-ON); subsumed "
+        "by MC2_GPUBUF_LIGHT_GROWONCE when set."
+    },
+    {
+        "MC2_SHADOW_CASTER_CULL_CACHE",
+        "MC2_SHADOW_CASTER_CULL_CACHE",
+        EnvVarKind::Feature,
+        false,
+        "SHADOW-CASTER-CULL-CACHE-1 (TXMMGR-PERF-EASYWINS-1): reuse the "
+        "Shadow.CasterCull result (mclib/txmmgr.cpp DynamicShadowPass) across "
+        "frames when BOTH the static-prop registry generation and the 16-float "
+        "dynamic light-space matrix are unchanged (bit-compare). The cull is a "
+        "pure function of (caster set, matrix, margin); margin/includeBldg are "
+        "session-static. Camera motion or any registry mutation recomputes "
+        "exactly as before. Default-OFF pending soak; unset/=0 -> per-frame "
+        "recompute (byte-identical)."
+    },
+    {
+        "MC2_RENDERLISTS_COST_SPLIT",
+        "MC2_RENDERLISTS_COST_SPLIT",
+        EnvVarKind::Trace,
+        false,
+        "TXMMGR-PERF-EASYWINS-1: coarse per-phase CPU cost split of "
+        "MC_TextureManager::renderLists() (mclib/txmmgr.cpp). Emits one "
+        "[RENDERLISTS_COST v1] stderr summary every 60 frames with per-frame mean "
+        "us per phase (preamble/light_upload/sp_registry_flush/dyn_shadow/"
+        "sp_batcher_flush/...) + total + self (unattributed). Smoke-visible "
+        "complement of the Tracy zones. Default-OFF = zero overhead beyond one "
+        "cached-bool test per phase."
+    },
     // SPIRV-CONSUMER-PILOT-BUILD-1: runtime SPIR-V consumer (postprocess pilot).
     {
         "MC2_SHADER_SPIRV",
@@ -1140,6 +1313,154 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         ".spv (glShaderBinary reject / specialize failure) assert/abort instead "
         "of falling back to GLSL — used to surface artifact corruption in "
         "testing. Default-OFF = silent-but-logged GLSL fallback."
+    },
+
+    // -------------------------------------------------------------------
+    // ENV-REGISTRY-LEGACY-SWEEP-1: promotions from the legacy-var registry
+    // sweep (scripts/check-env-registry.sh ALLOWLIST). These are genuinely
+    // active feature gates pulled out of the allowlist into the real
+    // registry; see scripts/check-env-registry.sh history for the other
+    // ~355 vars that stayed allowlisted (trace/override/infra/parity/legacy).
+    // -------------------------------------------------------------------
+    {
+        "MC2_FEATURE_ANIM_CADENCE_FIX",
+        "MC2_ANIM_CADENCE_FIX",
+        EnvVarKind::Feature,
+        true,
+        "ANIM-CADENCE-FIX: advance mech gait at most once per render frame; prevents a visible double-step when Mover::getLOSPosition() re-invokes appearance->update() the same frame. Default-ON (user-confirmed fix, mc2_17 Catapult/Bushwacker); =0 disables to A/B the double-step."
+    },
+    {
+        "MC2_FEATURE_ASSIMP_MECH_IMPORT",
+        "MC2_ASSIMP_MECH_IMPORT",
+        EnvVarKind::Feature,
+        false,
+        "BT2018 mech import 1A: route mech geometry through the Assimp GLTF/FBX importer instead of the legacy MSL loader. Default-OFF; =1 enables."
+    },
+    {
+        "MC2_FEATURE_BRAIN_RUNTIME",
+        "MC2_BRAIN_RUNTIME",
+        EnvVarKind::Feature,
+        false,
+        "TechBrain declarative-brain runtime master gate (warrior.cpp). Default-OFF; =1 enables. Companion MC2_BRAIN_RUNTIME_APPLY gates whether resolved intents are actually applied."
+    },
+    {
+        "MC2_FEATURE_BRAIN_RUNTIME_APPLY",
+        "MC2_BRAIN_RUNTIME_APPLY",
+        EnvVarKind::Feature,
+        false,
+        "TechBrain runtime apply gate (warrior.cpp). Default-OFF; requires MC2_BRAIN_RUNTIME=1. =1 applies resolved brain intents instead of only computing them."
+    },
+    {
+        "MC2_FEATURE_BRAIN_DISPATCH",
+        "MC2_BRAIN_DISPATCH",
+        EnvVarKind::Feature,
+        false,
+        "TechScript special-dispatch master gate (mission.cpp/brain_special_dispatch.cpp). Default-OFF; requires MC2_BRAIN_RUNTIME=1 + MC2_BRAIN_RUNTIME_APPLY=1."
+    },
+    {
+        "MC2_FEATURE_SMART_LOAD",
+        "MC2_SMART_LOAD",
+        EnvVarKind::Feature,
+        false,
+        "SMART-LOAD startup/mission-load perf path (logisticsdata.cpp). Default-OFF; =1 enables. MC2_SMART_LOAD_TRACE (allowlisted trace) logs the load-time breakdown."
+    },
+    {
+        "MC2_FEATURE_DYNAMIC_DECALS",
+        "MC2_DYNAMIC_DECALS",
+        EnvVarKind::Feature,
+        false,
+        "Dynamic decal ring (mclib/dynamic_decal_ring.cpp): spawn()/gatherToDecalBatch() are no-ops when off. Default-OFF; =1 (or any non-'0' value) enables."
+    },
+    {
+        "MC2_FEATURE_UNIT_PROFILE_DATA",
+        "MC2_UNIT_PROFILE_DATA",
+        EnvVarKind::Feature,
+        false,
+        "UNIT-PROFILE-ARC: data-driven unit+equipment definition source (code/unitprofile.cpp). Default LEGACY (var unset/'0' = legacy path); =1 (or any non-'0' value) switches to the generated UnitProfileData source."
+    },
+    {
+        "MC2_FEATURE_FRAMEGRAPH_EXECUTOR",
+        "MC2_FRAMEGRAPH_EXECUTOR",
+        EnvVarKind::Feature,
+        false,
+        "RENDER-FRAME-GRAPH arc: top-level frame-graph executor ownership of pass begin/end (mclib/render_contract.cpp, GameOS/gameos/gos_postprocess.cpp). Default-OFF = legacy direct call order, byte-identical; =1 routes through the executor. See docs/renderworld_arc_status.md."
+    },
+    {
+        "MC2_FEATURE_RENDER_PASS_ORDER",
+        "MC2_RENDER_PASS_ORDER",
+        EnvVarKind::Feature,
+        false,
+        "CONTRACT-3: per-frame resource-ordering audit (mclib/render_contract.cpp) — checks each pass's reads[] are satisfied by a prior write before beginPass. Default-OFF; =1 enables. MC2_RENDER_PASS_TELEMETRY (allowlisted trace) shares the endPass logging."
+    },
+    {
+        "MC2_FEATURE_TERRAIN_LOD_CHUNK",
+        "MC2_TERRAIN_LOD_CHUNK",
+        EnvVarKind::Feature,
+        true,
+        "LOD-chunk terrain renderer (mclib/terrain.cpp/terrain.h), the primary tessellation-free terrain path. Default-ON (reworked/stabilized); =0 opts out to the legacy path (increasingly vestigial per terrain.cpp:149 warning)."
+    },
+    {
+        "MC2_FEATURE_SHADOW_CSM",
+        "MC2_SHADOW_CSM",
+        EnvVarKind::Feature,
+        true,
+        "Cascaded shadow maps master gate (GameOS/gameos/gos_postprocess.cpp), reworked 2026-06-18 (commit 8ff13a36). Default-ON; =0 opts out to the legacy single dynamic shadow map path. See docs/tier1_env_vars.md \"Dynamic CSM\"."
+    },
+    {
+        "MC2_FEATURE_TERRAIN_VISUAL_HEIGHT",
+        "MC2_TERRAIN_VISUAL_HEIGHT",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-VISUAL-HEIGHT: loads the 4x-res VISUAL heightfield bake into an SSBO for corner-pinned interior displacement (mclib/terrain.cpp). Default-OFF = no load, no SSBO, byte-identical; =1 (or MC2_TERRAIN_VISUAL_DISPLACE=1, which implies load) enables. MC2_TERRAIN_VISUAL_HEIGHT_FILE (allowlisted override) picks an explicit bake path."
+    },
+    {
+        "MC2_FEATURE_MOVE_RECON",
+        "MC2_MOVE_RECON",
+        EnvVarKind::Feature,
+        false,
+        "Pathfinding cost instrumentation (mclib/move_recon.cpp). Default-OFF, zero behavior change when unset. MC2_MOVE_CHUNK_SHADOW / MC2_MOVE_PATH_CACHE_SHADOW (allowlisted) are alternate enables for the same instrumentation."
+    },
+    {
+        "MC2_FEATURE_STATIC_PROXY_RECON",
+        "MC2_STATIC_PROXY_RECON",
+        EnvVarKind::Feature,
+        false,
+        "StaticSceneProxy-arc recon instrumentation (mclib/bdactor.cpp) — counts touchSerialCommit calls for building/tree appearances ahead of the per-frame static-prop-walk meta-fix. Default-OFF; presence-gated."
+    },
+    {
+        "MC2_FEATURE_RENDER_BACKEND_IFACE",
+        "MC2_RENDER_BACKEND_IFACE",
+        EnvVarKind::Feature,
+        false,
+        "RENDER-BACKEND-SEAMS arc: routes select GL calls (e.g. scene FBO bind) through the GLBackend seam instead of direct GL. Default-OFF = direct GL, byte-identical; ON exercises the same GL call through the seam (same output, proves the seam routes). See GameOS/gameos/gos_postprocess.cpp."
+    },
+    {
+        "MC2_FEATURE_STATIC_UPDATE_SKIP",
+        "MC2_STATIC_UPDATE_SKIP",
+        EnvVarKind::Feature,
+        true,
+        "Skip the per-frame static building/tree update walk when nothing is dirty (GameOS/gameos/gameosmain.cpp, code/terrobj.cpp, code/bldng.cpp). Default-ON (perf); =0 restores the legacy always-walk behavior."
+    },
+    {
+        "MC2_FEATURE_VULKAN_EDGE_FOG_ISLAND",
+        "MC2_VULKAN_EDGE_FOG_ISLAND",
+        EnvVarKind::Feature,
+        false,
+        "VULKAN-CONTRACT-MANIFEST-ARC Layer 3: native Vulkan edge-fog island (GameOS/gameos/vulkan_edge_fog_island.cpp) — GL depth/color readback bridged into a Vulkan compute pass, pixel-parity-proven vs the GL path. Default-OFF, presence-gated (=1 enables); requires the Vulkan probe device to be viable (falls back to GL otherwise). See MEMORY handoff HANDOFF_2026_07_01_vulkan_lib_track."
+    },
+    {
+        "MC2_FEATURE_VULKAN_POSTPROCESS_SUBGRAPH",
+        "MC2_VULKAN_POSTPROCESS_SUBGRAPH",
+        EnvVarKind::Feature,
+        false,
+        "VULKAN-CONTRACT-MANIFEST-ARC Layer 4: native Vulkan postprocess subgraph (GameOS/gameos/vulkan_postprocess_subgraph.cpp) fusing fog passes into one render pass / two draws, Vulkan-owned intermediate target. Default-OFF, presence-gated (=1 enables). See MEMORY handoff HANDOFF_2026_07_01_vulkan_lib_track."
+    },
+    {
+        "MC2_FEATURE_VULKAN_SWAPCHAIN_PRESENT",
+        "MC2_VULKAN_SWAPCHAIN_PRESENT",
+        EnvVarKind::Feature,
+        false,
+        "VULKAN-CONTRACT-MANIFEST-ARC Layer 5: engine-owned Vulkan swapchain (create/present/resize) (GameOS/gameos/vulkan_backend_skeleton.cpp, vulkan_swapchain_present.cpp). Default-OFF, presence-gated (=1 enables); validation-clean core+sync per L5 proof. See MEMORY handoff HANDOFF_2026_07_01_vulkan_lib_track."
     },
 };
 

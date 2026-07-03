@@ -111,6 +111,22 @@ GAME_DATA_PAYLOAD = [
     "data/visual_tuning.json",
 ]
 
+# TERRAIN-MATERIAL-TEXTURES-1: per-layer BC7 sRGB albedo KTX2s read off
+# "data/terrain_layers/<channel>_albedo.ktx2" by the LOD-chunk albedo-array
+# loader (gos_terrain_lod_chunk.cpp) when MC2_TERRAIN_MATERIAL_TEXTURES=1.
+# Loose cooked sidecars (gitignored; regenerate via
+# tools/mc2texcook/cook_terrain_layers.py -- must be mip-complete BC7 sRGB).
+# OPTIONAL at deploy time: a missing layer file only logs and skips (the
+# engine fail-softs to the legacy tint path), matching the runtime contract.
+TERRAIN_LAYER_PAYLOAD = [
+    "data/terrain_layers/rock_albedo.ktx2",
+    "data/terrain_layers/grass_albedo.ktx2",
+    "data/terrain_layers/dirt_albedo.ktx2",
+    "data/terrain_layers/concrete_albedo.ktx2",
+    "data/terrain_layers/snow_albedo.ktx2",
+    "data/terrain_layers/cliff_albedo.ktx2",
+]
+
 FFMPEG_DLLS = [
     "avcodec-61.dll",
     "avformat-61.dll",
@@ -135,6 +151,27 @@ def sha256_file(path):
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+# TERRAIN-MATERIAL-TEXTURES-1-FIX (fix D): read a KTX2 file's levelCount from the
+# header. The KTX2 v2 layout is a 12-byte identifier followed by a fixed header:
+# vkFormat(u32) typeSize(u32) pixelWidth(u32) pixelHeight(u32) pixelDepth(u32)
+# layerCount(u32) faceCount(u32) levelCount(u32) ... -- so levelCount is the 8th
+# u32 after the identifier (byte offset 12 + 7*4 = 40). Returns the level count,
+# or None if the file is not a recognizable KTX2 (never blocks a non-KTX2 asset).
+def _ktx2_level_count(path):
+    import struct
+    KTX2_MAGIC = b"\xabKTX 20\xbb\r\n\x1a\n"
+    try:
+        with open(path, "rb") as f:
+            head = f.read(44)
+        if len(head) < 44 or head[:12] != KTX2_MAGIC:
+            return None
+        # 8 u32 fields at offset 12; levelCount is the 8th (index 7).
+        fields = struct.unpack("<8I", head[12:44])
+        return fields[7]
+    except OSError:
+        return None
 
 
 def repo_root():
@@ -437,6 +474,19 @@ def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
         dirs[:] = [d for d in dirs if d.lower() != "fixtures"]
         for fn in sorted(files):
             p = os.path.join(dirpath, fn)
+            # GUARD (2026-07-02): refuse to ship shader sources containing git
+            # conflict markers. A mid-merge deploy shipped a frag with <<<<<<<
+            # markers -> GLSL compile fail -> shader_error smoke FAIL on the
+            # user's viewing lane. Cheap scan; text shader sources only.
+            if fn.lower().endswith((".frag", ".vert", ".comp", ".glsl", ".hglsl",
+                                    ".tesc", ".tese", ".geom")):
+                try:
+                    with open(p, "rb") as fh:
+                        blob = fh.read()
+                    if b"<<<<<<<" in blob or b">>>>>>>" in blob:
+                        fail(f"shader source contains git conflict markers: {p}")
+                except OSError as e:
+                    fail(f"cannot read shader source {p}: {e}")
             rel = os.path.relpath(p, src_root).replace(os.sep, "/")
             items.append((p, rel, "shader"))
 
@@ -450,6 +500,25 @@ def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
         p = os.path.join(src_root, rel)
         if require_build and not os.path.isfile(p):
             fail(f"game data payload missing in source: {p}")
+        items.append((p, rel, "support"))
+
+    # TERRAIN-MATERIAL-TEXTURES-1: optional loose cooked sidecars -- skip (log)
+    # when absent instead of failing; the engine fail-softs without them.
+    # TERRAIN-MATERIAL-TEXTURES-1-FIX (fix D, MIPS ROOT CAUSE): the "levels=1
+    # deployed" bug was a stale pre-mip cook getting picked up because deploy just
+    # copies whatever _albedo.ktx2 is on disk. Guard it here: read the KTX2
+    # levelCount and HARD-FAIL if a present layer is mip-incomplete, so a stale
+    # cook can never reach the payload silently. Re-cook, then re-deploy.
+    for rel in TERRAIN_LAYER_PAYLOAD:
+        p = os.path.join(src_root, rel)
+        if not os.path.isfile(p):
+            log(f"terrain layer payload absent (skipped, engine fail-softs): {rel}")
+            continue
+        lvls = _ktx2_level_count(p)
+        if lvls is not None and lvls <= 1:
+            fail(f"terrain layer payload is mip-incomplete (levelCount={lvls}, expected >1): "
+                 f"{rel} -- re-cook with tools/mc2texcook/cook_terrain_layers.py (mips=True) "
+                 f"BEFORE deploying, or the engine ships a shimmering single-level albedo array.")
         items.append((p, rel, "support"))
 
     # Support payload: launch scripts (per target) + editor authoring trees.

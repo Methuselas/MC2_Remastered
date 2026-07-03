@@ -79,6 +79,8 @@ extern CPrefs prefs;
 #include<stuff/stuff.hpp>
 #include<mlr/mlr.hpp>
 #include<gosfx/gosfxheaders.hpp>
+#include "particles/spec_library.h"
+#include "fx_def_registry.h"
 
 #include "platform_str.h"
 #include "gos_validate.h"
@@ -1716,7 +1718,17 @@ void __stdcall InitializeGameEngine()
 		
 		effectStream = new Stuff::MemoryStream(effectsData,effectsSize);
 		gosFX::EffectLibrary::Instance->Load(effectStream);
-		
+
+		// FX-DEFS-SIDECAR-1: overlay data/effects/defs/<Name>.fxdef.json (+
+		// active mod's own defs/) onto the just-loaded SpecLibrary. Gate
+		// MC2_FX_DEFS (default OFF); parsing itself is always cheap/free so
+		// [FXDEF] diagnostics are available under MC2_LOG regardless, but the
+		// spec-mutating apply only runs when the gate is on. When OFF or no
+		// defs exist, the loaded blob is byte-identical to stock.
+		if (getenv("MC2_FX_DEFS")) {
+			mc2fxdefs::EffectDefRegistry::instance().applyAll(mc2::particles::SpecLibrary::Instance());
+		}
+
 		gosFX::LightManager::Instance = new gosFX::LightManager();
 	
 		gos_PopCurrentHeap();

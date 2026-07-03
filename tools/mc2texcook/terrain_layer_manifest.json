@@ -54,19 +54,19 @@
       "license": "CC0 (PolyHaven convention). No license file on disk in this download -- provenance assumed, not verified from an on-disk LICENSE."
     },
     "concrete": {
-      "source_pack": "Road004_2K-PNG.zip",
-      "source_dir": "C:/Users/Joe/Downloads/GameAsset/Terrain/Road004_2K-PNG.zip",
-      "format": "ambientcg",
+      "source_pack": "concrete_layers_02_2k.blend.zip",
+      "source_dir": "C:/Users/Joe/Downloads/GameAsset/Terrain/concrete_layers_02_2k.blend.zip",
+      "format": "polyhaven",
       "maps": {
-        "albedo":    "Road004_2K-PNG_Color.png",
-        "normal":    "Road004_2K-PNG_NormalGL.png",
-        "height":    "Road004_2K-PNG_Displacement.png",
-        "roughness": "Road004_2K-PNG_Roughness.png",
+        "albedo":    "textures/concrete_layers_02_diff_2k.jpg",
+        "normal":    "textures/concrete_layers_02_nor_gl_2k.exr",
+        "height":    "textures/concrete_layers_02_disp_2k.png",
+        "roughness": "textures/concrete_layers_02_rough_2k.exr",
         "ao": null
       },
       "mat_slot_hint": "MAT_LAYER_CONCRETE (3)",
-      "provenance": "AmbientCG Road004, 2K. Clean poured-concrete/road slab -- distinct from the already-hinted mat6/7/8 slots (painted_concrete_02/clean_asphalt/concrete_wall_003 per shaders/include/terrain_mat_layers.hglsl); this is the primary mat3 CONCRETE channel only. cracked_concrete_2k considered and rejected here (EXR-only rough/normal, no AO, and its damage pattern reads worse as a general splat base -- kept as an alternate for a future distressed variant).",
-      "license": "CC0 (AmbientCG convention). No license file on disk in this download -- provenance assumed, not verified from an on-disk LICENSE."
+      "provenance": "TERRAIN-MATERIAL-TEXTURES-1-FIX (fix B, CONCRETE SWAP): SWAPPED FROM Road004 -> concrete_layers_02 (PolyHaven, 2K). Road004 had painted LANE MARKINGS baked into the albedo (white dashed lines) which tiled across every concrete/cement surface (apron, runway) -- wrong for a generic mat3 CONCRETE channel. concrete_layers_02 is a neutral, marking-free poured-concrete slab (measured meanRGB~(125,122,116), avgSat~9 = genuinely grey, no colour cast, no dashes) -- the correct plain surface for aprons/pads. cracked_concrete_2k was the other candidate (meanRGB~(120,105,88), warm tan cast) -- rejected for the primary channel because the tan cast pushes the apron off-grey; kept as a future distressed variant. Both have full diff/nor_gl/disp so the normal(+height) sidecar still cooks.",
+      "license": "CC0 (PolyHaven convention). No license file on disk in this download -- provenance assumed, not verified from an on-disk LICENSE."
     },
     "snow": {
       "source_pack": "snow_field_aerial_2k.blend.zip",

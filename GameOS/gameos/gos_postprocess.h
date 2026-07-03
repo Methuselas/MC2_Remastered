@@ -172,6 +172,12 @@ public:
     void setMapHalfExtent(float extent) { mapHalfExtent_ = extent; }
     float getMapHalfExtent() const { return mapHalfExtent_; }
     void setWaterElevation(float elev) { waterElevation_ = elev; }
+    // TERRAIN-SHORELINE-V3: read-only accessor so the chunk terrain driver
+    // (gos_terrain_lod_chunk.cpp) can upload the SAME water elevation the
+    // water fast path uses (Terrain::waterElevation, mirrored here at mission
+    // load via setWaterElevation/gos_SetWaterElevation) as u_waterElevation
+    // for elevation-based shoreline band placement.
+    float getWaterElevation() const { return waterElevation_; }
 
     // Dynamic object shadows: camera-centered, re-rendered every frame
     void initDynamicShadows();
@@ -196,9 +202,10 @@ public:
     int getDynamicShadowMapSize() const { return dynShadowMapSize_; }
 
     // --- Item 1: Cascaded Shadow Maps (dynamic path) -----------------------
-    // Gate (MC2_SHADOW_CSM, default OFF). When OFF the legacy single-map path
-    // above is used unchanged (byte-identical). When ON, the dynamic shadow is
-    // a GL_TEXTURE_2D_ARRAY of csmCount layers, each with its own light matrix.
+    // Gate (MC2_SHADOW_CSM, default ON since 2026-06-18 `8ff13a36`; "=0" opts
+    // out to the legacy single-map path above, byte-identical). When ON
+    // (the default), the dynamic shadow is a GL_TEXTURE_2D_ARRAY of csmCount
+    // layers, each with its own light matrix.
     GLuint getDynamicShadowArrayTexture() const { return dynShadowArrayTex_; }
     int    getDynamicShadowCascadeCount() const { return csmCount_; }
     // Flat float[csmCount_*16] of per-cascade light-space matrices (col-major).
@@ -333,7 +340,14 @@ public:
     // Gate OFF (executor never called): flag stays false → body sets state as before
     // → byte-identical to pre-slice behavior.
     bool  edgeFogStateAppliedByExecutor_ = false;
-    float edgeFogColor_[3] = {0.93f, 0.94f, 0.95f};
+    // FOG-EXPOSURE-HEADROOM-1: fog composites into sceneFBO_ BEFORE the composite
+    // pass applies exposure_ + the unconditional warm grade (postprocess.frag:89,
+    // 95-112). At the near-white {0.93,0.94,0.95} the graded missions (mc2_24
+    // exposure 1.1, mc2_10 1.05) drove fog past 1.0 -> blown-out white cloud
+    // ("fog super bright in some spots"). Drop the base so exposure*grade has
+    // headroom: 0.80 * 1.1(exp) * 1.10(grade) ~= 0.97, still a bright cloud bank
+    // but no clip. Env MC2_OOB_FOG_COLOR still overrides oob at runtime.
+    float edgeFogColor_[3] = {0.80f, 0.81f, 0.83f};
     float edgeFogStart_    = 50.0f;    // world units inside boundary where fog begins
     float edgeFogHeight_   = 2000.0f;  // cloud bank top in world Z (MC2_EDGE_FOG_HEIGHT)
     float edgeFogMax_      = 0.92f;    // max opacity
@@ -447,9 +461,33 @@ public:
     // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: per-island executor-applied flag (see
     // cloudShadowStateAppliedByExecutor_). Set by executorApplyFogOobState().
     bool  fogOobStateAppliedByExecutor_ = false;
-    float oobFogColor_[3] = {0.93f, 0.94f, 0.95f}; // default: white cloud bank
+    // FOG-EXPOSURE-HEADROOM-1: see edgeFogColor_ above. fog_oob.frag's noise
+    // "sunlit tops" (col = fogColor*1.05, line 101) clip FIRST under exposure,
+    // which is what read as bright *spots*. 0.80 base * 1.05(top) * 1.1(exp) *
+    // 1.10(grade) ~= 1.01 -- tops stay bright, no saturated white blob.
+    float oobFogColor_[3] = {0.80f, 0.81f, 0.83f}; // bright cloud bank (exposure-headroom)
     float oobFogOpacity_ = 1.0f;
     void  runFogOob();
+
+    // FOG-HORIZON-CLAMP-1: reshape the OOB/edge-fog elevation profile so fog is
+    // FULL at/below the horizon (covers OOB terrain/water sideways + down) and
+    // fades to ZERO within a small elevation band just above the horizon, leaving
+    // the sky above clear. Supersedes the old worldDir.z 0.22 exclusion band
+    // (which let fog survive to ~12deg+ elevation, bleeding up into the sky).
+    //   MC2_FOG_HORIZON_FADE_START -- elevation (deg) where the fade begins; fog
+    //                                 still full at/below this.  Default 0.
+    //   MC2_FOG_HORIZON_FADE_END   -- elevation (deg) where fog reaches zero.
+    //                                 Default 5.  Must be > start.
+    //   MC2_FOG_HORIZON_CLAMP=0    -- kill-switch: restore the previous profile
+    //                                 (no elevation clamp; old worldDir.z band).
+    // Shader form is cheap: we pass the SINES of the two angles (elevSin =
+    // -worldDir.z for a normalized dir), so the frag does a plain smoothstep on
+    // -worldDir.z with no per-fragment trig.
+    bool  fogHorizonClampEnabled_ = true;    // default ON (rides existing fog gate)
+    float fogHorizonFadeStartDeg_ = 0.0f;
+    float fogHorizonFadeEndDeg_   = 5.0f;
+    float fogHorizonFadeStartSin_ = 0.0f;    // sin(0deg)
+    float fogHorizonFadeEndSin_   = 0.08716f;// sin(5deg); recomputed from env in ctor
 
     // HZB-DEPTH-PYRAMID-MVP-1 (TRACKRV-HZB-VISIBILITY-OPUS-1). Gated reverse-Z
     // Hi-Z depth pyramid built from sceneDepthTex_ via a custom fragment MIN

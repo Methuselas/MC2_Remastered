@@ -87,6 +87,60 @@ def test_extract_output_validates(tmp_path):
     assert "PASS" in r.stdout
 
 
+@pytest.mark.skipif(not (CARVER5_MISSIONS / "mc2_24.pak").is_file(),
+                     reason="Carver5-feasibility stock mission data not present")
+def test_bridge_gate_exclusion_does_not_swallow_non_bridge_concrete():
+    """Regression for the latent bridge/gate exclusion bug (flagged by
+    WHOLESALE-VECTORIZE-1, root-fixed here): `read_bridge_gate_overlay_cells`
+    must actually discriminate bridge/gate cells (runtime-mutable, water-
+    adjacent) from ordinary overlay-tagged concrete (road/runway paint on dry
+    land). The old body returned the SAME mask as "any overlay-tagged cell"
+    (overlay_hi != 0 and != 0xFFFF, no water test at all), so it wrongly
+    excluded every overlay-tagged concrete cell from the sidecar bake --
+    including cells nowhere near water. On mc2_24 this drops 449 of 1170
+    concrete cells (38%) from the baked overlay-v2 sidecar even though NONE
+    of them are within 2 cells of water (i.e. none are bridge/gate-like)."""
+    from mission_terrain_analyzer import read_packets, locate_mapdata, extract_layers, read_water_elevation
+    from overlay_extract import classify_concrete, read_bridge_gate_overlay_cells
+
+    pak = CARVER5_MISSIONS / "mc2_24.pak"
+    packets = read_packets(pak)
+    pkt_idx, side, blocks = locate_mapdata(packets)
+    water_elev = read_water_elevation(pak.with_suffix(".fit"))
+    layers = extract_layers(side, blocks, water_elev)
+    water = layers["water"]
+    concrete = classify_concrete(layers["terrtype"])
+
+    bridge_gate = read_bridge_gate_overlay_cells(side, blocks, water_elev)
+
+    # A real bridge/gate cell must be at or adjacent to water. Any excluded
+    # concrete cell that is nowhere near water is a false positive: ordinary
+    # road/runway concrete wrongly dropped from the bake.
+    dilated = water.copy()
+    for _ in range(2):
+        nxt = dilated.copy()
+        nxt[1:, :] |= dilated[:-1, :]
+        nxt[:-1, :] |= dilated[1:, :]
+        nxt[:, 1:] |= dilated[:, :-1]
+        nxt[:, :-1] |= dilated[:, 1:]
+        dilated = nxt
+
+    excluded_concrete = concrete & bridge_gate
+    false_positive_exclusions = int((excluded_concrete & ~dilated).sum())
+    assert false_positive_exclusions == 0, (
+        f"{false_positive_exclusions} concrete cells excluded as 'bridge/gate' "
+        "despite being nowhere near water -- exclusion mask is too broad "
+        "(matches ANY overlay-tagged cell, not just bridge/gate cells)")
+
+    # And it must still classify at least mc2_24's known concrete coverage
+    # once the false-positive exclusion is fixed (no regression to 0 baked
+    # concrete on the mission this slice ships for).
+    kept = int((concrete & ~bridge_gate).sum())
+    assert kept == int(concrete.sum()), (
+        "expected NO concrete cells excluded on mc2_24 (0 real bridge/gate "
+        "cells there per recon), but the fix dropped some")
+
+
 @pytest.mark.skipif(not (CARVER5_MISSIONS / "mc2_01.pak").is_file(),
                      reason="Carver5-feasibility stock mission data not present")
 def test_extract_pak_untouched_byte_identical(tmp_path):

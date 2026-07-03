@@ -6,12 +6,28 @@ Rule: a compile define that toggles a class-LAYOUT-affecting member/vtable/base 
 
 ## PASS  (`MC2_VULKAN_ISLAND`)
 
-- Header: `GameOS/gameos/gos_postprocess.h:343`
+- Header: `GameOS/gameos/gos_postprocess.h:390`
 - Class: `gosPostProcess`  (data-member)
 - Member: `VulkanEdgeFogIsland* vkFogIsland_ = nullptr;`
 - Consuming targets: gameadapters, gameos, gameos_editor, gameos_main, gui_runtime, mclib, renderworld
 - Reached by define: gameadapters[gameadapters(PRIVATE)], gameos[gameos(PUBLIC)], gameos_editor[gameos_editor(PRIVATE)], gameos_main[gameos_main(PRIVATE)], gui_runtime[gui_runtime(PRIVATE)], mclib[mclib(PRIVATE)], renderworld[renderworld(PRIVATE)]
 
+## PASS  (`MC2_VULKAN_ISLAND`)
+
+- Header: `GameOS/gameos/gos_postprocess.h:405`
+- Class: `gosPostProcess`  (data-member)
+- Member: `VulkanOobFogIsland* vkOobFogIsland_ = nullptr;`
+- Consuming targets: gameadapters, gameos, gameos_editor, gameos_main, gui_runtime, mclib, renderworld
+- Reached by define: gameadapters[gameadapters(PRIVATE)], gameos[gameos(PUBLIC)], gameos_editor[gameos_editor(PRIVATE)], gameos_main[gameos_main(PRIVATE)], gui_runtime[gui_runtime(PRIVATE)], mclib[mclib(PRIVATE)], renderworld[renderworld(PRIVATE)]
+
+## PASS  (`MC2_VULKAN_ISLAND`)
+
+- Header: `GameOS/gameos/gos_postprocess.h:433`
+- Class: `gosPostProcess`  (data-member)
+- Member: `VulkanPostprocessSubgraph* vkPostprocessSubgraph_ = nullptr;`
+- Consuming targets: gameadapters, gameos, gameos_editor, gameos_main, gui_runtime, mclib, renderworld
+- Reached by define: gameadapters[gameadapters(PRIVATE)], gameos[gameos(PUBLIC)], gameos_editor[gameos_editor(PRIVATE)], gameos_main[gameos_main(PRIVATE)], gui_runtime[gui_runtime(PRIVATE)], mclib[mclib(PRIVATE)], renderworld[renderworld(PRIVATE)]
+
 ---
 
-Result: 1 guard(s) analyzed, 0 violation(s).
+Result: 3 guard(s) analyzed, 0 violation(s).
