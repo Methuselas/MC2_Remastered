@@ -1001,6 +1001,30 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "TERRAIN-MATERIAL-TEXTURES-1 knob: albedo mix strength override (float, clamped 0..1). 0 = legacy tinted colormap, 1 = full textured composite. Wins over the JSON matAlbedoStrength key; unset/NaN falls to JSON then the 0.7 default. Only consumed when MC2_TERRAIN_MATERIAL_TEXTURES=1."
     },
+    // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1: world-axis triplanar ROCK NORMAL + relief
+    // on steep terrain cells (terrain_lod_chunk.frag useTriplanarCliff branch,
+    // gos_terrain_lod_chunk.cpp kTglcCliffTriplanar upload). Samples the merged
+    // matNormalArray layer 5 (MAT_LAYER_MARBLE_CLIFF, mat5_normal.tga: rgb=normal,
+    // a=marble_cliff-derived displacement) projected from world axes so vertical
+    // faces stop showing the stretched top-down splat and read as real rock relief.
+    // DECOUPLED from the WIP albedo gate MC2_TERRAIN_MATERIAL_TEXTURES: the normal
+    // array is the always-loaded legacy terrain normal array, so this needs no
+    // albedo path. Default OFF -> uploads useTriplanarCliff=0 -> frag block no-op
+    // (byte-identical).
+    {
+        "MC2_FEATURE_TERRAIN_CLIFF_TRIPLANAR",
+        "MC2_TERRAIN_CLIFF_TRIPLANAR",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1: on steep terrain cells (macro slope, cliffBlend=smoothstep(0.85,0.55,|macroNz|)), project the MAT_LAYER_MARBLE_CLIFF (layer 5) ROCK NORMAL from WORLD axes (triplanar, ts=256 wu/repeat) into N and darken by its displacement relief (matNormalArray layer5 .a), instead of leaving the near-vertical face shaded by the stretched top-down terrain splat -- so cliff faces read as real rock. Samples the always-loaded legacy terrain normal array (gos_GetTerrainNormalArrayTex) so it is independent of the WIP MC2_TERRAIN_MATERIAL_TEXTURES albedo path. Strength via MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH (default 1.0). Default OFF -> useTriplanarCliff uploads 0 -> frag block skipped (byte-identical)."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_TRIPLANAR_STRENGTH",
+        "MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1 knob: triplanar rock-normal tilt strength (float, default 1.0). Scales how strongly the world-axis rock normal perturbs the terrain normal on cliff faces. Only consumed when MC2_TERRAIN_CLIFF_TRIPLANAR=1."
+    },
     {
         "MC2_DIAG_VFX_DEBUG_MODE",
         "MC2_VFX_DEBUG_MODE",

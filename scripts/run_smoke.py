@@ -1312,6 +1312,15 @@ def main():
                             # drops them and the gate-ON smoke does nothing.
                             "MC2_TERRAIN_MATERIAL_TEXTURES",
                             "MC2_TERRAIN_MATERIAL_TEXTURES_STRENGTH",
+                            # TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1 -- world-axis
+                            # triplanar rock NORMAL + relief on steep cells
+                            # (default OFF) + tilt-strength knob. Decoupled from
+                            # the albedo gate; samples the always-loaded terrain
+                            # normal array layer 5 (marble_cliff). Must be
+                            # allowlisted or Popen drops them and the gate-ON
+                            # capture does nothing.
+                            "MC2_TERRAIN_CLIFF_TRIPLANAR",
+                            "MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH",
                             # TERRAIN-MATERIAL-TEXTURES-1-FIX (fix A): the LOD-chunk
                             # diag bitmask drives the u_diag debug views, incl. bit
                             # 16384 = the INDEX ORACLE (each albedo array LAYER as a

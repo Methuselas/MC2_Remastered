@@ -24,6 +24,40 @@ import numpy as np
 from PIL import Image
 
 
+def _height_from_normal(rgb: np.ndarray) -> np.ndarray:
+    """Integrate a tangent-space normal map (NormalGL) into a relative height
+    field via Poisson-style frequency-domain solve of div(grad) = div(slope).
+
+    marble_cliff ships no displacement map, so the ONLY sources of relief are
+    the pack's own normal + ARM-AO. AO captures crevice occlusion but is soft;
+    integrating the normal recovers the mid/high-frequency groove structure that
+    makes a cliff face read as layered rock. Returns float height in [0,1]."""
+    nx = rgb[..., 0].astype(np.float32) / 127.5 - 1.0
+    ny = rgb[..., 1].astype(np.float32) / 127.5 - 1.0
+    nz = np.maximum(rgb[..., 2].astype(np.float32) / 127.5 - 1.0, 1e-3)
+    # slope = -n.xy / n.z  (gradient of height the normal implies)
+    p = -nx / nz
+    q = -ny / nz
+    h, w = p.shape
+    fx = np.fft.fftfreq(w).reshape(1, w).astype(np.float32)
+    fy = np.fft.fftfreq(h).reshape(h, 1).astype(np.float32)
+    wx = 2.0 * np.pi * fx
+    wy = 2.0 * np.pi * fy
+    denom = (wx * wx) + (wy * wy)
+    denom[0, 0] = 1.0
+    # div of slope in freq domain, solved for height
+    P = np.fft.fft2(p)
+    Q = np.fft.fft2(q)
+    H = (-1j * wx * P - 1j * wy * Q) / denom
+    H[0, 0] = 0.0
+    height = np.real(np.fft.ifft2(H)).astype(np.float32)
+    height -= height.min()
+    mx = height.max()
+    if mx > 1e-6:
+        height /= mx
+    return height
+
+
 def cook(zip_path: Path, size: int) -> np.ndarray:
     with tempfile.TemporaryDirectory(dir=str(Path.cwd())) as td:
         with zipfile.ZipFile(zip_path) as z:
@@ -31,14 +65,30 @@ def cook(zip_path: Path, size: int) -> np.ndarray:
         tex = Path(td) / "textures"
         nor = next(tex.glob("*nor_gl*"), None) or next(tex.glob("*normal*"), None)
         arm = next(tex.glob("*arm*"), None)
+        disp = (next(tex.glob("*disp*"), None) or next(tex.glob("*height*"), None))
         if not nor:
             raise FileNotFoundError("no *nor_gl*/*normal* texture in asset")
         rgb = np.asarray(Image.open(nor).convert("RGB").resize((size, size), Image.LANCZOS))
-        if arm:
-            ao = np.asarray(Image.open(arm).convert("RGB").resize((size, size), Image.LANCZOS))[..., 0]
+        if disp is not None:
+            # Prefer a real displacement/height map when the pack ships one.
+            a = np.asarray(Image.open(disp).convert("L").resize((size, size), Image.LANCZOS)).astype(np.float32) / 255.0
         else:
-            ao = np.full((size, size), 200, np.uint8)   # neutral-ish displacement
-        return np.dstack([rgb, ao]).astype(np.uint8)
+            # No height map (marble_cliff): synthesize relief from the pack's OWN
+            # data -- integrate the normal for groove structure, modulate with
+            # ARM-AO for crevice darkening. Both are marble_cliff's own maps.
+            hfromN = _height_from_normal(rgb)
+            if arm is not None:
+                ao = np.asarray(Image.open(arm).convert("RGB").resize((size, size), Image.LANCZOS))[..., 0].astype(np.float32) / 255.0
+            else:
+                ao = np.full((size, size), 0.78, np.float32)
+            # weight normal-integrated height (structure) with AO (occlusion).
+            a = 0.6 * hfromN + 0.4 * ao
+            a -= a.min()
+            mx = a.max()
+            if mx > 1e-6:
+                a /= mx
+        disp8 = np.clip(a * 255.0, 0, 255).astype(np.uint8)
+        return np.dstack([rgb, disp8]).astype(np.uint8)
 
 
 def main() -> int:
