@@ -597,6 +597,45 @@ static_assert(
 // The enforcement script greps BOTH tables for "MC2_" string literals.
 
 static constexpr EnvVarDesc kAuxEnvVars[] = {
+    // TERRAIN-DECAL-SLICE-0B: live placement knobs for the CLIFF_WALL mesh-decal
+    // (mclib/bdactor.cpp registerStatic). Read once at process start; all default
+    // to Slice-0A behavior -> byte-identical when unset. Only consulted when
+    // MC2_TERRAIN_DECAL is armed and the appearance is "MarbleCliff".
+    {
+        "MC2_TERRAIN_DECAL_SCALE",
+        "MC2_TERRAIN_DECAL_SCALE",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-DECAL-SLICE-0B: uniform scale (float, default 1.0) of the CLIFF_WALL mesh-decal — multiplies the face-frame's 3 basis rows before translation. Uniform only (no inverse-transpose). Default 1.0 -> Slice-0A byte-identical."
+    },
+    {
+        "MC2_TERRAIN_DECAL_OFFSET",
+        "MC2_TERRAIN_DECAL_OFFSET",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-DECAL-SLICE-0B: outward offset distance (float world units, default 8.0) along the wall 'facing' axis — replaces the hardcoded 8.0 Slice-0A z-fight offset."
+    },
+    {
+        "MC2_TERRAIN_DECAL_LATERAL",
+        "MC2_TERRAIN_DECAL_LATERAL",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-DECAL-SLICE-0B: lateral nudge (float world units, default 0.0) along the wall 'tangent' (contour) axis — side-to-side placement."
+    },
+    {
+        "MC2_TERRAIN_DECAL_LIFT",
+        "MC2_TERRAIN_DECAL_LIFT",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-DECAL-SLICE-0B: vertical nudge (float world units, default 0.0) along world-up — lifts/lowers the CLIFF_WALL mesh-decal."
+    },
+    {
+        "MC2_TERRAIN_DECAL_YAW",
+        "MC2_TERRAIN_DECAL_YAW",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-DECAL-SLICE-0B: yaw rotation (float degrees, default 0.0) of the wall facing/tangent about world-up — corrects the outward-facing direction. Default 0.0 -> Slice-0A byte-identical."
+    },
     // OVERLAY-TILE-HIRES-1: high-resolution terrain overlay tiles.
     {
         "MC2_OVERLAY_TILE_HIRES",

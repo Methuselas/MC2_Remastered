@@ -1289,6 +1289,13 @@ def main():
                             # and the gate-ON smoke silently runs gate-OFF.
                             "MC2_TERRAIN_DECAL",
                             "MC2_TERRAIN_DECAL_TRACE",
+                            # TERRAIN-DECAL-SLICE-0B -- live CLIFF_WALL mesh-decal
+                            # placement knobs (default = Slice-0A byte-identical).
+                            "MC2_TERRAIN_DECAL_SCALE",
+                            "MC2_TERRAIN_DECAL_OFFSET",
+                            "MC2_TERRAIN_DECAL_LATERAL",
+                            "MC2_TERRAIN_DECAL_LIFT",
+                            "MC2_TERRAIN_DECAL_YAW",
                             # TERRAIN-SHORELINE-MASK-1 -- authored land-side wet/foam
                             # shoreline mask sidecar override (default OFF). Must be
                             # allowlisted or Popen drops it and the gate-ON smoke
