@@ -636,6 +636,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "TERRAIN-DECAL-SLICE-0B: yaw rotation (float degrees, default 0.0) of the wall facing/tangent about world-up — corrects the outward-facing direction. Default 0.0 -> Slice-0A byte-identical."
     },
+    {
+        "MC2_TERRAIN_DECAL_PITCH",
+        "MC2_TERRAIN_DECAL_PITCH",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-DECAL-PITCH: pitch/lean (float degrees, default 0.0) of the wall about the horizontal tangent (contour) axis — positive leans the wall TOP backward toward the hill (recline against the slope). Default 0.0 -> dead-vertical byte-identical."
+    },
     // OVERLAY-TILE-HIRES-1: high-resolution terrain overlay tiles.
     {
         "MC2_OVERLAY_TILE_HIRES",

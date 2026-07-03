@@ -36,6 +36,7 @@ void seedKnobsFromEnv() {
     s_knobs.lateral = envFloat("MC2_TERRAIN_DECAL_LATERAL", 0.0f);
     s_knobs.lift    = envFloat("MC2_TERRAIN_DECAL_LIFT",    0.0f);
     s_knobs.yawDeg  = envFloat("MC2_TERRAIN_DECAL_YAW",     0.0f);
+    s_knobs.pitchDeg = envFloat("MC2_TERRAIN_DECAL_PITCH",  0.0f);
 }
 
 } // namespace
@@ -78,6 +79,27 @@ void buildCliffWallMatrix(const Stuff::Vector3D& xlatPosition,
         float tx = tangent.x * cy + tangent.z * sy;
         float tz = -tangent.x * sy + tangent.z * cy;
         tangent.x = tx; tangent.z = tz;
+    }
+
+    // PITCH: lean the wall backward (top toward the hill) by rotating the {up,facing}
+    // basis about the horizontal `tangent` (contour) axis via Rodrigues. tangent is the
+    // fixed axis; tangent x up = facing, tangent x facing = -up. Positive pitch tips the
+    // TOP backward (away from `facing`, toward the hill) and the face upward, so we use
+    // -pitch as the rotation angle: up' gains -facing, facing' gains +up.
+    if (k.pitchDeg != 0.0f) {
+        const float pr = -k.pitchDeg * 0.01745329252f; // deg -> rad, negated so + leans back
+        const float cp = std::cos(pr), sp = std::sin(pr);
+        // up'    = up*cp + (tangent x up)*sp    = up*cp + facing*sp
+        // facing'= facing*cp + (tangent x facing)*sp = facing*cp - up*sp
+        Stuff::Vector3D newUp, newFacing;
+        newUp.x = up.x * cp + facing.x * sp;
+        newUp.y = up.y * cp + facing.y * sp;
+        newUp.z = up.z * cp + facing.z * sp;
+        newFacing.x = facing.x * cp - up.x * sp;
+        newFacing.y = facing.y * cp - up.y * sp;
+        newFacing.z = facing.z * cp - up.z * sp;
+        up = newUp;
+        facing = newFacing;
     }
 
     // SCALE: uniform scale of the wall mesh. Multiply the 3 basis rows by k.scale
@@ -125,23 +147,25 @@ bool cliffDecal_hasDecal() {
 }
 
 void cliffDecal_getKnobs(float* scale, float* offset, float* lateral,
-                         float* lift, float* yawDeg) {
+                         float* lift, float* yawDeg, float* pitchDeg) {
     seedKnobsFromEnv();
-    if (scale)   *scale   = s_knobs.scale;
-    if (offset)  *offset  = s_knobs.offset;
-    if (lateral) *lateral = s_knobs.lateral;
-    if (lift)    *lift    = s_knobs.lift;
-    if (yawDeg)  *yawDeg  = s_knobs.yawDeg;
+    if (scale)    *scale    = s_knobs.scale;
+    if (offset)   *offset   = s_knobs.offset;
+    if (lateral)  *lateral  = s_knobs.lateral;
+    if (lift)     *lift     = s_knobs.lift;
+    if (yawDeg)   *yawDeg   = s_knobs.yawDeg;
+    if (pitchDeg) *pitchDeg = s_knobs.pitchDeg;
 }
 
 void cliffDecal_setKnobsAndApply(float scale, float offset, float lateral,
-                                 float lift, float yawDeg) {
+                                 float lift, float yawDeg, float pitchDeg) {
     seedKnobsFromEnv();
-    s_knobs.scale   = scale;
-    s_knobs.offset  = offset;
-    s_knobs.lateral = lateral;
-    s_knobs.lift    = lift;
-    s_knobs.yawDeg  = yawDeg;
+    s_knobs.scale    = scale;
+    s_knobs.offset   = offset;
+    s_knobs.lateral  = lateral;
+    s_knobs.lift     = lift;
+    s_knobs.yawDeg   = yawDeg;
+    s_knobs.pitchDeg = pitchDeg;
     if (s_recipeIndex < 0) return;
     Stuff::Matrix4D m;
     buildCliffWallMatrix(s_xlatPosition, s_nAcc, s_knobs, m);
@@ -159,8 +183,9 @@ void cliffDecal_logValues() {
         "[TERRAIN_DECAL v1] tuned knobs: "
         "MC2_TERRAIN_DECAL_SCALE=%.4f MC2_TERRAIN_DECAL_OFFSET=%.2f "
         "MC2_TERRAIN_DECAL_LATERAL=%.2f MC2_TERRAIN_DECAL_LIFT=%.2f "
-        "MC2_TERRAIN_DECAL_YAW=%.2f\n",
-        s_knobs.scale, s_knobs.offset, s_knobs.lateral, s_knobs.lift, s_knobs.yawDeg);
+        "MC2_TERRAIN_DECAL_YAW=%.2f MC2_TERRAIN_DECAL_PITCH=%.2f\n",
+        s_knobs.scale, s_knobs.offset, s_knobs.lateral, s_knobs.lift, s_knobs.yawDeg,
+        s_knobs.pitchDeg);
     std::fflush(stderr);
 }
 

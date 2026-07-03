@@ -28,6 +28,7 @@ struct Knobs {
     float lateral = 0.0f;
     float lift    = 0.0f;
     float yawDeg  = 0.0f;
+    float pitchDeg = 0.0f; // TERRAIN-DECAL-PITCH: lean the wall top backward toward the hill.
 };
 
 // Mutable knob accessor (lazily seeded from env on first call). GUI edits this.
@@ -61,13 +62,13 @@ bool cliffDecal_hasDecal();
 
 // Copy current knob values out (any pointer may be null).
 void cliffDecal_getKnobs(float* scale, float* offset, float* lateral,
-                         float* lift, float* yawDeg);
+                         float* lift, float* yawDeg, float* pitchDeg);
 
 // Set knob values (call from the ImGui sliders) then re-solve + re-upload the
 // captured decal's transform. No-op if no decal is captured. Cheap enough to call
 // every frame the panel is open.
 void cliffDecal_setKnobsAndApply(float scale, float offset, float lateral,
-                                 float lift, float yawDeg);
+                                 float lift, float yawDeg, float pitchDeg);
 
 // Print the current knob values to stderr so a tuned placement can be captured
 // into view-terrain.bat (as MC2_TERRAIN_DECAL_* env vars).

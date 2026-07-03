@@ -26,9 +26,9 @@
 namespace CliffDecalTuning {
     bool cliffDecal_hasDecal();
     void cliffDecal_getKnobs(float* scale, float* offset, float* lateral,
-                             float* lift, float* yawDeg);
+                             float* lift, float* yawDeg, float* pitchDeg);
     void cliffDecal_setKnobsAndApply(float scale, float offset, float lateral,
-                                     float lift, float yawDeg);
+                                     float lift, float yawDeg, float pitchDeg);
     void cliffDecal_logValues();
 }
 
@@ -386,8 +386,8 @@ static void DrawCliffDecalPanel() {
 
     if (!ImGui::Begin("Cliff Decal")) { ImGui::End(); return; }
 
-    float scale, offset, lateral, lift, yaw;
-    CliffDecalTuning::cliffDecal_getKnobs(&scale, &offset, &lateral, &lift, &yaw);
+    float scale, offset, lateral, lift, yaw, pitch;
+    CliffDecalTuning::cliffDecal_getKnobs(&scale, &offset, &lateral, &lift, &yaw, &pitch);
 
     ImGui::TextUnformatted("Live CLIFF_WALL mesh-decal placement.");
     ImGui::Separator();
@@ -398,9 +398,10 @@ static void DrawCliffDecalPanel() {
     changed |= ImGui::SliderFloat("Lateral", &lateral,-200.0f,200.0f, "%.1f");
     changed |= ImGui::SliderFloat("Lift",    &lift,   -200.0f,200.0f, "%.1f");
     changed |= ImGui::SliderFloat("Yaw",     &yaw,    -180.0f,180.0f, "%.1f");
+    changed |= ImGui::SliderFloat("Pitch",   &pitch,   -90.0f, 90.0f, "%.1f");
 
     if (changed)
-        CliffDecalTuning::cliffDecal_setKnobsAndApply(scale, offset, lateral, lift, yaw);
+        CliffDecalTuning::cliffDecal_setKnobsAndApply(scale, offset, lateral, lift, yaw, pitch);
 
     ImGui::Separator();
     if (ImGui::Button("Copy current values (-> stderr)"))
