@@ -605,7 +605,7 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
     {
         "MC2_TERRAIN_CONTROLMAP_FILE",
         "MC2_TERRAIN_CONTROLMAP_FILE",
-        EnvVarKind::Infra,
+        EnvVarKind::Feature,
         false,
         "TERRAIN-CONTROLMAP-SAMPLE-1: override the control-map sidecar path (default data/missions/<stem>.beauty/control_map.png). Only consulted when MC2_TERRAIN_CONTROLMAP is armed."
     },
@@ -620,7 +620,7 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
     {
         "MC2_TERRAIN_OVERLAY_V2_FILE",
         "MC2_TERRAIN_OVERLAY_V2_FILE",
-        EnvVarKind::Infra,
+        EnvVarKind::Feature,
         false,
         "TERRAIN-OVERLAY-V2-PARITY-1: override the overlay_v2 sidecar path (default data/missions/<stem>.beauty/overlay_v2.png). Only consulted when MC2_TERRAIN_OVERLAY_V2 is armed."
     },
@@ -636,7 +636,7 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
     {
         "MC2_DETERMINISTIC_RNG",
         "MC2_DETERMINISTIC_RNG",
-        EnvVarKind::Infra,
+        EnvVarKind::Feature,
         false,
         "Route all randomness (incl. paths that bypass gos_rand) through a single seeded deterministic RNG stream for reproducible runs / capture parity. Default-OFF: stock RNG behavior."
     },
@@ -690,14 +690,14 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
     {
         "MC2_FOG_HORIZON_FADE_START",
         "MC2_FOG_HORIZON_FADE_START",
-        EnvVarKind::Infra,
+        EnvVarKind::Feature,
         false,
         "FOG-HORIZON-CLAMP-1: override the horizon-fog fade band START (elevation). Tuning param; only consulted under MC2_FOG_HORIZON_CLAMP."
     },
     {
         "MC2_FOG_HORIZON_FADE_END",
         "MC2_FOG_HORIZON_FADE_END",
-        EnvVarKind::Infra,
+        EnvVarKind::Feature,
         false,
         "FOG-HORIZON-CLAMP-1: override the horizon-fog fade band END (elevation). Tuning param; only consulted under MC2_FOG_HORIZON_CLAMP."
     },
