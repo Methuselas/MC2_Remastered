@@ -591,6 +591,124 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "OVERLAY-TILE-HIRES-1: honor the overlay tile TGA's actual dimensions instead of the legacy hard-assumed 64px (initOverlay header resync mirrors initTexture), probing data/textures/<N>Overlays/ first with per-file fallback to 64Overlays/. =1 selects 256; other pow2 values in [128,1024] select that folder/edge. Also derives the overlay emit half-texel UV inset from the actual tile edge (quad.cpp + decal static VBO). Default-OFF: exact legacy 64px path, byte-identical."
     },
+    // GATE-REGISTRATION-BACKFILL-1 (terrain-V2 catch-up): register terrain-V2
+    // arc gates flagged UNREGISTERED by check-new-gates / check-env-registry.
+    // TERRAIN-CONTROLMAP-SAMPLE-1: authored RGBA control-map override replacing
+    // the colormap-colour material classifier (frag u_useControlMap).
+    {
+        "MC2_TERRAIN_CONTROLMAP",
+        "MC2_TERRAIN_CONTROLMAP",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-CONTROLMAP-SAMPLE-1: load an authored per-mission RGBA control-map sidecar (data/missions/<stem>.beauty/control_map.png, vertex-resolution) that replaces the colormap-colour material classifier with authored rock/grass/dirt/concrete weights. Default-OFF: absent/empty map -> the frag falls back to the classifier (TERRAIN-MATTEX-BLEND-1). WARNING: a wrong-content (e.g. 4-quadrant test) sidecar renders quadrant terrain."
+    },
+    {
+        "MC2_TERRAIN_CONTROLMAP_FILE",
+        "MC2_TERRAIN_CONTROLMAP_FILE",
+        EnvVarKind::Infra,
+        false,
+        "TERRAIN-CONTROLMAP-SAMPLE-1: override the control-map sidecar path (default data/missions/<stem>.beauty/control_map.png). Only consulted when MC2_TERRAIN_CONTROLMAP is armed."
+    },
+    // TERRAIN-OVERLAY-V2-PARITY-1: authored cement/pad/runway overlay sidecar.
+    {
+        "MC2_TERRAIN_OVERLAY_V2",
+        "MC2_TERRAIN_OVERLAY_V2",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-OVERLAY-V2-PARITY-1: composite an authored world-XY-bounded cement/pad/runway overlay sidecar (data/missions/<stem>.beauty/overlay_v2.png, RGB=diffuse A=coverage) over the terrain in the LOD-chunk frag. Default-OFF -> byte-identical legacy composite. KNOWN-BAD on current content: the authored sidecars are offset/washed vs the base render (retire or regenerate); the base colormap + indirect-overlay tiles already draw roads/runways correctly."
+    },
+    {
+        "MC2_TERRAIN_OVERLAY_V2_FILE",
+        "MC2_TERRAIN_OVERLAY_V2_FILE",
+        EnvVarKind::Infra,
+        false,
+        "TERRAIN-OVERLAY-V2-PARITY-1: override the overlay_v2 sidecar path (default data/missions/<stem>.beauty/overlay_v2.png). Only consulted when MC2_TERRAIN_OVERLAY_V2 is armed."
+    },
+    // TERRAIN-VISUAL-HEIGHT-SAMPLE-1 companion fade.
+    {
+        "MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE",
+        "MC2_TERRAIN_VISUAL_DISPLACE_OBJFADE",
+        EnvVarKind::Feature,
+        true,
+        "TERRAIN-VISUAL-HEIGHT-SAMPLE-1: when visual terrain displacement is on, fade object grounding across the displaced-vs-gameplay height delta so props/units sit on the visually-displaced surface. Default-ON when MC2_TERRAIN_VISUAL_DISPLACE is armed; =0 disables the fade."
+    },
+    // DEV-DETERMINISM: single shared RNG stream for reproducible runs.
+    {
+        "MC2_DETERMINISTIC_RNG",
+        "MC2_DETERMINISTIC_RNG",
+        EnvVarKind::Infra,
+        false,
+        "Route all randomness (incl. paths that bypass gos_rand) through a single seeded deterministic RNG stream for reproducible runs / capture parity. Default-OFF: stock RNG behavior."
+    },
+    // SP-BATCHER-ALPHASCAN-GATE-1 (framebudget-2 perf).
+    {
+        "MC2_SP_ALPHASCAN_GATE",
+        "MC2_SP_ALPHASCAN_GATE",
+        EnvVarKind::Feature,
+        false,
+        "SP-BATCHER-ALPHASCAN-GATE-1: skip the frame-constant per-static-prop alpha re-resolve scan in the batcher when nothing that affects it changed (gos_static_prop_batcher). Perf, default-OFF -> byte-identical."
+    },
+    // POST-FX-CAS-1: AMD FidelityFX Contrast Adaptive Sharpening (GL composite).
+    {
+        "MC2_POST_CAS",
+        "MC2_POST_CAS",
+        EnvVarKind::Feature,
+        false,
+        "POST-FX-CAS-1: gated AMD FidelityFX CAS sharpening folded into the final composite shader (after tonemap/grade, before UI). Default-OFF -> u_casEnabled=0 -> byte-identical."
+    },
+    {
+        "MC2_POST_CAS_SHARPNESS",
+        "MC2_POST_CAS_SHARPNESS",
+        EnvVarKind::Feature,
+        false,
+        "POST-FX-CAS-1: CAS sharpness knob, clamped 0..1 (default 0.5). Only consulted when MC2_POST_CAS is armed."
+    },
+    // SAVE/LOAD-AIFREEZE-TRACE-1: runBrain post-exec diagnostic.
+    {
+        "MC2_BRAIN_FREEZE_TRACE",
+        "MC2_BRAIN_FREEZE_TRACE",
+        EnvVarKind::Trace,
+        false,
+        "SAVE/LOAD-AIFREEZE-TRACE-1: one-line stderr trace at end of MechWarrior::runBrain (brainState, curTacOrder.code, movePath.numSteps, moveState, hasBrain) to classify the save/load AI-freeze. Default-OFF -> byte-identical."
+    },
+    // TERRAIN-OVERLAY-V2-DECAL-SUPPRESS-1.
+    {
+        "MC2_TERRAIN_OVERLAY_V2_DECAL_SUPPRESS",
+        "MC2_TERRAIN_OVERLAY_V2_DECAL_SUPPRESS",
+        EnvVarKind::Feature,
+        true,
+        "TERRAIN-OVERLAY-V2-DECAL-SUPPRESS-1: in the static decal bake, skip legacy runway/road/cement decals for tiles fully inside the armed OVERLAY_V2 sidecar bounds (avoids double-draw). Default-ON but only active when OVERLAY_V2 is armed+loaded; =0 reverts. Byte-identical when OVERLAY_V2 off."
+    },
+    // FOG-HORIZON-CLAMP-1: reshape OOB/edge fog to a horizon elevation profile.
+    {
+        "MC2_FOG_HORIZON_CLAMP",
+        "MC2_FOG_HORIZON_CLAMP",
+        EnvVarKind::Feature,
+        true,
+        "FOG-HORIZON-CLAMP-1: reshape the out-of-bounds / edge fog to a horizon elevation profile (gos_postprocess). Default-ON; kill-switch MC2_FOG_HORIZON_CLAMP=0 restores the previous fog."
+    },
+    {
+        "MC2_FOG_HORIZON_FADE_START",
+        "MC2_FOG_HORIZON_FADE_START",
+        EnvVarKind::Infra,
+        false,
+        "FOG-HORIZON-CLAMP-1: override the horizon-fog fade band START (elevation). Tuning param; only consulted under MC2_FOG_HORIZON_CLAMP."
+    },
+    {
+        "MC2_FOG_HORIZON_FADE_END",
+        "MC2_FOG_HORIZON_FADE_END",
+        EnvVarKind::Infra,
+        false,
+        "FOG-HORIZON-CLAMP-1: override the horizon-fog fade band END (elevation). Tuning param; only consulted under MC2_FOG_HORIZON_CLAMP."
+    },
+    // GOM_UPDATE_COST v1: per-phase GameObjectManager update CPU cost trace.
+    {
+        "MC2_GOM_UPDATE_COST_SPLIT",
+        "MC2_GOM_UPDATE_COST_SPLIT",
+        EnvVarKind::Trace,
+        false,
+        "GOM_UPDATE_COST v1 (framebudget): =1 emits one coarse per-phase GameObjectManager update CPU-cost summary to stderr (objmgr.cpp). Diagnostic only, default-OFF."
+    },
     // GOSFX-TUBE-RIBBON-1: gosFX Tube swept-quad ribbon oracle.
     {
         "MC2_VFX_ORACLE_TUBE",
