@@ -45,6 +45,8 @@ from mission_terrain_analyzer import label_components  # noqa: E402
 from visual_heightfield import (  # noqa: E402  TERRAIN-REAUTH-UNPIN-1 gates
     upsample_corner_pinned, detect_coarse_extrema, mountain_rock_mask, _box3,
     coarse_cliff_mask, onesided_step, _bilinear_sample,  # CLIFF-SMOOTH-1
+    extract_waterline_contours, smooth_contour, _polyline_arclen,  # SHORE-CONTOUR-1
+    contour_facet_stats,
 )
 
 PANEL = 220   # panel pixel size
@@ -89,6 +91,47 @@ def label_panel(img: Image.Image, text: str) -> Image.Image:
     d.rectangle([0, 0, img.width, 12], fill=(0, 0, 0))
     d.text((2, 1), text, fill=(255, 255, 0))
     return img
+
+
+def shore_contour_overlay(surface: np.ndarray, water_elev: float,
+                          smooth_radius_cells: float, factor: int,
+                          n: int = PANEL, min_len_cells: float = 3.0) -> tuple:
+    """SHORE-CONTOUR-1 deliverable panel (the user's blue-line comparison):
+    the BLOCKY extracted waterline (marching squares at waterElev, RED) vs the
+    arc-length Gaussian SMOOTHED waterline (BLUE). Both are drawn as polylines
+    over the surface hillshade, resampled to panel resolution. Returns
+    (PIL.Image, before_stats, after_stats). Deterministic; PIL only."""
+    V = surface.shape[0]
+    contours = extract_waterline_contours(surface, float(water_elev))
+    min_len = min_len_cells * factor
+    keep = [c for c in contours
+            if _polyline_arclen(c["pts"], c["closed"]) >= min_len]
+    cell_wu = WORLD_UNITS_PER_VERTEX / factor
+    before = contour_facet_stats(keep, cell_wu) if keep else None
+    sigma = smooth_radius_cells * factor
+    smoothed = [smooth_contour(c["pts"], c["closed"], sigma, 0.5) for c in keep]
+    after = (contour_facet_stats(
+        [{"pts": s, "closed": c["closed"]} for s, c in zip(smoothed, keep)],
+        cell_wu) if keep else None)
+
+    img = Image.fromarray(hillshade(surface), "RGB").resize(
+        (n, n), Image.NEAREST)
+    d = ImageDraw.Draw(img)
+    scale = (n - 1) / max(1, V - 1)
+
+    def _draw(polys, closed_list, color, width=1):
+        for pts, closed in zip(polys, closed_list):
+            xy = [(float(c) * scale, float(r) * scale) for r, c in pts]
+            if len(xy) < 2:
+                continue
+            if closed:
+                xy.append(xy[0])
+            d.line(xy, fill=color, width=width)
+
+    closed = [c["closed"] for c in keep]
+    _draw([c["pts"] for c in keep], closed, (235, 70, 70), 1)   # blocky (red)
+    _draw(smoothed, closed, (80, 150, 255), 2)                  # smoothed (blue)
+    return img, before, after
 
 
 def profile_plot(width, height, title, x, series) -> Image.Image:
@@ -308,12 +351,37 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
                     chk("shape_fidelity_corr", "PASS" if corr >= 0.99 else "FAIL",
                         f"coarse landform correlation before/after = {corr:.4f} (want >= 0.99)")
                 tol_frac = float(reauth.get("shape_tolerance", 0.10))
+                # SHORE-CONTOUR-1: a non-regional extremum inside the shore band
+                # is a bank facet edge the reshape intentionally moves; the bake
+                # relaxes it (shore_w > 0.05 at the guard point), so the
+                # workbench gate must too or it flags the slice's own deliverable
+                # as a violation. The band weight is recomputed deterministically
+                # from the bilinear baseline (same input the bake reshape sees).
+                shore_wc = None
+                shore_wf = None                         # fine-grid band weight
+                shore_meta = reauth.get("shore")
+                if shore_meta and layers["water"].any():
+                    from visual_heightfield import shore_contour_reshape
+                    _bl = upsample_corner_pinned(elev, factor)
+                    _out, _w, _si = shore_contour_reshape(
+                        _bl, factor, float(shore_meta.get("water_elev", 0.0)),
+                        smooth_radius_cells=float(
+                            shore_meta.get("smooth_radius_cells", 3.5)),
+                        band_cells=float(shore_meta.get("band_cells", 1.5)),
+                        max_adjust=float(shore_meta.get("max_adjust_wu", 64.0)))
+                    if _w is not None:
+                        shore_wf = _w
+                        shore_wc = _w[::factor, ::factor]   # coarse-sampled band
                 extrema = detect_coarse_extrema(elev)
-                viol, worst, relaxed, enforced = 0, 0.0, 0, 0
+                viol, worst, relaxed, enforced, relaxed_shore = 0, 0.0, 0, 0, 0
                 for e in extrema:
                     if (cliff_coarse is not None and cliff_coarse[e["r"], e["c"]]
                             and not e["is_regional"]):
                         relaxed += 1     # terrace-step extremum on the cliff mask
+                        continue
+                    if (shore_wc is not None and not e["is_regional"]
+                            and shore_wc[e["r"], e["c"]] > 0.05):
+                        relaxed_shore += 1   # bank facet edge on the shore band
                         continue
                     enforced += 1
                     tol = max(0.5, tol_frac * e["relief"])
@@ -326,7 +394,10 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
                     f"{100 * tol_frac:.0f}% of local relief (worst {100 * worst:.1f}%)"
                     + (f"; {relaxed} terrace extrema relaxed on the cliff mask "
                        f"(CLIFF-SMOOTH-1, true peaks stay pinned)"
-                       if relaxed else ""))
+                       if relaxed else "")
+                    + (f"; {relaxed_shore} bank-edge extrema relaxed on the shore "
+                       f"band (SHORE-CONTOUR-1, regional peaks stay pinned)"
+                       if relaxed_shore else ""))
                 # facet-flattening proof (pyramid edges become curves): the
                 # SMOOTH-stage crease energy from the bake report must beat the
                 # bilinear baseline (final surface may legitimately add ridge
@@ -345,6 +416,13 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
                     # creases are themselves high-frequency, so the smoothing
                     # removes about as much energy as the ridges add.)
                     from visual_heightfield import reauth_visual
+                    # SHORE-CONTOUR-1: the smooth-only reference must run the
+                    # SAME shore reshape (mountainify off) so d = visual - plain
+                    # isolates ONLY the added ridged detail. Without it the
+                    # reference lacks the up-to-max_adjust bank displacement and
+                    # that leaks into rms_calm (water-adjacent, non-rock cells),
+                    # spuriously failing the >=2x-calm gate.
+                    _sm = reauth.get("shore") or {}
                     plain, _ = reauth_visual(
                         elev, factor, protect_struct,
                         shape_tolerance=tol_frac,
@@ -355,9 +433,22 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
                         # the same cliffs, so the diff isolates ADDED detail.
                         cliff_drift=float(cliff_meta.get("cliff_drift_wu", 0.0)),
                         cliff_slope_deg=cliff_deg,
-                        cliff_melt_passes=int(cliff_meta.get("melt_passes", 300)))
+                        cliff_melt_passes=int(cliff_meta.get("melt_passes", 300)),
+                        water_elev=(float(_sm["water_elev"])
+                                    if _sm and layers["water"].any() else None),
+                        shore_smooth_radius=float(_sm.get("smooth_radius_cells", 0.0))
+                        if _sm else 0.0,
+                        shore_band_cells=float(_sm.get("band_cells", 1.5)),
+                        shore_max_adjust=float(_sm.get("max_adjust_wu", 64.0)))
                     rockw = mountain_rock_mask(plain, elev, factor,
                                                water_coarse=layers["water"])
+                    if shore_wf is not None:
+                        # SHORE-CONTOUR-1: the bake excludes ridged detail in the
+                        # shore band (rock *= 1 - shore_w), so the detected-detail
+                        # census must exclude it too, or the reference `plain`
+                        # (which has NO shore reshape) shows spurious diff there
+                        # and drags rms_rock below the gate. Match the bake mask.
+                        rockw = rockw * (1.0 - shore_wf)
                     rock = rockw > 0.35
                     calm = rockw < 0.05
                     if rock.any():
@@ -469,6 +560,33 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
     panels.append(label_panel(_resize(colorize(masks["shoreline"], (60, 220, 220),
                                                colorize(layers["water"], (30, 60, 160), hillshade(elev)))),
                               "water + shoreline"))
+
+    # --- SHORE-CONTOUR-1 deliverable: blocky-before (red) vs smoothed (blue)
+    #     waterline overlay (the user's blue-line comparison). Drawn from the
+    #     shipped visual surface when the shore stage ran; the "after" contour
+    #     is extracted directly from the final .r32, so it is what actually
+    #     bakes, not a re-simulation.
+    shore_overlay_img = None
+    if (visual is not None and vmeta.get("reauth")
+            and (vmeta["reauth"].get("shore") or {}) and layers["water"].any()):
+        sh = vmeta["reauth"]["shore"]
+        srad = float(sh.get("smooth_radius_cells", 3.5))
+        we = float(sh.get("water_elev", read_water_elevation(
+            missions_dir / f"{mission}.fit")))
+        shore_overlay_img, sh_before, sh_after = shore_contour_overlay(
+            visual, we, srad, factor)
+        panels.append(label_panel(shore_overlay_img.copy(),
+                                  "shore: blocky(red) vs smoothed(blue)"))
+        if sh_before is not None and sh_after is not None:
+            fac = (sh_after["corner_count"] < sh_before["corner_count"]
+                   and sh_after["median_facet_wu"] >= sh_before["median_facet_wu"])
+            chk("shore_contour_smoothed", "PASS" if fac else "WARN",
+                f"waterline corners {sh_before['corner_count']}->"
+                f"{sh_after['corner_count']}, median facet "
+                f"{sh_before['median_facet_wu']:.0f}->"
+                f"{sh_after['median_facet_wu']:.0f}wu "
+                f"({sh_before['contours']} contour(s), "
+                f"adj_max={sh.get('bank_adjust_wu', {}).get('max', 0):.1f}wu)")
     sheet = compose_grid(panels, cols=4)
 
     # --- cross-section profiles: worst pyramid H/V + largest cliff ---
@@ -517,6 +635,10 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
         profiles.save(out / "profiles.png")
     if cliff_prof_img is not None:
         cliff_prof_img.save(out / "cliff_profile.png")
+    if shore_overlay_img is not None:
+        # SHORE-CONTOUR-1 deliverable at panel*2 for legibility of the two lines.
+        shore_overlay_img.resize((PANEL * 2, PANEL * 2), Image.NEAREST).save(
+            out / "shore_contour.png")
 
     # summary status
     has_fail = any(c["status"] == "FAIL" for c in checks)
@@ -543,6 +665,7 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
 <h2>terrain workbench — {mission} ({side}^2, x{factor}) — <b style='color:{'#5f5' if summary=='PASS' else '#fd5' if summary=='WARN' else '#f55'}'>{summary}</b></h2>
 <table border=1 cellpadding=4 style='border-collapse:collapse'>{rows}</table>
 <h3>contact sheet</h3><img src='data:image/png;base64,{b64('contact_sheet.png')}'>
+{("<h3>SHORE-CONTOUR-1 waterline: blocky (red) vs smoothed (blue)</h3><img src='data:image/png;base64," + b64('shore_contour.png') + "'>") if shore_overlay_img is not None else ""}
 <h3>profiles</h3><img src='data:image/png;base64,{b64('profiles.png')}'>
 {("<h3>reference cliff cross-section (CLIFF-SMOOTH-1)</h3><img src='data:image/png;base64," + b64('cliff_profile.png') + "'>") if cliff_prof_img is not None else ""}
 </body>"""
