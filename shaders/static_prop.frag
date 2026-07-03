@@ -145,6 +145,16 @@ uniform int   u_lightingDebugView;
 
 uniform int   u_pathTint;  // MC2_SHADER_PATH_TINT: 1 = solid signature colour (debug); 0 = normal
 
+// TERRAIN-DECAL-FILL-1: ambient/fill floor for the cliff-wall mesh-decal's
+// shadow side. The static-prop vertex lighting is max(N·L,0) with no ambient
+// floor, so a face pointing away from the sun goes to ~0 (black void). This
+// uniform is applied as a per-fragment floor ONLY to fragments whose instance
+// carries kFlagDecalFill (bit 3, set solely on MarbleCliff decal instances in
+// bdactor.cpp). Default 0.0 upload + bit-unset = byte-identical for every other
+// static prop AND (when unset) for the decal itself. CPU default is 0.20.
+uniform float u_terrainDecalFill;
+const uint kFlagDecalFill = (1u << 3);
+
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 GBuffer1;
 #ifdef MC2_OBJECT_ID_BUFFER
@@ -341,6 +351,15 @@ void main() {
         // Tree cards/leaves read too black on the light-facing falloff side.
         // Keep their lighting variation, but cap the darkest side at ~50%.
         litRgb = max(litRgb, vec3(0.5));
+    }
+    // TERRAIN-DECAL-FILL-1: raise the cliff-decal's shadow-side floor so faces
+    // pointing away from the sun (N·L ~ 0, litRgb ~ 0) read as dark rock, not a
+    // black void. Flag-gated (only MarbleCliff decal instances carry bit 3) and
+    // uniform defaults matter: unset instances / u_terrainDecalFill==0.0 are a
+    // no-op (max(x,0)==x), so all other props stay byte-identical. The lit side
+    // already exceeds the modest floor, so it is unaffected (no blow-out).
+    if ((v_flags & kFlagDecalFill) != 0u && u_terrainDecalFill > 0.0) {
+        litRgb = max(litRgb, vec3(u_terrainDecalFill));
     }
 
     vec4 c = tex_color * vec4(litRgb, v_argb.a);

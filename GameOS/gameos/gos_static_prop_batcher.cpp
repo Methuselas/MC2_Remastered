@@ -321,6 +321,25 @@ float g_iblShStrength = []() -> float {
     return f;
 }();
 
+// TERRAIN-DECAL-FILL-1: ambient/fill floor for the cliff-wall mesh-decal's
+// shadow side. static_prop lighting is max(N·L,0) with no ambient floor, so a
+// face pointing away from the sun goes to ~0 (black void). This uniform is a
+// per-fragment floor applied ONLY to fragments whose instance carries the
+// kFlagDecalFill bit (bit 3), set on the MarbleCliff decal instances at
+// registration (bdactor.cpp). All other static props (mechs/buildings/trees)
+// never carry that bit, so they are byte-identical regardless of this value.
+// Default 0.20 (modest — shadow side reads as dark rock, not black; lit side
+// unaffected because litRgb is already >= the floor there). MC2_TERRAIN_DECAL_FILL
+// overrides (clamped 0..1). External linkage so GuiRuntime.cpp can drive a slider.
+float g_terrainDecalFill = []() -> float {
+    const char* v = std::getenv("MC2_TERRAIN_DECAL_FILL");
+    if (!v || !v[0]) return 0.20f;
+    float f = (float)std::atof(v);
+    if (f < 0.0f) f = 0.0f;
+    if (f > 1.0f) f = 1.0f;
+    return f;
+}();
+
 // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel specular slider value
 // (interactive). Default 1.0f. Only contributes when the env-gate
 // s_pbrV1Enabled is ON (and MC2_VIEW_UNIFORMS is not disabled). Optional env
@@ -1009,6 +1028,7 @@ struct ProgramLocs {
     GLint ormSampleEnable     = -1;   // STATICPROP-MATERIAL-ORM-1: u_ormSampleEnable (int)
     GLint pathTint            = -1;   // MC2_SHADER_PATH_TINT debug: u_pathTint (int)
     GLint terrainSunMC2       = -1;   // GREYBEARD-DIFFUSE-TEST: u_terrainSunMC2 (vec3)
+    GLint terrainDecalFill    = -1;   // TERRAIN-DECAL-FILL-1: u_terrainDecalFill (float)
 };
 
 // STATICPROP-MATERIAL-ORM-1 — texture unit reserved for the per-bucket ORM
@@ -1322,6 +1342,8 @@ void loadProgramsIfNeeded() {
     s_locsLegacy.pathTint          = glGetUniformLocation(s_staticPropProgram, "u_pathTint");
     // GREYBEARD-DIFFUSE-TEST: terrain sun (raw MC2) for forced-diffuse probe.
     s_locsLegacy.terrainSunMC2     = glGetUniformLocation(s_staticPropProgram, "u_terrainSunMC2");
+    // TERRAIN-DECAL-FILL-1: cliff-decal shadow-side ambient floor (flag-gated in frag).
+    s_locsLegacy.terrainDecalFill  = glGetUniformLocation(s_staticPropProgram, "u_terrainDecalFill");
     // V-IBL-STATIC-1: SH-L2 coeffs + strength (default strength 0.0 = OFF).
     s_locsLegacy.iblSh             = glGetUniformLocation(s_staticPropProgram, "u_iblSh");
     s_locsLegacy.iblShStrength     = glGetUniformLocation(s_staticPropProgram, "u_iblShStrength");
@@ -1367,6 +1389,8 @@ void loadProgramsIfNeeded() {
             s_locsCoalesce.pathTint          = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pathTint");
             // GREYBEARD-DIFFUSE-TEST: terrain sun (raw MC2) for forced-diffuse probe.
             s_locsCoalesce.terrainSunMC2     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_terrainSunMC2");
+            // TERRAIN-DECAL-FILL-1: cliff-decal shadow-side ambient floor (flag-gated in frag).
+            s_locsCoalesce.terrainDecalFill  = glGetUniformLocation(s_staticPropProgramCoalesce, "u_terrainDecalFill");
             // V-IBL-STATIC-1: SH-L2 coeffs + strength (default strength 0.0 = OFF).
             s_locsCoalesce.iblSh             = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblSh");
             s_locsCoalesce.iblShStrength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblShStrength");
@@ -6084,6 +6108,12 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         if (s_locsCoalesce.ambientV1Strength >= 0)
             glUniform1f       (s_locsCoalesce.ambientV1Strength,
                                s_staticPropAmbientV1Enabled ? 1.0f : 0.0f);
+        // TERRAIN-DECAL-FILL-1: cliff-decal shadow-side ambient floor. Uploaded
+        // globally but the frag only applies it to fragments whose instance
+        // carries kFlagDecalFill (bit 3) — set solely on MarbleCliff decal
+        // instances. Other props are byte-identical regardless of this value.
+        if (s_locsCoalesce.terrainDecalFill >= 0)
+            glUniform1f       (s_locsCoalesce.terrainDecalFill, g_terrainDecalFill);
         // V-MATERIAL-DEBUG-1: per-frag material debug view. Default 0 = OFF;
         // shader skips entire debug branch when uniform == 0 (byte-identical
         // pixel invariant — proof at static_prop.frag `if (u_debugMaterialMode != 0)`).
@@ -7232,6 +7262,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             if (s_locsLegacy.ambientV1Strength >= 0)
                 glUniform1f(s_locsLegacy.ambientV1Strength,
                             s_staticPropAmbientV1Enabled ? 1.0f : 0.0f);
+            // TERRAIN-DECAL-FILL-1: cliff-decal shadow-side ambient floor (legacy
+            // program). Frag applies it only to kFlagDecalFill (bit 3) fragments.
+            if (s_locsLegacy.terrainDecalFill >= 0)
+                glUniform1f(s_locsLegacy.terrainDecalFill, g_terrainDecalFill);
             // V-MATERIAL-DEBUG-1: per-frag material debug view (legacy program).
             // Default 0 = OFF; shader skips entire debug branch when 0.
             if (s_locsLegacy.debugMaterialMode >= 0)

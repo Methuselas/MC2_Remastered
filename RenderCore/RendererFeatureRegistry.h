@@ -637,6 +637,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "TERRAIN-DECAL-SLICE-0B: yaw rotation (float degrees, default 0.0) of the wall facing/tangent about world-up — corrects the outward-facing direction. Default 0.0 -> Slice-0A byte-identical."
     },
     {
+        "MC2_TERRAIN_DECAL_FILL",
+        "MC2_TERRAIN_DECAL_FILL",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-DECAL-FILL-1: ambient/fill floor (float 0..1, default 0.20) for the CLIFF_WALL mesh-decal's shadow side. static_prop lighting is max(N-L,0) with no ambient floor, so faces pointing away from the sun render black; this raises the per-fragment floor so they read as dark rock. Applied ONLY to the MarbleCliff decal (per-instance kFlagDecalFill bit 3); all other static props are byte-identical regardless. Uniform u_terrainDecalFill; ImGui 'Cliff Decal' Fill slider drives it live via g_terrainDecalFill."
+    },
+    {
         "MC2_TERRAIN_DECAL_PITCH",
         "MC2_TERRAIN_DECAL_PITCH",
         EnvVarKind::Trace,

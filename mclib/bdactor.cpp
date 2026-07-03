@@ -4076,8 +4076,16 @@ void BldgAppearance::registerStatic() {
 		// explicit CLIFF_WALL face frame when the decal gate armed this type.
 		// Uniform scale only (Slice 0) — the wall GLB carries its own world-scale
 		// geometry, so the face frame is a pure rotation+translation (no scale).
-		if (useCliffWallFrame)
+		if (useCliffWallFrame) {
 			xform = cliffWallXform;
+			// TERRAIN-DECAL-FILL-1: tag this decal leaf so static_prop.frag applies
+			// the shadow-side ambient/fill floor (u_terrainDecalFill) ONLY to the
+			// cliff decal — faces pointing away from the sun otherwise render as a
+			// black void (static-prop lighting is max(N·L,0) with no ambient floor).
+			// Bit 3 mirrors kFlagDecalFill in static_prop.frag; no other static prop
+			// ever sets it, so all other props stay byte-identical.
+			flags |= (1u << 3);
+		}
 		GpuStaticPropInstance inst;
 		if (!GpuStaticPropBatcher::instance().buildRecipeFromShape(
 				child, xform,

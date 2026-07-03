@@ -1297,6 +1297,10 @@ def main():
                             "MC2_TERRAIN_DECAL_LIFT",
                             "MC2_TERRAIN_DECAL_YAW",
                             "MC2_TERRAIN_DECAL_PITCH",
+                            # TERRAIN-DECAL-FILL-1 -- shadow-side ambient/fill
+                            # floor for the cliff decal (default 0.20). Flag-gated
+                            # to the MarbleCliff decal only.
+                            "MC2_TERRAIN_DECAL_FILL",
                             # TERRAIN-SHORELINE-MASK-1 -- authored land-side wet/foam
                             # shoreline mask sidecar override (default OFF). Must be
                             # allowlisted or Popen drops it and the gate-ON smoke

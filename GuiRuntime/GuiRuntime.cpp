@@ -403,6 +403,16 @@ static void DrawCliffDecalPanel() {
     if (changed)
         CliffDecalTuning::cliffDecal_setKnobsAndApply(scale, offset, lateral, lift, yaw, pitch);
 
+    // TERRAIN-DECAL-FILL-1: shadow-side ambient/fill floor. Drives the batcher's
+    // g_terrainDecalFill global, which is uploaded to u_terrainDecalFill every
+    // frame and applied per-fragment ONLY to the flag-tagged cliff decal. No
+    // transform re-apply needed — just write the value live. 0.0 => shadow side
+    // goes black (raw N-L); ~0.20 => dark rock; higher washes the shadow side.
+    {
+        extern float g_terrainDecalFill;  // gos_static_prop_batcher.cpp
+        ImGui::SliderFloat("Fill (shadow side)", &g_terrainDecalFill, 0.0f, 1.0f, "%.3f");
+    }
+
     ImGui::Separator();
     if (ImGui::Button("Copy current values (-> stderr)"))
         CliffDecalTuning::cliffDecal_logValues();
