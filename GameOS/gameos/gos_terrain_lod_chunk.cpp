@@ -64,6 +64,12 @@ const bool  kTglcSlopeBias         = []() { return tglc_envOn("MC2_TERRAIN_SLOPE
 const float kTglcSlopeBiasStr      = []() { return tglc_envStrength("MC2_TERRAIN_SLOPE_BIAS_STRENGTH", 1.0f); }();
 const bool  kTglcCliffTriplanar    = []() { return tglc_envOn("MC2_TERRAIN_CLIFF_TRIPLANAR"); }();
 const float kTglcCliffTriplanarStr = []() { return tglc_envStrength("MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH", 1.0f); }();
+// TERRAIN-CLIFF-HEIGHT-NORMAL-1: derive the cliff SHADING normal from the height
+// gradient of the cooked cliff displacement (mat5 layer-5 alpha) so the rich rock
+// relief actually catches light (the smooth marble rgb normal left it flat).
+// Trace knob MC2_TERRAIN_CLIFF_HEIGHT_NORMAL_STRENGTH, default 2.0; only consumed
+// inside the useTriplanarCliff frag block (0 -> pure rgb-normal == TRIPLANAR-1).
+const float kTglcCliffHeightNormalStr = []() { return tglc_envStrength("MC2_TERRAIN_CLIFF_HEIGHT_NORMAL_STRENGTH", 2.0f); }();
 // TERRAIN-CLIFF-POM-1: triplanar Parallax Occlusion Mapping on cliff faces.
 // Gate MC2_TERRAIN_CLIFF_POM (default OFF -> u_cliffPom.x=0 -> frag march skipped,
 // the triplanar block behaves exactly as TRIPLANAR-1). Depth (world-unit height
@@ -714,6 +720,7 @@ static GLint s_locUseRockSlopeBias = -1;  // TERRAIN-SLOPE-BIAS-VISUAL-1 (B4a)
 static GLint s_locRockSlopeBiasStr = -1;
 static GLint s_locUseTriplanarCliff = -1; // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1
 static GLint s_locCliffTriplanarStr = -1;
+static GLint s_locCliffHeightNormalStr = -1; // TERRAIN-CLIFF-HEIGHT-NORMAL-1
 static GLint s_locCliffPom          = -1; // TERRAIN-CLIFF-POM-1: u_cliffPom (.x=gate,.y=depth,.z=steps)
 static GLint s_locCliffDebug        = -1; // TERRAIN-CLIFF-DEBUG: u_cliffDebug (0=off,1..4 debug-viz)
 static GLint s_locMacroVariation    = -1; // TERRAIN-MACRO-VARIATION-1
@@ -1148,6 +1155,7 @@ void gos_TerrainLodChunk_Init()
             s_locRockSlopeBiasStr = glGetUniformLocation(s_terrainProgram, "rockSlopeBiasStrength");
             s_locUseTriplanarCliff = glGetUniformLocation(s_terrainProgram, "useTriplanarCliff");
             s_locCliffTriplanarStr = glGetUniformLocation(s_terrainProgram, "cliffTriplanarStrength");
+            s_locCliffHeightNormalStr = glGetUniformLocation(s_terrainProgram, "cliffHeightNormalStrength");  // TERRAIN-CLIFF-HEIGHT-NORMAL-1
             s_locCliffPom          = glGetUniformLocation(s_terrainProgram, "u_cliffPom");  // TERRAIN-CLIFF-POM-1
             s_locCliffDebug        = glGetUniformLocation(s_terrainProgram, "u_cliffDebug");  // TERRAIN-CLIFF-DEBUG
             s_locMacroVariation    = glGetUniformLocation(s_terrainProgram, "macroVariationStrength");
@@ -2180,6 +2188,10 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         {
             if (s_locUseTriplanarCliff >= 0) glUniform1i(s_locUseTriplanarCliff, kTglcCliffTriplanar ? 1 : 0);
             if (s_locCliffTriplanarStr >= 0) glUniform1f(s_locCliffTriplanarStr, kTglcCliffTriplanarStr);
+            // TERRAIN-CLIFF-HEIGHT-NORMAL-1: shading normal from cliff displacement
+            // height gradient (default 2.0). Only consumed inside the frag cliff
+            // block (useTriplanarCliff!=0); gate-OFF stays byte-identical.
+            if (s_locCliffHeightNormalStr >= 0) glUniform1f(s_locCliffHeightNormalStr, kTglcCliffHeightNormalStr);
             // TERRAIN-CLIFF-POM-1: gate MC2_TERRAIN_CLIFF_POM (default OFF -> .x=0
             // -> frag POM march skipped, triplanar block == TRIPLANAR-1 exactly ->
             // byte-identical). Depth/steps knobs resolved once (kTglcCliffPom*).

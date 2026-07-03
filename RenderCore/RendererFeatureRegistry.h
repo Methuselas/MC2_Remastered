@@ -1026,6 +1026,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1 knob: triplanar rock-normal tilt strength (float, default 1.0). Scales how strongly the world-axis rock normal perturbs the terrain normal on cliff faces. Only consumed when MC2_TERRAIN_CLIFF_TRIPLANAR=1."
     },
     {
+        "MC2_TUNE_TERRAIN_CLIFF_HEIGHT_NORMAL_STRENGTH",
+        "MC2_TERRAIN_CLIFF_HEIGHT_NORMAL_STRENGTH",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CLIFF-HEIGHT-NORMAL-1 knob (float, default 2.0): derives the cliff SHADING normal from the HEIGHT GRADIENT of the cooked cliff displacement (MAT_LAYER_MARBLE_CLIFF layer-5 normal-array ALPHA), triplanar forward-difference, and mixes triTilt strongly toward it so the rich rock relief catches light (the smooth marble RGB normal left lit cliffs flat). Larger = more pronounced relief lighting; the mix toward the height normal saturates with strength (hMix=clamp(strength*0.5,0,1)). When POM is on, the gradient is sampled at the POM-offset UV so relief + parallax agree. Only consumed inside the MC2_TERRAIN_CLIFF_TRIPLANAR=1 frag block; the byte-identical path remains MC2_TERRAIN_CLIFF_TRIPLANAR=0."
+    },
+    {
         "MC2_FEATURE_TERRAIN_CLIFF_POM",
         "MC2_TERRAIN_CLIFF_POM",
         EnvVarKind::Feature,

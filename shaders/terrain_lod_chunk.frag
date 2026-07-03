@@ -277,6 +277,16 @@ uniform int   useRockSlopeBias;                 // TERRAIN-SLOPE-BIAS-VISUAL-1: 
 uniform float rockSlopeBiasStrength;            // rock-weight bias on steep slopes (default 1.0)
 uniform int   useTriplanarCliff;                // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1: 0=off (byte-identical)
 uniform float cliffTriplanarStrength;           // triplanar rock normal/relief strength (default 1.0)
+// TERRAIN-CLIFF-HEIGHT-NORMAL-1 (gate MC2_TERRAIN_CLIFF_HEIGHT_NORMAL_STRENGTH,
+// EnvVarKind::Trace, default 2.0): the marble_cliff RGB normal (mat5 .rgb) is a
+// smooth marble microsurface — it barely tilts N, so the RICH cooked cliff
+// DISPLACEMENT (mat5 layer-5 ALPHA, high-contrast rock relief) never catches
+// light and the lit cliff reads FLAT. This derives a SHADING normal from the
+// HEIGHT GRADIENT of that displacement (triplanar, forward-difference), and
+// mixes triTilt strongly toward it so the real rock structure lights up. Only
+// consumed inside the useTriplanarCliff block; strength 0.0 -> pure rgb-normal
+// behaviour == TRIPLANAR-1 (the gate-OFF byte-identical path is useTriplanarCliff==0).
+uniform float cliffHeightNormalStrength;         // 0=rgb-normal only; default 2.0
 // TERRAIN-CLIFF-DEBUG (gate MC2_TERRAIN_CLIFF_DEBUG, EnvVarKind::Trace): bounded
 // debug-viz to confirm the triplanar/POM cliff material path executes+contributes
 // on a given cliff. 0 = OFF (default, byte-identical). Non-zero writes directly to
@@ -1244,6 +1254,52 @@ void main() {
             vec3 triTilt = vec3(0.0, nX.x, nX.y) * wn.x
                          + vec3(nY.x, 0.0, nY.y) * wn.y
                          + vec3(nZ.x, nZ.y, 0.0) * wn.z;
+
+            // TERRAIN-CLIFF-HEIGHT-NORMAL-1: derive a SHADING normal from the HEIGHT
+            // GRADIENT of the cooked cliff displacement (mat5 layer-5 ALPHA) instead
+            // of relying on the smooth marble RGB normal above. The alpha channel is
+            // rich, high-contrast rock relief; its gradient is what should catch light.
+            // Per world-axis plane: sample the layer-5 alpha at the (POM-offset when
+            // POM is on) UV plus small +du/+dv steps and forward-difference to a
+            // tangent-space normal n=normalize(vec3(-dHdu*s,-dHdv*s,1)); reorient into
+            // world space with the SAME per-plane axis remap used for triTilt, weight
+            // by wn. textureLod(...,0): explicit LOD, valid in this non-uniform branch
+            // (UB2 — no implicit derivatives). Skipped when strength<=0 (== TRIPLANAR-1).
+            if (cliffHeightNormalStrength > 0.0) {
+                // step ~one texel of the layer-5 alpha (mat5 disp is 4k over ts wu);
+                // constant in world/UV so the gradient is scale-consistent per plane.
+                const float hEps = 1.0 / 2048.0;    // UV-space finite-difference step
+                // per-plane heights: center + du + dv.
+                float hX0 = textureLod(matNormalArray, vec3(uvX,                    float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+                float hXu = textureLod(matNormalArray, vec3(uvX + vec2(hEps, 0.0),  float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+                float hXv = textureLod(matNormalArray, vec3(uvX + vec2(0.0, hEps),  float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+                float hY0 = textureLod(matNormalArray, vec3(uvY,                    float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+                float hYu = textureLod(matNormalArray, vec3(uvY + vec2(hEps, 0.0),  float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+                float hYv = textureLod(matNormalArray, vec3(uvY + vec2(0.0, hEps),  float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+                float hZ0 = textureLod(matNormalArray, vec3(uvZ,                    float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+                float hZu = textureLod(matNormalArray, vec3(uvZ + vec2(hEps, 0.0),  float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+                float hZv = textureLod(matNormalArray, vec3(uvZ + vec2(0.0, hEps),  float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+                // forward-difference gradients -> tangent-space normals (z=1 base).
+                // scale by strength/hEps so `strength` reads as a relief multiplier
+                // independent of the finite-difference step.
+                float g = cliffHeightNormalStrength / hEps;
+                vec3 hnX = normalize(vec3(-(hXu - hX0) * g, -(hXv - hX0) * g, 1.0));
+                vec3 hnY = normalize(vec3(-(hYu - hY0) * g, -(hYv - hY0) * g, 1.0));
+                vec3 hnZ = normalize(vec3(-(hZu - hZ0) * g, -(hZv - hZ0) * g, 1.0));
+                // reorient each plane's height normal to world space with the SAME
+                // remap as triTilt and blend by axis weight (this is the tilt, so use
+                // .xy the way triTilt uses the rgb-normal .xy).
+                vec3 htTilt = vec3(0.0, hnX.x, hnX.y) * wn.x
+                            + vec3(hnY.x, 0.0, hnY.y) * wn.y
+                            + vec3(hnZ.x, hnZ.y, 0.0) * wn.z;
+                // Default to a STRONG mix toward the height-derived tilt (it carries
+                // the real cliff structure); the smooth rgb tilt is retained only as
+                // a fine microsurface floor. mix factor saturates with strength so
+                // larger values also lean harder on the height normal.
+                float hMix = clamp(cliffHeightNormalStrength * 0.5, 0.0, 1.0);
+                triTilt = mix(triTilt, htTilt, hMix);
+            }
+
             vec3 triN = normalize(mN + triTilt * cliffTriplanarStrength);
             N = normalize(mix(N, triN, cb));
 

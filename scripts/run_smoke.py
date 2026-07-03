@@ -1321,6 +1321,12 @@ def main():
                             # capture does nothing.
                             "MC2_TERRAIN_CLIFF_TRIPLANAR",
                             "MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH",
+                            # TERRAIN-CLIFF-HEIGHT-NORMAL-1 -- derive cliff shading
+                            # normal from the displacement height gradient (mat5
+                            # layer-5 alpha) so rock relief catches light. Tuning
+                            # knob (default 2.0). Must be allowlisted or Popen drops
+                            # it and the tuning capture does nothing.
+                            "MC2_TERRAIN_CLIFF_HEIGHT_NORMAL_STRENGTH",
                             # TERRAIN-CLIFF-POM-1 -- triplanar Parallax Occlusion
                             # Mapping on cliff faces (real marble_cliff disp in
                             # mat5 alpha), gated on top of CLIFF_TRIPLANAR. Default
