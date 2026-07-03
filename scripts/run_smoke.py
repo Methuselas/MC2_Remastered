@@ -1028,7 +1028,12 @@ def main():
     # lives in. Computed once; compared against the exe's startup banner.
     _fp_expected_sha = None
     _fp_hard_fail = False
-    _fp_require = os.environ.get("MC2_SMOKE_REQUIRE_FINGERPRINT") == "1"
+    # DEPLOY-FINGERPRINT-DEFAULT-ON-1 (Truth-First arc): default ON (opt-OUT via
+    # MC2_SMOKE_REQUIRE_FINGERPRINT=0). A smoke that ran a stale/wrong-lane exe
+    # (fingerprint mismatch) must NOT be allowed to report PASS — that is exactly
+    # the "passed on the wrong binary" failure this arc exists to kill. Escape
+    # hatch preserved for intentionally running a pre-built external exe.
+    _fp_require = os.environ.get("MC2_SMOKE_REQUIRE_FINGERPRINT", "1") != "0"
     if _fingerprint is not None:
         try:
             _fp_expected_sha = subprocess.check_output(
@@ -2046,8 +2051,11 @@ def main():
     # MC2_SMOKE_REQUIRE_FINGERPRINT=1: promote fingerprint mismatch/absence to
     # a hard failure. Default (unset) keeps the verdict untouched (advisory).
     if _fp_require and _fp_hard_fail:
-        print("[runner] [DEPLOY_FINGERPRINT] HARD FAIL: fingerprint mismatch or "
-              "absent and MC2_SMOKE_REQUIRE_FINGERPRINT=1", file=sys.stderr)
+        print("[runner] [DEPLOY_FINGERPRINT] HARD FAIL: smoke ran an exe whose "
+              "fingerprint does not match this worktree HEAD (stale / wrong-lane "
+              "/ built-from-dirty). Deploy your build first, or set "
+              "MC2_SMOKE_REQUIRE_FINGERPRINT=0 to intentionally test an external "
+              "exe.", file=sys.stderr)
         passed = False
 
     # VISUAL advisory (S13+).  Summarises the most recent run_visual.py compare
