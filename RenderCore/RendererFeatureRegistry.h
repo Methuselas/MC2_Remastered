@@ -200,7 +200,13 @@ enum class RendererFeature : int {
     // TRACKV-CI-GATE-RESTORE-1: setupTextures legacy path kill-switch.
     // Default-OFF = new/optimized setupTextures path active; ON = legacy path forced.
     SetupTexturesLegacyForce = 44,  // MC2_SETUPTEXTURES_LEGACY_FORCE
-    COUNT                    = 45,
+    // TERRAIN-DECAL-SLICE-0A: terrain mesh-decal system. When ON, cliff-wall
+    // decoration types (e.g. "MarbleCliff") are submitted to the static-prop
+    // batcher with an explicit CLIFF_WALL face-frame mat4 (up=world vertical,
+    // facing=outward cliff normal, tangent=contour) + small outward offset,
+    // instead of the yaw-only building recipe. Default-OFF -> byte-identical.
+    TerrainDecal             = 45,  // MC2_TERRAIN_DECAL
+    COUNT                    = 46,
 };
 
 // ---------------------------------------------------------------------------
@@ -569,6 +575,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "TRACKV-CI-GATE-RESTORE-1: setupTextures legacy path kill-switch. Default-OFF = new/optimized setupTextures path active; ON (=1) forces legacy path. Diagnostic default-OFF; no behavioral change when unset."
+    },
+    // TerrainDecal (TERRAIN-DECAL-SLICE-0A)
+    {
+        "MC2_TERRAIN_DECAL",
+        "MC2_TERRAIN_DECAL",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-DECAL-SLICE-0A: terrain mesh-decal system. When ON, cliff-wall decoration types (e.g. \"MarbleCliff\") are submitted to the GPU static-prop batcher with an explicit CLIFF_WALL face-frame mat4 (up=world vertical, facing=outward cliff normal, tangent=contour) plus a small outward offset (bdactor.cpp registerStatic), instead of the yaw-only building recipe. Default-OFF -> byte-identical."
     },
 };
 

@@ -1283,6 +1283,12 @@ def main():
                             # smoke does nothing.
                             "MC2_TERRAIN_OVERLAY_V2",
                             "MC2_TERRAIN_OVERLAY_V2_FILE",
+                            # TERRAIN-DECAL-SLICE-0A -- CLIFF_WALL mesh-decal
+                            # face-frame submit for cliff-wall decoration types
+                            # (default OFF). Must be allowlisted or Popen drops it
+                            # and the gate-ON smoke silently runs gate-OFF.
+                            "MC2_TERRAIN_DECAL",
+                            "MC2_TERRAIN_DECAL_TRACE",
                             # TERRAIN-SHORELINE-MASK-1 -- authored land-side wet/foam
                             # shoreline mask sidecar override (default OFF). Must be
                             # allowlisted or Popen drops it and the gate-ON smoke

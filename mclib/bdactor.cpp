@@ -3987,6 +3987,87 @@ void BldgAppearance::registerStatic() {
 	xlatPosition.z = position.y;
 	bldgShape->TransformMultiShape_BuildRecipe(&xlatPosition, &rot);
 
+	// TERRAIN-DECAL-SLICE-0A — CLIFF_WALL face frame (mesh-decal system).
+	// Default-OFF gate MC2_TERRAIN_DECAL. When ON and this appearance is the
+	// cliff-wall decal type ("MarbleCliff"), build an EXPLICIT face-frame mat4
+	// for the placed instance INSTEAD of the yaw-only recipe transform. This is
+	// the CLIFF_WALL conform mode from docs/superpowers/specs/
+	// 2026-07-03-terrain-mesh-decal-system-design.md: up = world vertical,
+	// facing = outward (downslope) horizontal cliff normal, tangent = contour.
+	// A small outward offset lifts the wall off the terrain face to avoid
+	// z-fighting. Row-vector convention: world = shapeRow * M, so each 3x3 ROW
+	// (X_Axis/Y_Axis/Z_Axis) holds the world direction of the mesh's local axis
+	// (GetLocalForward reads (FORWARD_AXIS, *)). The generated wall GLB authors
+	// width->local X, height->local Y, relief/face->local Z.
+	//   Shape-world axes (from xlatPosition remap): Xsw = -worldX, Ysw = up,
+	//   Zsw = worldY. Terrain normal (nx,ny,nz){world, nz up} maps to shape-world
+	//   (-nx, nz, ny); its horizontal projection (-nx,0,ny) is the outward facing.
+	static const bool s_terrainDecal =
+	    (getenv("MC2_TERRAIN_DECAL") != nullptr && getenv("MC2_TERRAIN_DECAL")[0] != '0');
+	bool useCliffWallFrame = false;
+	Stuff::Matrix4D cliffWallXform;
+	if (s_terrainDecal && appearType && appearType->name &&
+	    _stricmp(appearType->name, "MarbleCliff") == 0) {
+		// Sample the terrain normal at the placement site (average the 4
+		// enclosing corners via small offsets for stability — the raw normal is
+		// per-triangle/faceted). worldUnitsPerVertex ~ heightfield cell size.
+		Stuff::Vector3D nAcc; nAcc.Zero();
+		const float d = 32.0f; // ~half a heightfield cell for a 4-corner average
+		const float dx[4] = { -d,  d, -d,  d };
+		const float dy[4] = { -d, -d,  d,  d };
+		Terrain* landPtr = land; // file-scope terrain pointer
+		for (int c = 0; c < 4; ++c) {
+			Stuff::Vector3D sp = position;
+			sp.x += dx[c]; sp.y += dy[c];
+			Stuff::Vector3D nc = landPtr ? landPtr->getTerrainNormal(sp)
+			                             : Stuff::Vector3D(0.0f, 0.0f, 1.0f);
+			nAcc.x += nc.x; nAcc.y += nc.y; nAcc.z += nc.z;
+		}
+		// Outward facing = horizontal projection of the terrain normal, remapped
+		// to shape-world axes (-nx, 0, ny). Points downslope toward the low side.
+		Stuff::Vector3D facing;
+		facing.x = -nAcc.x; facing.y = 0.0f; facing.z = nAcc.y;
+		float fl = sqrtf(facing.x * facing.x + facing.z * facing.z);
+		if (fl < 1e-4f) { facing.x = 0.0f; facing.z = 1.0f; fl = 1.0f; } // flat: pick +Zsw
+		facing.x /= fl; facing.z /= fl;
+		Stuff::Vector3D up(0.0f, 1.0f, 0.0f);
+		// tangent (contour) = up x facing (right-handed), horizontal.
+		Stuff::Vector3D tangent;
+		tangent.x = up.y * facing.z - up.z * facing.y; // = facing.z
+		tangent.y = up.z * facing.x - up.x * facing.z; // = 0
+		tangent.z = up.x * facing.y - up.y * facing.x; // = -facing.x
+		float tl = sqrtf(tangent.x * tangent.x + tangent.y * tangent.y + tangent.z * tangent.z);
+		if (tl < 1e-4f) tl = 1.0f;
+		tangent.x /= tl; tangent.y /= tl; tangent.z /= tl;
+
+		cliffWallXform.BuildIdentity();
+		// ROW 0 = local X (wall width / contour) -> tangent
+		cliffWallXform(Stuff::X_Axis, Stuff::X_Axis) = tangent.x;
+		cliffWallXform(Stuff::X_Axis, Stuff::Y_Axis) = tangent.y;
+		cliffWallXform(Stuff::X_Axis, Stuff::Z_Axis) = tangent.z;
+		// ROW 1 = local Y (wall height) -> world up
+		cliffWallXform(Stuff::Y_Axis, Stuff::X_Axis) = up.x;
+		cliffWallXform(Stuff::Y_Axis, Stuff::Y_Axis) = up.y;
+		cliffWallXform(Stuff::Y_Axis, Stuff::Z_Axis) = up.z;
+		// ROW 2 = local Z (relief / face) -> outward facing
+		cliffWallXform(Stuff::Z_Axis, Stuff::X_Axis) = facing.x;
+		cliffWallXform(Stuff::Z_Axis, Stuff::Y_Axis) = facing.y;
+		cliffWallXform(Stuff::Z_Axis, Stuff::Z_Axis) = facing.z;
+		// Translation = placement origin + small OUTWARD offset (avoid z-fight).
+		const float kOutwardOffset = 8.0f; // world units along facing
+		cliffWallXform(Stuff::W_Axis, Stuff::X_Axis) = xlatPosition.x + facing.x * kOutwardOffset;
+		cliffWallXform(Stuff::W_Axis, Stuff::Y_Axis) = xlatPosition.y + facing.y * kOutwardOffset;
+		cliffWallXform(Stuff::W_Axis, Stuff::Z_Axis) = xlatPosition.z + facing.z * kOutwardOffset;
+		useCliffWallFrame = true;
+		if (getenv("MC2_TERRAIN_DECAL_TRACE")) {
+			fprintf(stderr, "[TERRAIN_DECAL v1] CLIFF_WALL name=%s pos=(%.1f,%.1f) "
+			        "facing=(%.3f,%.3f,%.3f) tangent=(%.3f,%.3f,%.3f) offset=%.1f\n",
+			        appearType->name, position.x, position.y,
+			        facing.x, facing.y, facing.z, tangent.x, tangent.y, tangent.z,
+			        kOutwardOffset), fflush(stderr);
+		}
+	}
+
 	// Build per-leaf recipe batch.
 	// Use public GetNumShapes()/GetShapeRec() — numTG_Shapes/listOfShapes are protected.
 	std::vector<GpuStaticPropInstance> batch;
@@ -4015,6 +4096,12 @@ void BldgAppearance::registerStatic() {
 		if (child->GetIsSpotlight()) flags |= (1u << 2);
 		// rec->shapeToWorld is LinearMatrix4D; convert to Matrix4D for buildRecipeFromShape().
 		Stuff::Matrix4D xform(rec->shapeToWorld);
+		// TERRAIN-DECAL-SLICE-0A: replace the yaw-only leaf transform with the
+		// explicit CLIFF_WALL face frame when the decal gate armed this type.
+		// Uniform scale only (Slice 0) — the wall GLB carries its own world-scale
+		// geometry, so the face frame is a pure rotation+translation (no scale).
+		if (useCliffWallFrame)
+			xform = cliffWallXform;
 		GpuStaticPropInstance inst;
 		if (!GpuStaticPropBatcher::instance().buildRecipeFromShape(
 				child, xform,
