@@ -76,6 +76,9 @@ const float kTglcCliffPomSteps     = []() {
     if (s < 8.0f) s = 8.0f; if (s > 32.0f) s = 32.0f;
     return s;
 }();
+// TERRAIN-CLIFF-DEBUG: bounded debug-viz gate (default 0/off -> u_cliffDebug=0 ->
+// frag block skipped -> byte-identical). 1..4 select the debug output (see frag).
+const int   kTglcCliffDebug        = []() { const char* v = std::getenv("MC2_TERRAIN_CLIFF_DEBUG"); return v ? std::atoi(v) : 0; }();
 const float kTglcMacroVariation    = []() {
     if (!tglc_envOn("MC2_TERRAIN_MACRO_VARIATION")) return 0.0f;
     return tglc_envStrength("MC2_TERRAIN_MACRO_VARIATION_STRENGTH", 1.0f);
@@ -712,6 +715,7 @@ static GLint s_locRockSlopeBiasStr = -1;
 static GLint s_locUseTriplanarCliff = -1; // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1
 static GLint s_locCliffTriplanarStr = -1;
 static GLint s_locCliffPom          = -1; // TERRAIN-CLIFF-POM-1: u_cliffPom (.x=gate,.y=depth,.z=steps)
+static GLint s_locCliffDebug        = -1; // TERRAIN-CLIFF-DEBUG: u_cliffDebug (0=off,1..4 debug-viz)
 static GLint s_locMacroVariation    = -1; // TERRAIN-MACRO-VARIATION-1
 static GLint s_locEdgeFeather        = -1; // TERRAIN-EDGE-FEATHER-1
 static GLint s_locEdgeFeatherStr     = -1;
@@ -1145,6 +1149,7 @@ void gos_TerrainLodChunk_Init()
             s_locUseTriplanarCliff = glGetUniformLocation(s_terrainProgram, "useTriplanarCliff");
             s_locCliffTriplanarStr = glGetUniformLocation(s_terrainProgram, "cliffTriplanarStrength");
             s_locCliffPom          = glGetUniformLocation(s_terrainProgram, "u_cliffPom");  // TERRAIN-CLIFF-POM-1
+            s_locCliffDebug        = glGetUniformLocation(s_terrainProgram, "u_cliffDebug");  // TERRAIN-CLIFF-DEBUG
             s_locMacroVariation    = glGetUniformLocation(s_terrainProgram, "macroVariationStrength");
             s_locEdgeFeather       = glGetUniformLocation(s_terrainProgram, "u_edgeFeather");
             s_locEdgeFeatherStr    = glGetUniformLocation(s_terrainProgram, "u_edgeFeatherStrength");
@@ -2181,6 +2186,8 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             if (s_locCliffPom >= 0)
                 glUniform4f(s_locCliffPom, kTglcCliffPom ? 1.0f : 0.0f,
                             kTglcCliffPomDepth, kTglcCliffPomSteps, 0.0f);
+            // TERRAIN-CLIFF-DEBUG: bounded debug-viz (default 0 -> byte-identical).
+            if (s_locCliffDebug >= 0) glUniform1i(s_locCliffDebug, kTglcCliffDebug);
         }
         // TERRAIN-MACRO-VARIATION-1: env gate MC2_TERRAIN_MACRO_VARIATION, default
         // OFF -> uploads 0 -> frag block skipped (byte-identical). Strength via

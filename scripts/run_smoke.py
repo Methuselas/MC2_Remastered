@@ -1329,6 +1329,12 @@ def main():
                             "MC2_TERRAIN_CLIFF_POM",
                             "MC2_TERRAIN_CLIFF_POM_DEPTH",
                             "MC2_TERRAIN_CLIFF_POM_STEPS",
+                            # TERRAIN-CLIFF-DEBUG -- bounded cliff material debug-viz
+                            # (u_cliffDebug 1..4: cliffBlend / branch-taken / POM
+                            # offset / mat5 alpha). Default 0 (off). Must be
+                            # allowlisted or Popen drops it and the debug capture
+                            # does nothing.
+                            "MC2_TERRAIN_CLIFF_DEBUG",
                             # TERRAIN-MATERIAL-TEXTURES-1-FIX (fix A): the LOD-chunk
                             # diag bitmask drives the u_diag debug views, incl. bit
                             # 16384 = the INDEX ORACLE (each albedo array LAYER as a

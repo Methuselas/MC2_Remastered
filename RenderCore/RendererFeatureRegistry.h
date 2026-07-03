@@ -1047,6 +1047,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "TERRAIN-CLIFF-POM-1 knob: max POM march layers per plane, clamped 8..32 (default 24; compile-constant loop cap 32). More steps = smoother occlusion at grazing angles, higher cost. Only consumed when MC2_TERRAIN_CLIFF_POM=1."
     },
     {
+        "MC2_DIAG_TERRAIN_CLIFF_DEBUG",
+        "MC2_TERRAIN_CLIFF_DEBUG",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CLIFF-DEBUG: bounded debug-viz for the LOD-chunk terrain cliff material path (u_cliffDebug in terrain_lod_chunk.frag). Confirms whether the MC2_TERRAIN_CLIFF_TRIPLANAR / MC2_TERRAIN_CLIFF_POM path executes and contributes on a given cliff. Int 0=off (default, byte-identical). 1=cliffBlend grayscale (steep-face smoothstep(0.85,0.55,|macroNz|) firing? black=0..white=1); 2=branch-taken coverage (green=useTriplanarCliff cliff block entered, red=not); 3=cliff POM UV-offset magnitude as color (parallax march producing non-zero offset?); 4=sampled MAT_LAYER_MARBLE_CLIFF (layer 5) normal-array ALPHA grayscale (cooked displacement actually bound/sampled?). Each mode writes directly to final color and returns early. Default 0 -> block skipped -> byte-identical."
+    },
+    {
         "MC2_DIAG_VFX_DEBUG_MODE",
         "MC2_VFX_DEBUG_MODE",
         EnvVarKind::Trace,
