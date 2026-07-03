@@ -33,7 +33,19 @@ static const bool s_cheatInfiniteMoney = (getenv("MC2_CHEAT_INFINITE_MONEY") != 
 static const bool s_cheatSalvageAll    = (getenv("MC2_CHEAT_SALVAGE_ALL")    != nullptr);
 
 // SMART-LOAD-1: defer mech-bay data (components/pilots/variants) until first mech-bay accessor.
-static const bool s_smartLoad      = (getenv("MC2_SMART_LOAD")       != nullptr);
+// SMART-LOAD-DEFAULT-ON-1: default flipped ON (was default-OFF). Kill-switch preserved --
+// MC2_SMART_LOAD=0 (or any leading-zero/false value) restores legacy eager LogisticsData::init().
+// Only affects the interactive splash->logistics->mech-bay flow (Logistics::initializeLogData(),
+// code/logistics.cpp:248); smoke/tier1's justStartMission fast-path (mechcmd2.cpp:1813) calls
+// Mission::init() directly and never touches LogisticsData, so this flip is a no-op for smoke
+// mission_ready_ms -- validated via soak on the real splash/logistics path instead.
+static bool mc2_smartLoadDefaultOn()
+{
+    const char* v = getenv("MC2_SMART_LOAD");
+    if (!v) return true; // default ON
+    return !(v[0] == '0' && v[1] == '\0');
+}
+static const bool s_smartLoad      = mc2_smartLoadDefaultOn();
 static const bool s_smartLoadTrace = (getenv("MC2_SMART_LOAD_TRACE") != nullptr);
 
 #define SMART_LOAD_TRACE_LOG(fmt, ...) do { \
