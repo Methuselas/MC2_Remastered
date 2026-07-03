@@ -49,6 +49,23 @@ def _lattice_coords(n: int, stride: int) -> np.ndarray:
     return np.asarray(coords)
 
 
+def _interp_axis(arr: np.ndarray, lattice: np.ndarray, full: np.ndarray,
+                 axis: int) -> np.ndarray:
+    """Vectorized linear interp of `arr` (sampled at `lattice` along `axis`) onto
+    `full` coordinates. Fully array-wide (no per-row python loop)."""
+    idx = np.clip(np.searchsorted(lattice, full, side="right") - 1,
+                  0, lattice.size - 2)
+    x0 = lattice[idx].astype(np.float64)
+    x1 = lattice[idx + 1].astype(np.float64)
+    t = (full - x0) / np.maximum(x1 - x0, 1e-12)
+    a0 = np.take(arr, idx, axis=axis)
+    a1 = np.take(arr, idx + 1, axis=axis)
+    shape = [1, 1]
+    shape[axis] = full.size
+    t = t.reshape(shape)
+    return a0 * (1.0 - t) + a1 * t
+
+
 def decimate_upsample(height: np.ndarray, stride: int) -> np.ndarray:
     """Surface the renderer draws at vertex `stride`: sample the height on the
     stride lattice, then bilinear-interpolate back to full resolution (the
@@ -59,17 +76,9 @@ def decimate_upsample(height: np.ndarray, stride: int) -> np.ndarray:
         return h.copy()
     rc = _lattice_coords(n, stride)
     cc = _lattice_coords(m, stride)
-    full_r = np.arange(n)
-    full_c = np.arange(m)
-    # separable bilinear: interp along columns for each lattice row, then along
-    # rows for every column.
-    mid = np.empty((rc.size, m), dtype=np.float64)
-    for i, r in enumerate(rc):
-        mid[i] = np.interp(full_c, cc, h[r, cc])
-    out = np.empty((n, m), dtype=np.float64)
-    for j in range(m):
-        out[:, j] = np.interp(full_r, rc, mid[:, j])
-    return out
+    sampled = h[np.ix_(rc, cc)]
+    mid = _interp_axis(sampled, cc, np.arange(m), axis=1)   # (rc, m)
+    return _interp_axis(mid, rc, np.arange(n), axis=0)      # (n, m)
 
 
 def morph_surface(height: np.ndarray, stride_fine: int, stride_coarse: int,

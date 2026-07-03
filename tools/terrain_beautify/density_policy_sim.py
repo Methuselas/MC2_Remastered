@@ -103,43 +103,49 @@ def distance_policy(fine, blocks, camera_xy, thresholds) -> np.ndarray:
     return lod
 
 
-def importance_rebalance(fine, blocks, lod_start, imp_blocks) -> np.ndarray:
+def _block_tris(blocks, lod, i):
+    return block_triangles(*blocks[i], LOD_STEPS[lod[i]])
+
+
+def importance_rebalance(fine, blocks, lod_start, imp_blocks,
+                         max_passes: int = 4, cand: int = 96) -> np.ndarray:
     """Within the distance allocation's triangle budget, promote high-importance
-    blocks one LOD finer and demote low-importance blocks one LOD coarser until
-    no swap keeps the budget. Greedy, deterministic (importance-sorted)."""
+    blocks one LOD finer and pay by demoting low-importance blocks one LOD
+    coarser. Greedy, deterministic (importance-sorted). Bounded to the top/bottom
+    `cand` importance extremes and `max_passes` sweeps so it scales to thousands
+    of blocks (the rebalance effect is dominated by the extremes)."""
     budget = total_triangles(fine, blocks, lod_start)
     lod = np.array(lod_start, dtype=int)
-    order_fine = np.argsort(-imp_blocks)   # highest importance first (promote)
-    order_coarse = np.argsort(imp_blocks)  # lowest importance first (demote)
-    changed = True
-    guard = 0
-    while changed and guard < 10 * len(blocks):
+    order_fine = np.argsort(-imp_blocks)[:cand]    # promote candidates
+    order_coarse = np.argsort(imp_blocks)[:cand]   # demote candidates
+    cur = total_triangles(fine, blocks, lod)
+    for _ in range(max_passes):
         changed = False
-        guard += 1
         for pi in order_fine:
             if lod[pi] == 0:
                 continue
-            trial = lod.copy()
-            trial[pi] -= 1                   # promote (finer)
-            extra = (total_triangles(fine, blocks, trial)
-                     - total_triangles(fine, blocks, lod))
-            # pay by demoting the lowest-importance affordable block
+            cost = (block_triangles(*blocks[pi], LOD_STEPS[lod[pi] - 1])
+                    - _block_tris(blocks, lod, pi))     # tris ADDED by promote
             for di in order_coarse:
                 if di == pi or lod[di] >= len(LOD_STEPS) - 1:
                     continue
                 if imp_blocks[di] >= imp_blocks[pi]:
-                    break                     # never demote something >= promoted
-                trial2 = trial.copy()
-                trial2[di] += 1               # demote (coarser)
-                if total_triangles(fine, blocks, trial2) <= budget:
-                    lod = trial2
+                    break                                # never demote >= promoted
+                saved = (_block_tris(blocks, lod, di)
+                         - block_triangles(*blocks[di], LOD_STEPS[lod[di] + 1]))
+                if cur + cost - saved <= budget:
+                    lod[pi] -= 1
+                    lod[di] += 1
+                    cur = cur + cost - saved
                     changed = True
                     break
+        if not changed:
+            break
     return lod
 
 
 def compare(fine, imp, block=16, camera_xy=None, thresholds=None,
-            wu_per_texel=1.0, slope_thresh_deg=40.0) -> dict:
+            wu_per_texel=1.0, slope_thresh_deg=40.0, floor_wu=0.1) -> dict:
     """Run both policies at equal budget and score with the oracle."""
     fine = np.asarray(fine, dtype=np.float64)
     n, m = fine.shape
@@ -172,15 +178,19 @@ def compare(fine, imp, block=16, camera_xy=None, thresholds=None,
         "silhouette_l1": _delta(ev_dist["silhouette"]["l1_mean"],
                                 ev_imp["silhouette"]["l1_mean"]),
     }
-    improved = sum(1 for v in verdict.values() if v < -1e-9)
+    # Count only improvements beyond a noise floor -- a ~0.00 wu delta is NOT a
+    # win, and must not read as GO (a stock gentle map where distance-only LOD
+    # already covers the relief will legitimately show negligible deltas).
+    improved = sum(1 for v in verdict.values() if v < -floor_wu)
+    worsened = sum(1 for v in verdict.values() if v > floor_wu)
     return {
-        "blocks": len(blocks), "block": block,
+        "blocks": len(blocks), "block": block, "floor_wu": floor_wu,
         "triangles": {"distance": tris_dist, "importance": tris_imp,
                       "budget_ratio": tris_imp / tris_dist if tris_dist else 1.0},
         "distance": ev_dist, "importance": ev_imp,
         "delta_importance_minus_distance": verdict,
-        "metrics_improved": improved,
-        "GO": improved >= 2 and tris_imp <= tris_dist * 1.02,
+        "metrics_improved": improved, "metrics_worsened": worsened,
+        "GO": improved >= 2 and worsened == 0 and tris_imp <= tris_dist * 1.02,
     }
 
 
@@ -195,8 +205,9 @@ def format_report(res: dict) -> str:
         f"    ridge_loss_mean  {d['ridge_loss_mean']:+.3f} wu",
         f"    cliff_loss_mean  {d['cliff_loss_mean']:+.3f} wu",
         f"    silhouette_l1    {d['silhouette_l1']:+.3f} wu",
-        f"  metrics improved: {res['metrics_improved']}/3   "
-        f"VERDICT: {'GO (chunk-bias justified)' if res['GO'] else 'NO-GO (evidence for CDLOD)'}",
+        f"  metrics improved: {res['metrics_improved']}/3 "
+        f"(> {res['floor_wu']} wu floor)   "
+        f"VERDICT: {'GO (chunk-bias justified)' if res['GO'] else 'NO-GO (negligible on this map)'}",
     ]
     return "\n".join(lines)
 
