@@ -1,10 +1,24 @@
-# G2 — GL frame profile runbook (Truth-First arc, P5 gate)
+# G2 — GL frame profile runbook (DEMOTED — no longer a Vulkan gate)
 
-**Goal:** measure the *current GL frame* — record **CPU frame time** and **GPU
-frame time**, plus a per-pass GPU breakdown — so we stop saying "probably
-GPU-bound" and know it. This is the **hard gate before any further Vulkan
-region port**: G1 (interop) passed, but Vulkan stays frozen until G2 gives a
-measured CPU-vs-GPU verdict.
+> **★ RULING (2026-07-03, user): Vulkan is for FEATURES, not performance.**
+> The motivation is capabilities GL cannot provide — **multithreaded command
+> submission** and **ray tracing (`ray_query`)** — not FPS. So the CPU-vs-GPU
+> profile is **NOT a go/no-go gate**; it never was the right question.
+> - CPU-bound at zoom (the likely reality) *argues FOR* Vulkan — multithreaded
+>   submission is the direct fix, not a reason to stay hybrid.
+> - RT is GL-impossible → a capability spike, not a perf decision.
+> - G1 (zero-copy interop) already passed → add Vulkan **islands** for specific
+>   features on the shared image, keep GL elsewhere. Hybrid-by-design.
+>
+> **G2 is therefore OPTIONAL and downgraded to a SIZING tool** — a Tracy CPU-zone
+> capture at wolfman zoom to localize where CPU frame time goes (submission /
+> renderLists flush / Camera.UpdateRenderers), so the eventual multithreaded-
+> submit slice knows what to thread first. Run it if/when that slice starts.
+> **The real next Vulkan step is G3: an RT contact-shadow (`ray_query`) island
+> spike on the G1-proven interop image.** Nothing is frozen on this profile.
+
+**Original goal (kept for the sizing use):** measure the current GL frame —
+CPU frame time, GPU frame time, per-pass GPU breakdown.
 
 ## Can this be done fully headless / via CLI?
 
