@@ -96,6 +96,15 @@
       "alt": 5775.7979,
       "covers": ["edge_fog", "oob_fog", "water", "sky", "invviewproj_transpose_repro"],
       "_note": "User-authored 2026-07-02. Oblique cross-map (proj 14.9) from the NW corner — water/terrain/OOB-fog, transpose-revealing."
+    },
+    {
+      "name": "cliff_wall_sideon",
+      "pos": [-365.7485, 43.0450, 359.8353],
+      "rot": -28.25,
+      "proj": 18.125,
+      "alt": 2944.5066,
+      "covers": ["terrain_cliff", "terrain_decal"],
+      "_note": "User-authored 2026-07-03. Low-angle (proj 18.1) SIDE-ON view of the mc2_01 cliff for judging the cliff-wall mesh-decal lean/shadow/silhouette."
     }
   ]
 }
