@@ -1392,6 +1392,18 @@ def main():
                             "MC2_LIGHT_COST_SPLIT",
                             "MC2_TOBJ_COST_SPLIT",
                             "MC2_STATIC_PROP_FLUSH_COST_SPLIT",
+                            # GOM-UPDATE-COST-1 / TXMMGR-PERF (framebudget lane):
+                            # coarse per-phase CPU cost-split emitters + perf gates.
+                            # Without these allowlisted, Popen drops them and the
+                            # gate-ON measurement smoke is inert (no [*_COST v1]).
+                            "MC2_GOM_UPDATE_COST_SPLIT",
+                            "MC2_RENDERLISTS_COST_SPLIT",
+                            "MC2_LIGHT_PREFIX_GPU_COPY",
+                            "MC2_SHADOW_CASTER_CULL_CACHE",
+                            # SP-BATCHER-ALPHASCAN-GATE-1: skip the frame-constant
+                            # per-packet alpha-test re-resolve scan when no
+                            # destruction/damage-alpha event occurred since last flush.
+                            "MC2_SP_ALPHASCAN_GATE",
                             "MC2_STATIC_PROP_FLUSH_CACHED_BLOB",
                             "MC2_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE",
                             "MC2_STATIC_PROP_COLORS_FILL",
@@ -1733,6 +1745,15 @@ def main():
                             # FRAME-JOBS stable-light skip gate.
                             "MC2_LIGHTBRIDGE_STABLE_SKIP",
                             "MC2_LIGHTBRIDGE_COMMIT_TRACE",
+                            # STABLE-LIGHT-SKIP-BROADEN-1 (framebudget lane): broaden
+                            # the LBSS resubmit-skip to the legacy touch() Path-B
+                            # variants (live path in stock config). Requires
+                            # MC2_STABLE_LIGHT_SKIP armed for eligibility + the
+                            # TOUCH gate to take the skip. Without these allowlisted
+                            # the gate-ON A/B is inert.
+                            "MC2_STABLE_LIGHT_SKIP",
+                            "MC2_STABLE_LIGHT_SKIP_DIAG",
+                            "MC2_STABLE_LIGHT_SKIP_TOUCH",
                             # STATIC-SCENE-PROXY-RECON-1: proxy candidate classifier.
                             "MC2_STATIC_PROXY_RECON",
                             # STATIC-REGISTRY-COVERAGE-RECON-1: sub-classify rej_no_static_reg.

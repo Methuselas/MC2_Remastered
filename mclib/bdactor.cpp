@@ -2795,6 +2795,23 @@ static bool mc2LightbridgeStableSkipDiagEnabled() {
     static const bool s_diagEnabled = ParseEnvBool("MC2_LIGHTBRIDGE_STABLE_SKIP_DIAG");
     return s_diagEnabled;
 }
+// STABLE-LIGHT-SKIP-BROADEN-1: extend the LBSS resubmit-skip to the legacy
+// touch() Path-B variants (BldgAppearance::touch / TreeAppearance::touch).
+// touchSerialCommit() already skips the redundant ResubmitCachedGpuLightData()
+// when stableLightSkipEligible, but that path only runs when the FRAME-JOBS
+// touch split is armed (MC2_FRAME_JOBS + MC2_FRAME_JOBS_TOUCH, BOTH default-OFF).
+// In stock config the live path is touch(), which computed stableLightSkipEligible
+// for diagnostics but resubmitted UNCONDITIONALLY — paying a per-static-prop GPU
+// light resubmit every frame for provably-stable props. This gate broadens the
+// skip to that path. Separate killswitch so it can be flipped independently of
+// the serial-commit skip (which requires MC2_FRAME_JOBS to even run). Default OFF
+// => byte-identical (the resubmit still runs). Requires MC2_LIGHTBRIDGE_STABLE_SKIP
+// + MC2_STABLE_LIGHT_SKIP armed (same invariant proof: baked static prefix
+// [0..s_staticLightHighWater) persists frame-to-frame under MC2_LIGHTBAKE).
+static bool mc2StableLightSkipTouchEnabled() {
+    static const bool s_enabled = ParseEnvBool("MC2_STABLE_LIGHT_SKIP_TOUCH");
+    return s_enabled;
+}
 
 namespace {
 
@@ -4229,6 +4246,30 @@ void BldgAppearance::touch()
 			staticReg.hasValidStaticLight && (staticReg.lastLightEnvGen != currentLightEnvGen),
 			needsFullBakeNextFrame,
 			staticReg.lightDataIndex == 0xFFFFFFFFu);
+
+		// STABLE-LIGHT-SKIP-BROADEN-1: broaden the LBSS resubmit-skip that
+		// touchSerialCommit() takes (bdactor.cpp ~4490) to THIS legacy path. In
+		// stock config touch() is the live path (FRAME-JOBS touch split default-OFF),
+		// so touchSerialCommit()'s skip never fires and every stable static building
+		// pays a redundant ResubmitCachedGpuLightData() per frame. When
+		// stableLightSkipEligible the cached lightDataIndex from a prior frame is
+		// still valid on the GPU (baked static prefix [0..s_staticLightHighWater)
+		// persists frame-to-frame under MC2_LIGHTBAKE — same invariant proof as the
+		// serial-commit skip below), so that resubmit is pure redundant recompute.
+		// SAFER-THAN-SERIAL-VARIANT: we still call bldgShape->Touch() (one field
+		// write advancing lastTurnTransformed) before returning — the non-split
+		// path bundles Touch() with the resubmit, whereas the split path runs Touch()
+		// in touchWorkerPrepass(). Skipping only the expensive resubmit keeps the
+		// legacy CPU-render staleness guard (tgl.cpp:3000) byte-identical. staticReg
+		// fields are already correct from the last full update()/resubmit. Gate:
+		// mc2StableLightSkipTouchEnabled() (default OFF => resubmit still runs).
+		if (mc2StableLightSkipTouchEnabled() && mc2LightbridgeStableSkipEnabled()
+		    && stableLightSkipArmed && stableLightSkipEligible) {
+			lbssRecordBldg(/*eligible=*/true, /*skipTaken=*/true,
+			               /*blk_idx=*/false, /*blk_gen=*/false, /*blk_noelig=*/false);
+			bldgShape->Touch();
+			return;
+		}
 
 		// [LIGHTBRIDGE v1] C6 retirement: repoint to the primed 38d8720 slot
 		// (zero FNV/memcmp; cachedFrame_ stamped). MISS keeps the legacy
@@ -6575,6 +6616,27 @@ void TreeAppearance::touch()
 	// Touch() advances lastTurnTransformed so TG_Shape::Render()'s staleness
 	// guard doesn't suppress the legacy fallback path.
 	if (treeShape) {
+		// STABLE-LIGHT-SKIP-BROADEN-1: broaden the LBSS resubmit-skip that
+		// TreeAppearance::touchSerialCommit() takes (bdactor.cpp ~6709) to this
+		// legacy touch() path (the live path in stock config — FRAME-JOBS touch
+		// split default-OFF). Eligibility mirrors the serial-commit tree criteria
+		// exactly: registered + valid recipeIndex + valid lightDataIndex +
+		// !needsFullBakeNextFrame (trees don't track lastLightEnvGen — mission
+		// lighting is effectively static for trees). When eligible the cached
+		// lightDataIndex is still valid on the GPU (same baked-prefix persistence
+		// invariant), so the resubmit below is redundant. Still call treeShape->
+		// Touch() (advance lastTurnTransformed) — skip only the expensive resubmit.
+		// Gate: mc2StableLightSkipTouchEnabled() (default OFF => resubmit still runs).
+		{
+			const bool treeRegistered = (staticReg[activeLOD].registered && staticReg[activeLOD].recipeIndex >= 0);
+			const bool treeIdxValid   = (staticReg[activeLOD].lightDataIndex != 0xFFFFFFFFu);
+			const bool treeEligible   = treeRegistered && treeIdxValid && !needsFullBakeNextFrame;
+			if (mc2StableLightSkipTouchEnabled() && mc2LightbridgeStableSkipEnabled() && treeEligible) {
+				lbssRecordTree(/*skipTaken=*/true, /*blk_idx=*/false);
+				treeShape->Touch();
+				return;
+			}
+		}
 		// [LIGHTBRIDGE v1] C6 retirement: repoint to the primed 38d8720 slot
 		// (zero FNV/memcmp; cachedFrame_ stamped). MISS keeps the legacy
 		// resubmit (NOT CacheGpuLightData -- terrain-color-staleness,

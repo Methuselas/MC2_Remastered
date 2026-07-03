@@ -132,6 +132,10 @@ static const bool s_spotlightRealTrace = (getenv("MC2_SPOTLIGHT_REAL_TRACE") != 
 #include <intrin.h>  // __rdtsc (MSVC intrinsic)
 #include "mc2_hitch_trace.h"
 
+// SP-BATCHER-ALPHASCAN-GATE-1: see header. Starts at 1 so a fresh scan (cached
+// gen 0) always runs its first pass regardless of any early destruction events.
+std::atomic<uint64_t> g_staticPropAlphaGeneration{1};
+
 static const bool s_spflushCostSplitEnabled = []() {
     const char* v = getenv("MC2_STATIC_PROP_FLUSH_COST_SPLIT");
     return v && v[0] == '1' && v[1] == '\0';
@@ -5951,37 +5955,59 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             if (s_lastSeenMaterialFlags.size() != pktCount) {
                 s_lastSeenMaterialFlags.assign(pktCount, -1);
             }
-            bool anyChanged = false;
-            for (size_t i = 0; i < pktCount; ++i) {
-                const uint32_t globalPktIdx = s_sortedPacketOrder[i];
-                if (globalPktIdx >= s_packets.size()) continue;
-                const auto& pkt = s_packets[globalPktIdx];
-                int32_t flags = (pkt.materialFlags & STATIC_PROP_FLAG_ALPHA_TEST)
-                                ? STATIC_PROP_FLAG_ALPHA_TEST : 0;
-                if (flags == 0 && pkt.owningTypeID < s_types.size()) {
-                    const TG_TypeShape* src = s_types[pkt.owningTypeID].source;
-                    if (src && src->listOfTextures &&
-                        pkt.textureSlot < src->numTextures &&
-                        src->listOfTextures[pkt.textureSlot].textureAlpha) {
-                        flags = STATIC_PROP_FLAG_ALPHA_TEST;
+            // SP-BATCHER-ALPHASCAN-GATE-1: the per-packet OR-reduce scan below is
+            // frame-constant except immediately after a destruction/damage event
+            // (which flips a type's texture alpha via TG_TypeMultiShape::SetTextureAlpha
+            // and bumps g_staticPropAlphaGeneration). When the gate is armed and the
+            // generation is unchanged since the last scan AND the packet count is
+            // unchanged (buffer layout stable), skip the whole scan — the SSBO already
+            // holds the correct flags from the last event. Default OFF => scan always
+            // runs (byte-identical). First scan always runs (cached gen 0 != live >=1).
+            static const bool s_alphaScanGate = []() {
+                const char* v = getenv("MC2_SP_ALPHASCAN_GATE");
+                return v && v[0] != '0';
+            }();
+            static uint64_t s_lastScannedAlphaGen = 0;
+            static size_t   s_lastScannedPktCount = (size_t)-1;
+            const uint64_t liveAlphaGen = g_staticPropAlphaGeneration.load(std::memory_order_relaxed);
+            const bool alphaScanSkip = s_alphaScanGate &&
+                s_lastScannedAlphaGen == liveAlphaGen &&
+                s_lastScannedPktCount == pktCount;
+            if (!alphaScanSkip) {
+                s_lastScannedAlphaGen = liveAlphaGen;
+                s_lastScannedPktCount = pktCount;
+                bool anyChanged = false;
+                for (size_t i = 0; i < pktCount; ++i) {
+                    const uint32_t globalPktIdx = s_sortedPacketOrder[i];
+                    if (globalPktIdx >= s_packets.size()) continue;
+                    const auto& pkt = s_packets[globalPktIdx];
+                    int32_t flags = (pkt.materialFlags & STATIC_PROP_FLAG_ALPHA_TEST)
+                                    ? STATIC_PROP_FLAG_ALPHA_TEST : 0;
+                    if (flags == 0 && pkt.owningTypeID < s_types.size()) {
+                        const TG_TypeShape* src = s_types[pkt.owningTypeID].source;
+                        if (src && src->listOfTextures &&
+                            pkt.textureSlot < src->numTextures &&
+                            src->listOfTextures[pkt.textureSlot].textureAlpha) {
+                            flags = STATIC_PROP_FLAG_ALPHA_TEST;
+                        }
+                    }
+                    if (s_lastSeenMaterialFlags[i] != flags) {
+                        s_lastSeenMaterialFlags[i] = flags;
+                        anyChanged = true;
                     }
                 }
-                if (s_lastSeenMaterialFlags[i] != flags) {
-                    s_lastSeenMaterialFlags[i] = flags;
-                    anyChanged = true;
+                if (anyChanged && s_perDrawSsbo) {
+                    const size_t entryStride = sizeof(PerDrawEntry);
+                    const size_t flagOffset  = offsetof(PerDrawEntry, materialFlags);
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perDrawSsbo);
+                    for (size_t i = 0; i < pktCount; ++i) {
+                        const int32_t f = s_lastSeenMaterialFlags[i];
+                        MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER,
+                                        static_cast<GLintptr>(i * entryStride + flagOffset),
+                                        sizeof(int32_t), &f);
+                    }
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
                 }
-            }
-            if (anyChanged && s_perDrawSsbo) {
-                const size_t entryStride = sizeof(PerDrawEntry);
-                const size_t flagOffset  = offsetof(PerDrawEntry, materialFlags);
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perDrawSsbo);
-                for (size_t i = 0; i < pktCount; ++i) {
-                    const int32_t f = s_lastSeenMaterialFlags[i];
-                    MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER,
-                                    static_cast<GLintptr>(i * entryStride + flagOffset),
-                                    sizeof(int32_t), &f);
-                }
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
             }
         }
         // ---- Step 11.7 coalesce draw branch ----
