@@ -247,6 +247,9 @@ public:
     bool  casEnabled_;
     float casSharpness_;  // 0..1, default 0.5
 
+    // POST-FX-TONEMAP-V2: 0 off (default, byte-identical), 1 AgX, 2 Hable, 3 Reinhard.
+    int   tonemapMode_;
+
     void runScreenShadow();
     bool screenShadowEnabled_;
     // APPLY-STATE-SCREENSHADOW-1: per-island executor-applied flag (see

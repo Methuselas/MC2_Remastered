@@ -44,6 +44,13 @@ uniform float u_fxaaEdgeThresholdMin;  // dark-region contrast floor
 uniform int   u_casEnabled;
 uniform float u_casSharpness;    // 0..1
 
+// POST-FX-TONEMAP-V2 (SCOUR-1 #3): optional filmic tonemap on the final
+// composited LDR colour, gated by u_tonemapMode (0 = OFF -> byte-identical).
+// 1=AgX (Sobotka minimal approx), 2=Hable (Uncharted2 filmic), 3=Reinhard.
+// Old ACES was deleted as "wrong-for-RTS"; these are the RTS-neutral picks.
+// Applied AFTER grade+CAS, before UI -> no geometry/depth/object-id effect.
+uniform int   u_tonemapMode;     // 0 off, 1 AgX, 2 Hable, 3 Reinhard
+
 float fxaaLuma(vec3 c) { return sqrt(dot(c, vec3(0.299, 0.587, 0.114))); }
 
 vec3 fxaaFilter(vec2 uv, vec2 rcp) {
@@ -170,11 +177,49 @@ vec3 casFilter(vec2 uv)
     return clamp(outColor, 0.0, 1.0);
 }
 
+// POST-FX-TONEMAP-V2: filmic tonemap curves (algorithm re-derived from the
+// public AgX/Hable/Reinhard references; MIT/public-domain, SCOUR-1 #3).
+vec3 tmAgxContrast(vec3 x) {
+    vec3 x2 = x * x; vec3 x4 = x2 * x2;
+    return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x
+         + 0.4298 * x2 + 0.1191 * x - 0.00232;
+}
+vec3 tmAgx(vec3 c) {
+    const mat3 m = mat3(0.842479062253094, 0.0423282422610123, 0.0423756549057051,
+                        0.0784335999999992, 0.878468636469772,  0.0784336,
+                        0.0792237451477643, 0.0791661274605434, 0.879142973793104);
+    const mat3 mi = mat3(1.19687900512017,  -0.0528968517574562, -0.0529716355144438,
+                        -0.0980208811401368, 1.15190312990417,   -0.0980434501171241,
+                        -0.0990297440797205,-0.0989611768448433,  1.15107367264116);
+    const float lo = -12.47393, hi = 4.026069;
+    c = m * max(c, vec3(0.0));
+    c = clamp(log2(max(c, vec3(1e-10))), lo, hi);
+    c = (c - lo) / (hi - lo);
+    c = tmAgxContrast(c);
+    return clamp(mi * c, 0.0, 1.0);
+}
+vec3 tmHableP(vec3 x) {
+    const float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;
+    return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
+}
+vec3 tmHable(vec3 c) {
+    return clamp(tmHableP(c * 2.0) / tmHableP(vec3(11.2)), 0.0, 1.0);
+}
+vec3 applyTonemap(vec3 c) {
+    if (u_tonemapMode == 1) return tmAgx(c);
+    if (u_tonemapMode == 2) return tmHable(c);
+    if (u_tonemapMode == 3) return c / (1.0 + c);   // Reinhard
+    return c;                                        // 0 = off, byte-identical
+}
+
 void main()
 {
     // POST-FX-CAS-1: gate OFF -> single grade tap (byte-identical). When ON, CAS
     // samples/grades the 3x3 neighborhood and sharpens the graded center.
     vec3 color = (u_casEnabled != 0) ? casFilter(TexCoord) : gradeColor(TexCoord);
+
+    // POST-FX-TONEMAP-V2: optional filmic curve (u_tonemapMode 0 = no-op).
+    color = applyTonemap(color);
 
     FragColor = vec4(color, 1.0);
 

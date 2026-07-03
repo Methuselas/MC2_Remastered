@@ -676,6 +676,22 @@ void gosPostProcess::init(int w, int h)
                      casEnv ? casEnv : "(unset)");
     }
 
+    // POST-FX-TONEMAP-V2 (SCOUR-1 #3): optional filmic tonemap curve on the final
+    // composited colour. Resolved once from env. Default OFF (mode 0) -> composite
+    // uploads u_tonemapMode=0 -> shader no-op branch -> byte-identical.
+    // MC2_TONEMAP_V2 = 0/unset off, 1=AgX, 2=Hable, 3=Reinhard (also accepts the
+    // names agx/hable/reinhard). Visual-only; no geometry/depth/object-id effect.
+    {
+        tonemapMode_ = 0;
+        if (const char* v = getenv("MC2_TONEMAP_V2")) {
+            if      (v[0]=='1' || !strcmp(v,"agx"))      tonemapMode_ = 1;
+            else if (v[0]=='2' || !strcmp(v,"hable"))    tonemapMode_ = 2;
+            else if (v[0]=='3' || !strcmp(v,"reinhard")) tonemapMode_ = 3;
+        }
+        std::fprintf(stderr, "[TONEMAP v2] mode=%d (MC2_TONEMAP_V2=%s)\n",
+                     tonemapMode_, getenv("MC2_TONEMAP_V2") ? getenv("MC2_TONEMAP_V2") : "(unset)");
+    }
+
     // OOB-FOG-1: far-plane fog over the out-of-bounds region. Default ON.
     {
         fogOobProg_ = glsl_program::makeProgram("fog_oob",
@@ -3295,6 +3311,8 @@ void gosPostProcess::endScene()
         // (byte-identical). Set before apply() like the others.
         compositeProg_->setInt  ("u_casEnabled",   casEnabled_ ? 1 : 0);
         compositeProg_->setFloat("u_casSharpness", casSharpness_);
+        // POST-FX-TONEMAP-V2: 0 = no-op branch in the shader (byte-identical).
+        compositeProg_->setInt  ("u_tonemapMode",  tonemapMode_);
 
         // VIEWMODE-POSTPROCESS-PRESENTATION-1: resolve effective view mode.
         // Gate OFF -> forced 0 (Visual). ObjectIdDebug requires sceneObjectIdTex_;

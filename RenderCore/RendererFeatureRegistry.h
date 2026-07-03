@@ -663,6 +663,14 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "POST-FX-CAS-1: CAS sharpness knob, clamped 0..1 (default 0.5). Only consulted when MC2_POST_CAS is armed."
     },
+    // POST-FX-TONEMAP-V2 (SCOUR-1 #3): filmic tonemap on the composite.
+    {
+        "MC2_TONEMAP_V2",
+        "MC2_TONEMAP_V2",
+        EnvVarKind::Feature,
+        false,
+        "POST-FX-TONEMAP-V2: optional filmic tonemap curve on the final composited colour (postprocess.frag). 0/unset=OFF (byte-identical no-op branch), 1/agx=AgX (Sobotka minimal), 2/hable=Uncharted2 filmic, 3/reinhard. Replaces the ACES deleted as wrong-for-RTS; RTS-neutral picks. Visual-only, after grade+CAS before UI."
+    },
     // SAVE/LOAD-AIFREEZE-TRACE-1: runBrain post-exec diagnostic.
     {
         "MC2_BRAIN_FREEZE_TRACE",
