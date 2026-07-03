@@ -1908,7 +1908,13 @@ def main():
                             # allowlist Popen drops it and a gate-ON A/B smoke
                             # silently runs the OFF (byte-identical) branch --
                             # every mode would capture identical frames.
-                            "MC2_TONEMAP_V2")},
+                            "MC2_TONEMAP_V2",
+                            # SLICE 3a: cliff tessellation plumbing gate + max-tess
+                            # knob (default OFF). Without these in the allowlist
+                            # Popen drops them and a gate-ON perf/parity smoke
+                            # silently runs the GL_TRIANGLES (gate-OFF) path.
+                            "MC2_TERRAIN_CLIFF_DISPLACE",
+                            "MC2_TERRAIN_CLIFF_DISPLACE_MAXTESS")},
             },
         )
         # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.
