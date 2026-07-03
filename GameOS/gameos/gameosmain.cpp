@@ -6,6 +6,7 @@
 #include "draw_packet_emitter.h"       // DrawPacket v0
 #include "gos_static_prop_batcher.h"   // batcher_getSortedPacketCount — explicit, do not rely on transitive
 #include "../../RenderCore/MaterialGpu.h"  // RenderCore::MaterialGpu for g_dpSelProp albedoTex fill
+#include "build_fingerprint.h"          // MC2_BUILD_GIT_SHA (real macro; MC2_BUILD_HASH never defined)
 #include <stdio.h>
 #include <stdlib.h>
 #include <vector>
@@ -906,13 +907,7 @@ int main(int argc, char** argv)
         // new TG_Light registration path is the unconditional production
         // behavior. MC2_SPOTLIGHT_REAL_TRACE counters remain (Debug
         // Instrumentation Rule: demote, don't delete) for future diagnostics.
-        const char* build  =
-#ifdef MC2_BUILD_HASH
-            MC2_BUILD_HASH
-#else
-            "UNKNOWN"
-#endif
-            ;
+        const char* build  = MC2_BUILD_GIT_SHA;
         // Grew 384 -> 512 -> 640 to absorb terrain_indirect{,_parity}
         // and gpu_objects fields without truncation.
         // Grew 640 -> 720 to absorb gpu_cull_substrate and gpu_cull_aabb_parity.
