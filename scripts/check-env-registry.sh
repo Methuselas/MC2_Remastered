@@ -628,6 +628,9 @@ ALLOWLIST=(
     MC2_TERRAIN_ACTIVE_AB             # parity
     MC2_TERRAIN_CAM_DIAG              # trace
     MC2_TERRAIN_CEMENT_DIAG_CONNECT   # trace
+    MC2_TERRAIN_CLIFF_POM             # feature -- terrain cliff triplanar POM gate
+    MC2_TERRAIN_CLIFF_POM_DEPTH       # override -- terrain cliff POM depth tuning
+    MC2_TERRAIN_CLIFF_POM_STEPS       # override -- terrain cliff POM march steps tuning
     MC2_TERRAIN_CLIFF_TRIPLANAR       # feature -- terrain cliff-triplanar gate
     MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH  # override -- terrain cliff-triplanar strength tuning
     MC2_TERRAIN_DETAIL_ANTITILE       # feature -- terrain detail-antitile gate

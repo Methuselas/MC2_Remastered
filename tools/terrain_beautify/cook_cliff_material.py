@@ -58,20 +58,42 @@ def _height_from_normal(rgb: np.ndarray) -> np.ndarray:
     return height
 
 
-def cook(zip_path: Path, size: int) -> np.ndarray:
+def _load_disp16(path: Path, size: int) -> np.ndarray:
+    """Load a real displacement/height map (8- or 16-bit grayscale) and return a
+    float height field in [0,1] resized to (size,size). 16-bit ('I;16'/'I') is
+    normalized by its own min/max so the full 16-bit range maps to 8-bit output
+    without clipping detail into a narrow band."""
+    im = Image.open(path)
+    if im.mode in ("I;16", "I;16B", "I;16L", "I", "F"):
+        arr = np.asarray(im).astype(np.float32)
+        # resize on the raw 16-bit values (via float image) to preserve range
+        fim = Image.fromarray(arr, mode="F").resize((size, size), Image.LANCZOS)
+        h = np.asarray(fim).astype(np.float32)
+    else:
+        h = np.asarray(im.convert("L").resize((size, size), Image.LANCZOS)).astype(np.float32)
+    h -= h.min()
+    mx = h.max()
+    if mx > 1e-6:
+        h /= mx
+    return h
+
+
+def cook(zip_path: Path, size: int, disp_override: Path | None = None) -> np.ndarray:
     with tempfile.TemporaryDirectory(dir=str(Path.cwd())) as td:
         with zipfile.ZipFile(zip_path) as z:
             z.extractall(td)
         tex = Path(td) / "textures"
         nor = next(tex.glob("*nor_gl*"), None) or next(tex.glob("*normal*"), None)
         arm = next(tex.glob("*arm*"), None)
-        disp = (next(tex.glob("*disp*"), None) or next(tex.glob("*height*"), None))
+        # An external --disp-override (the real 4k marble_cliff displacement that
+        # the 2k gltf pack does NOT ship) wins over any in-zip disp/height.
+        disp = disp_override or (next(tex.glob("*disp*"), None) or next(tex.glob("*height*"), None))
         if not nor:
             raise FileNotFoundError("no *nor_gl*/*normal* texture in asset")
         rgb = np.asarray(Image.open(nor).convert("RGB").resize((size, size), Image.LANCZOS))
         if disp is not None:
-            # Prefer a real displacement/height map when the pack ships one.
-            a = np.asarray(Image.open(disp).convert("L").resize((size, size), Image.LANCZOS)).astype(np.float32) / 255.0
+            # Prefer a real displacement/height map when available (16-bit aware).
+            a = _load_disp16(Path(disp), size)
         else:
             # No height map (marble_cliff): synthesize relief from the pack's OWN
             # data -- integrate the normal for groove structure, modulate with
@@ -99,9 +121,14 @@ def main() -> int:
     ], help="dir(s) to write mat5_normal.tga (repeatable)")
     ap.add_argument("--size", type=int, default=2048)
     ap.add_argument("--slot", type=int, default=5, help="mat<slot>_normal.tga")
+    ap.add_argument("--disp-override", default=None,
+                    help="path to a real displacement/height map (8/16-bit gray) "
+                         "to cook into the alpha channel instead of any in-zip disp "
+                         "or normal-integrated relief (e.g. marble_cliff_01_disp_4k.png)")
     args = ap.parse_args()
 
-    out = cook(Path(args.asset_zip), args.size)
+    disp_over = Path(args.disp_override) if args.disp_override else None
+    out = cook(Path(args.asset_zip), args.size, disp_over)
     rgb_mean = out[..., :3].reshape(-1, 3).mean(0).round(0)
     a = out[..., 3]
     for d in args.out_textures:

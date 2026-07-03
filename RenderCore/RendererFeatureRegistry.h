@@ -1026,6 +1026,27 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1 knob: triplanar rock-normal tilt strength (float, default 1.0). Scales how strongly the world-axis rock normal perturbs the terrain normal on cliff faces. Only consumed when MC2_TERRAIN_CLIFF_TRIPLANAR=1."
     },
     {
+        "MC2_FEATURE_TERRAIN_CLIFF_POM",
+        "MC2_TERRAIN_CLIFF_POM",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-CLIFF-POM-1: triplanar Parallax Occlusion Mapping on cliff faces. Extends MC2_TERRAIN_CLIFF_TRIPLANAR: for each of the 3 world-axis triplanar planes (YZ/XZ/XY, weighted by |macroN|), march the REAL marble_cliff displacement (mat5_normal.tga alpha, from marble_cliff_01_disp_4k) along the per-fragment world-space view vector (from cameraPos, MC2 world swizzle (-x,z,y)) projected onto that plane, producing a UV occlusion offset applied to BOTH the cliff normal and albedo triplanar samples so vertical rock reads with real view-dependent depth (unlike top-down MC2_TERRAIN_POM which fades off cliffs). Shading-only (NO gl_FragDepth). Requires MC2_TERRAIN_CLIFF_TRIPLANAR=1 (shares the triplanar block). Default OFF -> u_cliffPom.x=0 -> march skipped -> triplanar block byte-identical to TRIPLANAR-1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_POM_DEPTH",
+        "MC2_TERRAIN_CLIFF_POM_DEPTH",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CLIFF-POM-1 knob: parallax depth = world-unit rock height scale relative to the CLIFF tiling (ts=256 wu/repeat). Float > 0, default 12. Larger = deeper apparent relief / stronger occlusion. Only consumed when MC2_TERRAIN_CLIFF_POM=1."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_POM_STEPS",
+        "MC2_TERRAIN_CLIFF_POM_STEPS",
+        EnvVarKind::Trace,
+        false,
+        "TERRAIN-CLIFF-POM-1 knob: max POM march layers per plane, clamped 8..32 (default 24; compile-constant loop cap 32). More steps = smoother occlusion at grazing angles, higher cost. Only consumed when MC2_TERRAIN_CLIFF_POM=1."
+    },
+    {
         "MC2_DIAG_VFX_DEBUG_MODE",
         "MC2_VFX_DEBUG_MODE",
         EnvVarKind::Trace,

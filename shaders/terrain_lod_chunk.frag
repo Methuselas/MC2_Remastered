@@ -277,6 +277,13 @@ uniform int   useRockSlopeBias;                 // TERRAIN-SLOPE-BIAS-VISUAL-1: 
 uniform float rockSlopeBiasStrength;            // rock-weight bias on steep slopes (default 1.0)
 uniform int   useTriplanarCliff;                // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1: 0=off (byte-identical)
 uniform float cliffTriplanarStrength;           // triplanar rock normal/relief strength (default 1.0)
+// TERRAIN-CLIFF-POM-1: triplanar Parallax Occlusion Mapping on cliff faces
+// (gate MC2_TERRAIN_CLIFF_POM). .x=gate(0/1), .y=depth (world-unit height scale
+// relative to the CLIFF tiling ts=256), .z=max march steps. Reuses `cameraPos`
+// for the world-space view vector (same MC2 world swizzle as the legacy POM).
+// Gated on useTriplanarCliff too (shares the triplanar sample setup); .x=0 ->
+// no march -> the triplanar block behaves exactly as TRIPLANAR-1 (byte-identical).
+uniform vec4  u_cliffPom;                        // .x=gate, .y=depth(wu), .z=maxSteps, .w=unused
 uniform vec4  pomParams;                        // .x=scale(0=off), .y=minLayers, .z=maxLayers
 // TERRAIN-CHUNK-POM-1: real view-vector POM (gate MC2_TERRAIN_POM, default OFF).
 // u_pomView.x=1 -> the POM march in chunkDetailNormal uses the REAL per-fragment
@@ -552,6 +559,43 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY, float macroNz) {
     if (snowWeight > 0.01) dN += snowWeight * 0.9 * fwSnow *
         (textureGrad(matNormalArray, vec3(uvSnow,  float(MAT_LAYER_SNOW)), ddxSnow, ddySnow).rgb * 2.0 - 1.0);
     return dN;
+}
+
+// TERRAIN-CLIFF-POM-1: Parallax Occlusion march in ONE world-axis triplanar
+// plane. `uv` is the plane's 2D coordinate (already /ts). `viewPlane` is the
+// view direction (fragment->eye, MC2 world) PROJECTED onto that plane's 2D
+// basis. `depth` scales the max UV displacement (world-unit height / ts). The
+// mat5 alpha carries the REAL marble_cliff displacement (1=peak, 0=deep). We
+// march from the surface INTO the rock: at each step step down in height and
+// forward along the (inverted) view offset until the ray falls below the
+// heightfield, then interpolate the crossing — standard POM. textureLod only
+// (loop => no implicit derivatives; UB2 discipline). No gl_FragDepth write.
+vec2 cliffParallaxPlane(vec2 uv, vec2 viewPlane, float depth, float steps) {
+    if (depth <= 0.0) return uv;
+    // more layers at grazing angles (small out-of-plane component -> long march).
+    float nSteps = clamp(steps, 8.0, 32.0);
+    float layerDepth = 1.0 / nSteps;
+    // total UV sweep for a full 0..1 height traversal. Negative view offset so the
+    // parallax shifts toward the eye (occlusion by nearer/higher rock).
+    vec2 P = -viewPlane * depth;
+    vec2 deltaUV = P * layerDepth;
+    float curDepth = 0.0;
+    vec2  curUV    = uv;
+    float curH = 1.0 - textureLod(matNormalArray, vec3(curUV, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+    // bounded loop (compile-constant cap 32); break once the ray dips below rock.
+    for (int i = 0; i < 32; ++i) {
+        if (float(i) >= nSteps || curDepth >= curH) break;
+        curUV   += deltaUV;
+        curDepth += layerDepth;
+        curH = 1.0 - textureLod(matNormalArray, vec3(curUV, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+    }
+    // interpolate between the last two samples where the ray crossed the surface.
+    vec2  prevUV = curUV - deltaUV;
+    float afterH = curH - curDepth;
+    float beforeH = (1.0 - textureLod(matNormalArray, vec3(prevUV, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a)
+                    - (curDepth - layerDepth);
+    float t = afterH / (afterH - beforeH + 1e-5);
+    return mix(curUV, prevUV, clamp(t, 0.0, 1.0));
 }
 
 void main() {
@@ -1134,21 +1178,72 @@ void main() {
             // recompute the macro normal here (baseN is scoped to the normal block).
             vec3 mN = smoothTerrainNormal(v_worldPos.xy);
             vec3 wn = abs(mN); wn /= (wn.x + wn.y + wn.z + 1e-5);
-            // tangent-space rock normals sampled in each world plane.
-            // textureLod(...,0): explicit LOD is valid inside this non-uniform branch
-            // (implicit derivatives would be UB / vendor-divergent — UB2 discipline).
-            vec3 nX = textureLod(matNormalArray, vec3(wp.yz / ts, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * 2.0 - 1.0;
-            vec3 nY = textureLod(matNormalArray, vec3(wp.xz / ts, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * 2.0 - 1.0;
-            vec3 nZ = textureLod(matNormalArray, vec3(wp.xy / ts, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * 2.0 - 1.0;
+
+            // Base per-plane UVs (before any parallax).
+            vec2 uvX = wp.yz / ts;   // YZ plane
+            vec2 uvY = wp.xz / ts;   // XZ plane
+            vec2 uvZ = wp.xy / ts;   // XY plane
+
+            // TERRAIN-CLIFF-POM-1: real triplanar Parallax Occlusion Mapping.
+            // World-space view vector (fragment -> eye). cameraPos is the Stuff/MLR
+            // eye; MC2 world = (-x, z, y) -- SAME swizzle the legacy chunk POM and
+            // water-reflection fix use (this file, ~L473/L991). Project Vw onto each
+            // plane's 2D basis and march that plane's heightfield for a UV offset.
+            if (u_cliffPom.x > 0.5) {
+                vec3  camW = vec3(-cameraPos.x, cameraPos.z, cameraPos.y);
+                vec3  Vw   = normalize(camW - wp);          // frag -> eye, world
+                // depth is a world-unit height expressed relative to the CLIFF
+                // tiling (ts); the plane view offset is divided by the out-of-plane
+                // view component so grazing angles sweep farther (true parallax).
+                float depth = u_cliffPom.y / ts;
+                float steps = u_cliffPom.z;
+                // per-plane: 2D view = the two in-plane components; divide by the
+                // out-of-plane component magnitude (clamped) for angle scaling.
+                vec2 vpX = Vw.yz / max(abs(Vw.x), 0.30);
+                vec2 vpY = Vw.xz / max(abs(Vw.y), 0.30);
+                vec2 vpZ = Vw.xy / max(abs(Vw.z), 0.30);
+                // weight the march by this plane's contribution so we don't pay for
+                // near-zero planes (also keeps offsets small where the plane barely
+                // shows). Blend offset toward base UV by wn.
+                uvX = mix(uvX, cliffParallaxPlane(uvX, vpX, depth, steps), clamp(wn.x * 1.5, 0.0, 1.0));
+                uvY = mix(uvY, cliffParallaxPlane(uvY, vpY, depth, steps), clamp(wn.y * 1.5, 0.0, 1.0));
+                uvZ = mix(uvZ, cliffParallaxPlane(uvZ, vpZ, depth, steps), clamp(wn.z * 1.5, 0.0, 1.0));
+            }
+
+            // tangent-space rock normals sampled in each world plane (at the
+            // parallax-offset UVs when POM is on). textureLod(...,0): explicit LOD
+            // is valid inside this non-uniform branch (implicit derivatives would be
+            // UB / vendor-divergent — UB2 discipline).
+            vec3 nX = textureLod(matNormalArray, vec3(uvX, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * 2.0 - 1.0;
+            vec3 nY = textureLod(matNormalArray, vec3(uvY, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * 2.0 - 1.0;
+            vec3 nZ = textureLod(matNormalArray, vec3(uvZ, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * 2.0 - 1.0;
             // reorient each plane's tangent normal into world space + blend by axis weight.
             vec3 triTilt = vec3(0.0, nX.x, nX.y) * wn.x
                          + vec3(nY.x, 0.0, nY.y) * wn.y
                          + vec3(nZ.x, nZ.y, 0.0) * wn.z;
             vec3 triN = normalize(mN + triTilt * cliffTriplanarStrength);
             N = normalize(mix(N, triN, cb));
-            // groove relief: darken by the rock displacement on the dominant wall plane.
-            float disp = textureLod(matNormalArray, vec3(wp.xy / ts, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
-            baseColor *= mix(1.0, 0.72 + 0.28 * disp, cb);
+
+            // groove relief: darken by the rock displacement, triplanar-blended over
+            // all three planes at the parallax UVs so side-plane occlusion (the real
+            // view-dependent depth) shows on vertical faces, not just the XY plane.
+            float dispX = textureLod(matNormalArray, vec3(uvX, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+            float dispY = textureLod(matNormalArray, vec3(uvY, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+            float dispZ = textureLod(matNormalArray, vec3(uvZ, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
+            float disp  = dispX * wn.x + dispY * wn.y + dispZ * wn.z;
+            baseColor *= mix(1.0, 0.62 + 0.38 * disp, cb);
+
+            // With POM on, also re-project the cliff ALBEDO at the parallax UVs so
+            // the rock colour occludes with depth (the albedo block above sampled
+            // at un-parallaxed UVs). Only when the material-albedo path is live.
+            if (u_cliffPom.x > 0.5 && u_useMatAlbedo != 0) {
+                vec3 cliffAlbP =
+                      textureLod(u_matAlbedoArray, vec3(uvX * (ts / 256.0), float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * wn.x
+                    + textureLod(u_matAlbedoArray, vec3(uvY * (ts / 256.0), float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * wn.y
+                    + textureLod(u_matAlbedoArray, vec3(uvZ * (ts / 256.0), float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * wn.z;
+                baseColor = mix(baseColor, cliffAlbP * base * 2.0,
+                                cb * clamp(u_matAlbedoStrength, 0.0, 1.0));
+            }
         }
     }
     // World-space two-octave break-up noise (non-snow).

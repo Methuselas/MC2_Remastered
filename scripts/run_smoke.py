@@ -1321,6 +1321,14 @@ def main():
                             # capture does nothing.
                             "MC2_TERRAIN_CLIFF_TRIPLANAR",
                             "MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH",
+                            # TERRAIN-CLIFF-POM-1 -- triplanar Parallax Occlusion
+                            # Mapping on cliff faces (real marble_cliff disp in
+                            # mat5 alpha), gated on top of CLIFF_TRIPLANAR. Default
+                            # OFF; must be allowlisted or Popen drops them and the
+                            # gate-ON capture does nothing.
+                            "MC2_TERRAIN_CLIFF_POM",
+                            "MC2_TERRAIN_CLIFF_POM_DEPTH",
+                            "MC2_TERRAIN_CLIFF_POM_STEPS",
                             # TERRAIN-MATERIAL-TEXTURES-1-FIX (fix A): the LOD-chunk
                             # diag bitmask drives the u_diag debug views, incl. bit
                             # 16384 = the INDEX ORACLE (each albedo array LAYER as a
