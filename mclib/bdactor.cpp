@@ -123,6 +123,7 @@ static bool textureOrKtxSidecarExists(const char* tgaPath)
 	return fileExists(ktx);
 }
 #include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
+#include "cliff_decal_tuning.h"  // TERRAIN-DECAL-SLICE-0C: shared face-frame + live tuning
 #include "gos_mech_killswitch.h"       // g_mechPreviewRenderDepth (component preview-fix)
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 RenderWorld Tasks 8-11
 #include <unordered_map>  // LODBUG probe: tracks per-actor previous bldgShape*
@@ -4004,26 +4005,13 @@ void BldgAppearance::registerStatic() {
 	//   (-nx, nz, ny); its horizontal projection (-nx,0,ny) is the outward facing.
 	static const bool s_terrainDecal =
 	    (getenv("MC2_TERRAIN_DECAL") != nullptr && getenv("MC2_TERRAIN_DECAL")[0] != '0');
-	// TERRAIN-DECAL-SLICE-0B — live placement knobs (read once at process start).
-	// All default to Slice-0A behavior -> byte-identical when unset. Tune the
-	// cliff-wall mesh-decal placement without a rebuild (relaunch with new env).
-	//   SCALE   uniform scale of the wall mesh (multiplies the 3 basis rows)
-	//   OFFSET  outward offset along facing (replaces the hardcoded 8.0)
-	//   LATERAL nudge along tangent (side-to-side)
-	//   LIFT    nudge along world-up (vertical)
-	//   YAW     rotate facing/tangent about world-up (degrees), to correct facing
-	static const float s_decalScale = []() -> float {
-	    const char* v = getenv("MC2_TERRAIN_DECAL_SCALE"); return v ? (float)atof(v) : 1.0f; }();
-	static const float s_decalOffset = []() -> float {
-	    const char* v = getenv("MC2_TERRAIN_DECAL_OFFSET"); return v ? (float)atof(v) : 8.0f; }();
-	static const float s_decalLateral = []() -> float {
-	    const char* v = getenv("MC2_TERRAIN_DECAL_LATERAL"); return v ? (float)atof(v) : 0.0f; }();
-	static const float s_decalLift = []() -> float {
-	    const char* v = getenv("MC2_TERRAIN_DECAL_LIFT"); return v ? (float)atof(v) : 0.0f; }();
-	static const float s_decalYawDeg = []() -> float {
-	    const char* v = getenv("MC2_TERRAIN_DECAL_YAW"); return v ? (float)atof(v) : 0.0f; }();
+	// TERRAIN-DECAL-SLICE-0B/0C — placement knobs live in CliffDecalTuning (mutable,
+	// seeded from the MC2_TERRAIN_DECAL_* env defaults so unset == byte-identical to
+	// Slice-0A). The face-frame math is factored into CliffDecalTuning::buildCliffWall
+	// Matrix(), shared by this registration path and the live ImGui tuning panel.
 	bool useCliffWallFrame = false;
 	Stuff::Matrix4D cliffWallXform;
+	Stuff::Vector3D decalNAcc;  // captured for the live-update panel
 	if (s_terrainDecal && appearType && appearType->name &&
 	    _stricmp(appearType->name, "MarbleCliff") == 0) {
 		// Sample the terrain normal at the placement site (average the 4
@@ -4041,71 +4029,17 @@ void BldgAppearance::registerStatic() {
 			                             : Stuff::Vector3D(0.0f, 0.0f, 1.0f);
 			nAcc.x += nc.x; nAcc.y += nc.y; nAcc.z += nc.z;
 		}
-		// Outward facing = horizontal projection of the terrain normal, remapped
-		// to shape-world axes (-nx, 0, ny). Points downslope toward the low side.
-		Stuff::Vector3D facing;
-		facing.x = -nAcc.x; facing.y = 0.0f; facing.z = nAcc.y;
-		float fl = sqrtf(facing.x * facing.x + facing.z * facing.z);
-		if (fl < 1e-4f) { facing.x = 0.0f; facing.z = 1.0f; fl = 1.0f; } // flat: pick +Zsw
-		facing.x /= fl; facing.z /= fl;
-		Stuff::Vector3D up(0.0f, 1.0f, 0.0f);
-		// tangent (contour) = up x facing (right-handed), horizontal.
-		Stuff::Vector3D tangent;
-		tangent.x = up.y * facing.z - up.z * facing.y; // = facing.z
-		tangent.y = up.z * facing.x - up.x * facing.z; // = 0
-		tangent.z = up.x * facing.y - up.y * facing.x; // = -facing.x
-		float tl = sqrtf(tangent.x * tangent.x + tangent.y * tangent.y + tangent.z * tangent.z);
-		if (tl < 1e-4f) tl = 1.0f;
-		tangent.x /= tl; tangent.y /= tl; tangent.z /= tl;
-
-		// TERRAIN-DECAL-SLICE-0B YAW: rotate facing & tangent about world-up by
-		// s_decalYawDeg (both lie in the horizontal plane; up is invariant).
-		if (s_decalYawDeg != 0.0f) {
-			const float yr = s_decalYawDeg * 0.01745329252f; // deg -> rad
-			const float cy = cosf(yr), sy = sinf(yr);
-			// Rotate about world-up (shape-world +Y): x' = x*cy + z*sy, z' = -x*sy + z*cy.
-			float fx = facing.x * cy + facing.z * sy;
-			float fz = -facing.x * sy + facing.z * cy;
-			facing.x = fx; facing.z = fz;
-			float tx = tangent.x * cy + tangent.z * sy;
-			float tz = -tangent.x * sy + tangent.z * cy;
-			tangent.x = tx; tangent.z = tz;
-		}
-
-		// TERRAIN-DECAL-SLICE-0B SCALE: uniform scale of the wall mesh. Multiply
-		// the 3 basis rows by s_decalScale before translation. Uniform only ->
-		// no inverse-transpose needed for normals.
-		const float sc = s_decalScale;
-		cliffWallXform.BuildIdentity();
-		// ROW 0 = local X (wall width / contour) -> tangent
-		cliffWallXform(Stuff::X_Axis, Stuff::X_Axis) = tangent.x * sc;
-		cliffWallXform(Stuff::X_Axis, Stuff::Y_Axis) = tangent.y * sc;
-		cliffWallXform(Stuff::X_Axis, Stuff::Z_Axis) = tangent.z * sc;
-		// ROW 1 = local Y (wall height) -> world up
-		cliffWallXform(Stuff::Y_Axis, Stuff::X_Axis) = up.x * sc;
-		cliffWallXform(Stuff::Y_Axis, Stuff::Y_Axis) = up.y * sc;
-		cliffWallXform(Stuff::Y_Axis, Stuff::Z_Axis) = up.z * sc;
-		// ROW 2 = local Z (relief / face) -> outward facing
-		cliffWallXform(Stuff::Z_Axis, Stuff::X_Axis) = facing.x * sc;
-		cliffWallXform(Stuff::Z_Axis, Stuff::Y_Axis) = facing.y * sc;
-		cliffWallXform(Stuff::Z_Axis, Stuff::Z_Axis) = facing.z * sc;
-		// Translation = placement origin + OUTWARD offset (facing) + LATERAL
-		// (tangent) + LIFT (world up). Knob-tuned; defaults reproduce Slice 0A.
-		const float kOutwardOffset = s_decalOffset; // world units along facing
-		cliffWallXform(Stuff::W_Axis, Stuff::X_Axis) =
-		    xlatPosition.x + facing.x * kOutwardOffset + tangent.x * s_decalLateral + up.x * s_decalLift;
-		cliffWallXform(Stuff::W_Axis, Stuff::Y_Axis) =
-		    xlatPosition.y + facing.y * kOutwardOffset + tangent.y * s_decalLateral + up.y * s_decalLift;
-		cliffWallXform(Stuff::W_Axis, Stuff::Z_Axis) =
-		    xlatPosition.z + facing.z * kOutwardOffset + tangent.z * s_decalLateral + up.z * s_decalLift;
+		decalNAcc = nAcc;
+		// Build the initial CLIFF_WALL face frame from the current (env-seeded) knobs.
+		CliffDecalTuning::buildCliffWallMatrix(
+		    xlatPosition, nAcc, CliffDecalTuning::knobs(), cliffWallXform);
 		useCliffWallFrame = true;
 		if (getenv("MC2_TERRAIN_DECAL_TRACE")) {
+			const CliffDecalTuning::Knobs& k = CliffDecalTuning::knobs();
 			fprintf(stderr, "[TERRAIN_DECAL v1] CLIFF_WALL name=%s pos=(%.1f,%.1f) "
-			        "facing=(%.3f,%.3f,%.3f) tangent=(%.3f,%.3f,%.3f) "
 			        "scale=%.3f offset=%.1f lateral=%.1f lift=%.1f yaw=%.1f\n",
 			        appearType->name, position.x, position.y,
-			        facing.x, facing.y, facing.z, tangent.x, tangent.y, tangent.z,
-			        s_decalScale, kOutwardOffset, s_decalLateral, s_decalLift, s_decalYawDeg),
+			        k.scale, k.offset, k.lateral, k.lift, k.yawDeg),
 			    fflush(stderr);
 		}
 	}
@@ -4222,6 +4156,13 @@ void BldgAppearance::registerStatic() {
 		staticReg.registered  = true;
 		staticReg.shape       = bldgShape;
 		staticReg.recipeIndex = regIdx;
+		// TERRAIN-DECAL-SLICE-0C: capture this decal's live-update context so the
+		// "Cliff Decal" ImGui panel can recompute + re-upload its transform when a
+		// slider moves. Only for the CLIFF_WALL decal (useCliffWallFrame); other
+		// buildings never register a live decal target.
+		if (useCliffWallFrame) {
+			CliffDecalTuning::captureDecalContext(regIdx, xlatPosition, decalNAcc);
+		}
 		// SHADOW-STATIC-BUILDINGS-2: tag this recipe Building so the world-fixed
 		// static shadow map replays it (visibility-independent; not per-frame buckets).
 		GpuStaticPropRegistry::setRecipePopulation(regIdx, GpuStaticPropPopulation::Building);

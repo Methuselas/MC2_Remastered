@@ -83,6 +83,7 @@ set(SOURCES ${SOURCES}
     appear.cpp
     apprtype.cpp
     bdactor.cpp
+    cliff_decal_tuning.cpp
     genactor.cpp
     gvactor.cpp
     mech3d.cpp

@@ -20,6 +20,18 @@
 #include <SDL2/SDL_syswm.h>
 #endif
 
+// TERRAIN-DECAL-SLICE-0C — live cliff mesh-decal tuning panel.
+// Forward-declared plain API (defined in mclib/cliff_decal_tuning.cpp; resolved at
+// mc2 link) so this TU need not pull in Stuff/batcher headers. See that file.
+namespace CliffDecalTuning {
+    bool cliffDecal_hasDecal();
+    void cliffDecal_getKnobs(float* scale, float* offset, float* lateral,
+                             float* lift, float* yawDeg);
+    void cliffDecal_setKnobsAndApply(float scale, float offset, float lateral,
+                                     float lift, float yawDeg);
+    void cliffDecal_logValues();
+}
+
 bool g_imguiInitialized = false;
 
 static bool isEnabled() {
@@ -364,6 +376,41 @@ static bool demoEnabled() {
     return cached == 1;
 }
 
+// TERRAIN-DECAL-SLICE-0C: live cliff mesh-decal placement panel. Renders only when a
+// CLIFF_WALL decal was captured this mission (MC2_TERRAIN_DECAL=1 + a MarbleCliff was
+// placed). Dragging a slider recomputes the decal's face-frame transform and re-uploads
+// it to the static-prop registry the same frame — no relaunch. Gate-OFF => no decal
+// captured => this draws nothing (byte-identical).
+static void DrawCliffDecalPanel() {
+    if (!CliffDecalTuning::cliffDecal_hasDecal()) return;
+
+    if (!ImGui::Begin("Cliff Decal")) { ImGui::End(); return; }
+
+    float scale, offset, lateral, lift, yaw;
+    CliffDecalTuning::cliffDecal_getKnobs(&scale, &offset, &lateral, &lift, &yaw);
+
+    ImGui::TextUnformatted("Live CLIFF_WALL mesh-decal placement.");
+    ImGui::Separator();
+
+    bool changed = false;
+    changed |= ImGui::SliderFloat("Scale",   &scale,    0.5f,   5.0f, "%.3f");
+    changed |= ImGui::SliderFloat("Offset",  &offset, -50.0f, 400.0f, "%.1f");
+    changed |= ImGui::SliderFloat("Lateral", &lateral,-200.0f,200.0f, "%.1f");
+    changed |= ImGui::SliderFloat("Lift",    &lift,   -200.0f,200.0f, "%.1f");
+    changed |= ImGui::SliderFloat("Yaw",     &yaw,    -180.0f,180.0f, "%.1f");
+
+    if (changed)
+        CliffDecalTuning::cliffDecal_setKnobsAndApply(scale, offset, lateral, lift, yaw);
+
+    ImGui::Separator();
+    if (ImGui::Button("Copy current values (-> stderr)"))
+        CliffDecalTuning::cliffDecal_logValues();
+    ImGui::SameLine();
+    ImGui::TextDisabled("as MC2_TERRAIN_DECAL_* env vars");
+
+    ImGui::End();
+}
+
 void GuiRuntime::Render() {
     if (!g_imguiInitialized) return;
 
@@ -378,6 +425,7 @@ void GuiRuntime::Render() {
 
     EditorInspector::drawImGui();
     GraphicsOptionsWindow::draw();
+    DrawCliffDecalPanel();
 
     // Force scale=1 at Render() time too -- some paths between NewFrame and
     // Render can reset it (SDL window event processing, etc.).
