@@ -2675,6 +2675,33 @@ long MechWarrior::runBrain (void) {
 
 	clearAlarmsHistory();
 
+	// SAVE/LOAD-AIFREEZE-TRACE-1: gated one-line diagnostic (default OFF ->
+	// byte-identical) for the save/load AI-freeze investigation. Emits the
+	// post-execution decision state so a quick-save/quick-load repro of idle
+	// enemies can be classified:
+	//   curTacOrder.code==NONE(0) && movePath.numSteps==0 -> standing-order not
+	//     re-emitted after load (pursue standing-order re-emit).
+	//   movePath.numSteps>0 with no actual movement       -> pivot to
+	//     PathManager / reservation state.
+	// NOTE: the recon's "initCalled" field does not exist on MechWarrior;
+	// brainState + moveState are the real available signals and substituted.
+	{
+		static const bool s_aiFreezeTrace = []() {
+			const char* v = std::getenv("MC2_BRAIN_FREEZE_TRACE");
+			return (v && v[0] && v[0] != '0');
+		}();
+		if (s_aiFreezeTrace) {
+			MovePathPtr mp = getMovePath();
+			std::fprintf(stderr,
+				"[BRAIN_FREEZE_TRACE] wid=%d brainState=%d curTacOrder.code=%d "
+				"movePath.numSteps=%d moveState=%ld hasBrain=%d\n",
+				(int)vehicleWID, (int)brainState, (int)curTacOrder.code,
+				mp ? (int)mp->numSteps : -1, (long)moveOrders.moveState,
+				brain ? 1 : 0);
+			std::fflush(stderr);
+		}
+	}
+
 	return(brainErr);
 }
 
