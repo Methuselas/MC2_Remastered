@@ -96,6 +96,9 @@ float parentBandH(int cx, int cy, int P) {
 }
 out vec3  v_worldPos;
 out float v_terrainType;
+#ifdef TERRAIN_TESS
+out vec4 v_clip;   // SLICE 3a: VS clip handed to TES; TES writes gl_Position.
+#endif
 
 float sampleH(int mx, int my) {
     mx = clamp(mx, 0, u_mapSide - 1);
@@ -234,7 +237,11 @@ void main() {
         v_terrainType = terrainTypes[mtx + mty * u_mapSide];
         vec4 clipD = u_worldToClipGL * vec4(wX, wY, hh, 1.0);
         clipD.z += 2.0 * TERRAIN_DEPTH_FUDGE * clipD.w;
+#ifdef TERRAIN_TESS
+        v_clip = clipD;
+#else
         gl_Position = clipD;
+#endif
         return;
     }
 
@@ -375,5 +382,9 @@ void main() {
 
     vec4 clip = u_worldToClipGL * vec4(worldX, worldY, h, 1.0);
     clip.z += 2.0 * TERRAIN_DEPTH_FUDGE * clip.w;  // pre-divide -> net NDC -0.004, early-Z preserved
+#ifdef TERRAIN_TESS
+    v_clip = clip;
+#else
     gl_Position = clip;
+#endif
 }
