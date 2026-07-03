@@ -12,6 +12,7 @@
 #include "../../RenderCore/RenderResourceRegistry.h"  // REGISTRY-TERRAIN-SSBO-1: TerrainHeightSsbo
 #include "../../RenderCore/GpuBufferOwner.h"  // TERRAIN-LODCHUNK-SSBO-OWNER-1: type/cement owner records
 #include "../../RenderCore/KtxLoader.h"  // TERRAIN-MATERIAL-TEXTURES-1: BC7 KTX2 albedo layer load
+#include "gos_profiler.h"  // CLIFF-TESS-PERF: Tracy ZoneScopedN for the near-field tess mirror+draw
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -110,6 +111,30 @@ static float clampTess(float want) {
 // gos_TerrainLodChunk_Init next to the base makeProgram when the gate is ON.
 static glsl_program* s_terrainTessProgram = nullptr;
 static GLint         s_locCliffTessLevel  = -1;
+
+// CLIFF-TESS-PERF (slice 3a hoist): the full enumerate-and-copy mirror
+// (mirrorTerrainUniforms) is expensive (glGetActiveUniform + per-uniform
+// glGetUniformLocation ×2 + glGetnUniform* over ALL active uniforms). It was
+// running ONCE PER NEAR-FIELD PATCH every frame (+~1ms measured at tess=1).
+// It only needs to run ONCE PER FRAME for the frame-constant uniforms; the
+// handful of per-patch uniforms are then mirrored with a targeted, cached-
+// location fast path each patch. s_tessMirroredThisFrame is reset to false at
+// the top of SubmitDrawCommands (once/frame) and set true by the first near-
+// field tess patch's full mirror.
+static bool  s_tessMirroredThisFrame = false;
+// Cached tess-program locations for the per-patch uniform set (resolved once,
+// lazily, on the first tess patch). Base-program locations reuse the existing
+// s_loc* statics. -2 = "not yet resolved"; -1 = "resolved, absent".
+static GLint s_tessLocBlockOriginX = -2;
+static GLint s_tessLocBlockOriginY = -2;
+static GLint s_tessLocLodStep      = -2;
+static GLint s_tessLocQuadCountX   = -2;
+static GLint s_tessLocQuadCountY   = -2;
+static GLint s_tessLocEdgeStitch   = -2;
+static GLint s_tessLocShadowTier   = -2;
+static GLint s_tessLocMorphFactor  = -2;
+static GLint s_tessLocVisualDisplace = -2;
+static GLint s_tessLocSkirtDepth   = -2;
 
 // SLICE 3a — COMPLETE per-draw input mirror. The tess program shares the base
 // program's VS+FS, so it needs EVERY per-draw uniform the base program was fed.
@@ -219,6 +244,27 @@ static void mirrorTerrainUniforms(GLuint src, GLuint dst) {
     if (s_locCliffTessLevel >= 0)
         glProgramUniform1f(dst, s_locCliffTessLevel, s_cliffTessClamped);
 }
+
+// CLIFF-TESS-PERF: resolve+cache the tess-program locations for the per-patch
+// uniform set once (lazily, on the first tess patch). Base-program locations
+// reuse the existing s_loc* statics.
+static void resolveTessPatchLocs(GLuint tessProg) {
+    if (s_tessLocBlockOriginX != -2) return;  // already resolved
+    s_tessLocBlockOriginX   = glGetUniformLocation(tessProg, "u_blockOriginX");
+    s_tessLocBlockOriginY   = glGetUniformLocation(tessProg, "u_blockOriginY");
+    s_tessLocLodStep        = glGetUniformLocation(tessProg, "u_lodStep");
+    s_tessLocQuadCountX     = glGetUniformLocation(tessProg, "u_quadCountX");
+    s_tessLocQuadCountY     = glGetUniformLocation(tessProg, "u_quadCountY");
+    s_tessLocEdgeStitch     = glGetUniformLocation(tessProg, "u_edgeStitch");
+    s_tessLocShadowTier     = glGetUniformLocation(tessProg, "u_shadowTier");
+    s_tessLocMorphFactor    = glGetUniformLocation(tessProg, "u_morphFactor");
+    s_tessLocVisualDisplace = glGetUniformLocation(tessProg, "u_visualDisplace");
+    s_tessLocSkirtDepth     = glGetUniformLocation(tessProg, "u_skirtDepth");
+}
+
+// mirrorTerrainPatchUniforms (targeted per-patch mirror) is defined lower, after
+// the s_loc* uniform-location statics it reads (near SubmitDrawCommands).
+static void mirrorTerrainPatchUniforms(GLuint src, GLuint dst);
 
 // Terrain MVP matrix — exposed by gameos_graphics.cpp for all terrain draw paths.
 extern const float* gos_GetTerrainMVPMat4();
@@ -1196,6 +1242,18 @@ void gos_TerrainLodChunk_Destroy()
         s_locForceColor     = -1;
     }
 
+    // CLIFF-TESS-PERF: also drop the tess variant program + its cached per-patch
+    // location cache so a later re-Init rebuilds and re-resolves cleanly.
+    if (s_terrainTessProgram != 0) {
+        glsl_program::deleteProgram("terrain_lod_chunk_tess");
+        s_terrainTessProgram = nullptr;
+        s_locCliffTessLevel  = -1;
+        s_tessLocBlockOriginX = s_tessLocBlockOriginY = s_tessLocLodStep = -2;
+        s_tessLocQuadCountX = s_tessLocQuadCountY = s_tessLocEdgeStitch = -2;
+        s_tessLocShadowTier = s_tessLocMorphFactor = -2;
+        s_tessLocVisualDisplace = s_tessLocSkirtDepth = -2;
+    }
+
     // TERRAIN-CONTROLMAP-SAMPLE-1: free the authored control-map texture (if loaded).
     if (s_controlMapTex != 0)
     {
@@ -1396,6 +1454,46 @@ static void gos_TerrainLodChunk_ShorelineProbe(float waterElev)
 // count==0 is a strict no-op. Restores GL state on exit.
 // ---------------------------------------------------------------------------
 
+// CLIFF-TESS-PERF: targeted per-patch mirror — copies ONLY the uniforms that
+// change per near-field patch from the (already-configured) base program to the
+// tess program. No glGetActiveUniform enumeration. The frame-constant uniforms
+// are handled by the once/frame full mirrorTerrainUniforms() call. Correctness:
+// this MUST cover every uniform the base per-patch bind block writes inside the
+// SubmitDrawCommands loop, or the tess draw renders with stale per-block data.
+// Verified base per-patch set (see the loop): u_visualDisplace, u_blockOriginX,
+// u_blockOriginY, u_lodStep, u_quadCountX, u_quadCountY, u_edgeStitch,
+// u_shadowTier, u_morphFactor, u_skirtDepth.
+static void mirrorTerrainPatchUniforms(GLuint src, GLuint dst) {
+    // Integer per-patch uniforms: {base loc, tess loc} pairs.
+    const GLint iset[][2] = {
+        { s_locVisualDisplace, s_tessLocVisualDisplace },
+        { s_locBlockOriginX,   s_tessLocBlockOriginX   },
+        { s_locBlockOriginY,   s_tessLocBlockOriginY   },
+        { s_locLodStep,        s_tessLocLodStep        },
+        { s_locQuadCountX,     s_tessLocQuadCountX     },
+        { s_locQuadCountY,     s_tessLocQuadCountY     },
+        { s_locEdgeStitch,     s_tessLocEdgeStitch     },
+        { s_locShadowTier,     s_tessLocShadowTier     },
+    };
+    for (size_t k = 0; k < sizeof(iset) / sizeof(iset[0]); ++k) {
+        const GLint sloc = iset[k][0], dloc = iset[k][1];
+        if (sloc < 0 || dloc < 0) continue;
+        GLint v = 0; glGetUniformiv(src, sloc, &v);
+        glProgramUniform1i(dst, dloc, v);
+    }
+    // Float per-patch uniforms (u_morphFactor, u_skirtDepth).
+    const GLint fset[][2] = {
+        { s_locMorphFactor, s_tessLocMorphFactor },
+        { s_locSkirtDepth,  s_tessLocSkirtDepth  },
+    };
+    for (size_t k = 0; k < sizeof(fset) / sizeof(fset[0]); ++k) {
+        const GLint sloc = fset[k][0], dloc = fset[k][1];
+        if (sloc < 0 || dloc < 0) continue;
+        GLfloat v = 0.0f; glGetUniformfv(src, sloc, &v);
+        glProgramUniform1f(dst, dloc, v);
+    }
+}
+
 void gos_TerrainLodChunk_SubmitDrawCommands(
     const TerrainDrawCommand* cmds,
     const float*              skirtDepths,
@@ -1408,6 +1506,14 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     if (count == 0) return;
     if (s_terrainProgram == 0 || s_heightSsbo.glName == 0) return;
     if (s_patchVao == 0) return;
+
+    // CLIFF-TESS-PERF: reset the once/frame full-mirror guard. This entrypoint is
+    // called once per terrain draw (once/frame), so clearing it here means the
+    // first near-field tess patch does the full enumerate-and-copy mirror and
+    // every subsequent patch this frame takes the cheap targeted per-patch path.
+    // Inside the gate-ON path's effect only (the flag is unread when the gate is
+    // off), so gate-OFF remains byte-identical.
+    s_tessMirroredThisFrame = false;
 
     // SAME-ORDER-EXECUTOR-VALIDATE-1: top-level validate-only wrapper (gate MC2_FRAMEGRAPH_EXECUTOR).
     // No-op when gate unset (byte-identical). PIN INVARIANT: additive only — no GL state change,
@@ -2251,10 +2357,23 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                              && s_terrainTessProgram->is_valid()
                              && (cmd.lodStep == 1 /* near-field proxy */);
         if (useTess) {
-            // Copy the fully-configured base-program uniform state (per-frame +
-            // this patch's per-block uniforms) onto the tess program, then draw.
-            glUseProgram(s_terrainTessProgram->shp_);
-            mirrorTerrainUniforms(s_terrainProgram, s_terrainTessProgram->shp_);
+            // CLIFF-TESS-PERF: hoisted mirror. The expensive full enumerate-and-
+            // copy (all active uniforms) runs ONCE PER FRAME on the first near-
+            // field tess patch; every subsequent patch mirrors only the ~10
+            // per-patch uniforms via the cached-location targeted fast path.
+            const GLuint tessProg = s_terrainTessProgram->shp_;
+            glUseProgram(tessProg);
+            resolveTessPatchLocs(tessProg);  // one-time lazy location cache
+            if (!s_tessMirroredThisFrame) {
+                // Full mirror: copies frame-constant uniforms (mvp, mapSide,
+                // material/POM/shadow/light state, samplers, u_cliffTessLevel).
+                // Per-patch uniforms are (re)set by the targeted mirror below.
+                mirrorTerrainUniforms(s_terrainProgram, tessProg);
+                s_tessMirroredThisFrame = true;
+            }
+            // Targeted per-patch mirror: up-to-date per-block values every patch.
+            mirrorTerrainPatchUniforms(s_terrainProgram, tessProg);
+            ZoneScopedN("Terrain.CliffTess");
             // NOTE: global GL state, left set intentionally. Safe today because
             // this is the only GL_PATCHES draw in the frame; a future second
             // tessellated path with a different patch size MUST re-set this.
