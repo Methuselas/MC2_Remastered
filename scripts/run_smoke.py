@@ -1901,7 +1901,14 @@ def main():
                             # silently runs with the RT pass off / the pixel
                             # proof unreachable.
                             "MC2_WATER_REFLECTION_RT",
-                            "MC2_WATER_REFL_RT_PIXELPROOF")},
+                            "MC2_WATER_REFL_RT_PIXELPROOF",
+                            # POST-FX-TONEMAP-V2 (SCOUR-1 #3): filmic tonemap
+                            # curve select (0 off / 1 agx / 2 hable / 3 reinhard,
+                            # default OFF). Visual-only. Without this in the
+                            # allowlist Popen drops it and a gate-ON A/B smoke
+                            # silently runs the OFF (byte-identical) branch --
+                            # every mode would capture identical frames.
+                            "MC2_TONEMAP_V2")},
             },
         )
         # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.
