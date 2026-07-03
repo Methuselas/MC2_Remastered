@@ -638,6 +638,23 @@ void gosPostProcess::init(int w, int h)
                      fxEnv ? fxEnv : "(unset)");
     }
 
+    // POST-FX-CAS-1: AMD FidelityFX Contrast Adaptive Sharpening gate + sharpness,
+    // resolved once from env. Default OFF -> composite uploads u_casEnabled=0 ->
+    // CAS skipped in the shader (byte-identical). Sharpness clamped 0..1, default
+    // 0.5. Applied to the final graded LDR color, after FXAA/grade, before UI.
+    {
+        const char* casEnv = getenv("MC2_POST_CAS");
+        casEnabled_   = (casEnv && casEnv[0] && casEnv[0] != '0');
+        casSharpness_ = 0.5f;
+        if (const char* s = getenv("MC2_POST_CAS_SHARPNESS")) {
+            float v = (float)atof(s);
+            casSharpness_ = (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v);
+        }
+        std::fprintf(stderr, "[CAS v1] enabled=%d sharpness=%.3f (MC2_POST_CAS=%s)\n",
+                     casEnabled_ ? 1 : 0, casSharpness_,
+                     casEnv ? casEnv : "(unset)");
+    }
+
     // OOB-FOG-1: far-plane fog over the out-of-bounds region. Default ON.
     {
         fogOobProg_ = glsl_program::makeProgram("fog_oob",
@@ -3205,6 +3222,11 @@ void gosPostProcess::endScene()
         compositeProg_->setFloat("u_fxaaSubpix",         fxaaSubpix_);
         compositeProg_->setFloat("u_fxaaEdgeThreshold",  fxaaEdgeThreshold_);
         compositeProg_->setFloat("u_fxaaEdgeThresholdMin", fxaaEdgeThresholdMin_);
+
+        // POST-FX-CAS-1: gate + sharpness. enabled=0 -> shader skips CAS entirely
+        // (byte-identical). Set before apply() like the others.
+        compositeProg_->setInt  ("u_casEnabled",   casEnabled_ ? 1 : 0);
+        compositeProg_->setFloat("u_casSharpness", casSharpness_);
 
         // VIEWMODE-POSTPROCESS-PRESENTATION-1: resolve effective view mode.
         // Gate OFF -> forced 0 (Visual). ObjectIdDebug requires sceneObjectIdTex_;

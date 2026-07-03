@@ -35,6 +35,15 @@ uniform float u_fxaaSubpix;            // subpixel aliasing removal (0..1)
 uniform float u_fxaaEdgeThreshold;     // min local contrast to act on (0.063..0.333)
 uniform float u_fxaaEdgeThresholdMin;  // dark-region contrast floor
 
+// POST-FX-CAS-1: AMD FidelityFX Contrast Adaptive Sharpening (public-domain /
+// MIT, AMD FidelityFX). Single fullscreen pass on the FINAL graded LDR color:
+// gradeColor() below is factored out of main() so CAS can sample and grade the
+// 3x3 neighborhood, giving true post-grade sharpening. Gate OFF (u_casEnabled==0)
+// -> main() never calls this -> byte-identical. u_casSharpness in 0..1 maps to
+// the AMD sharpness knob (0 = softest CAS, 1 = sharpest).
+uniform int   u_casEnabled;
+uniform float u_casSharpness;    // 0..1
+
 float fxaaLuma(vec3 c) { return sqrt(dot(c, vec3(0.299, 0.587, 0.114))); }
 
 vec3 fxaaFilter(vec2 uv, vec2 rcp) {
@@ -79,14 +88,18 @@ vec3 fxaaFilter(vec2 uv, vec2 rcp) {
     return (lumaB < rangeMin || lumaB > rangeMax) ? rgbA : rgbB;
 }
 
-void main()
+// Final graded LDR color at a given UV. Factored out of main() unchanged so that
+// CAS (POST-FX-CAS-1) can sample the graded neighborhood. The uv passed here is
+// the neighbor location; the grade is position-dependent (vignette / sun glow),
+// so it is evaluated per-tap for correctness.
+vec3 gradeColor(vec2 uv)
 {
     // Scene sample with exposure (no gamma — pipeline is already sRGB).
     // POST-FX-FXAA-1: optionally antialias the scene color first (gate OFF =
     // single tap = byte-identical).
     vec3 color = ((u_fxaaEnabled != 0)
-        ? fxaaFilter(TexCoord, inverseScreenSize)
-        : texture(sceneTex, TexCoord).rgb) * exposure;
+        ? fxaaFilter(uv, inverseScreenSize)
+        : texture(sceneTex, uv).rgb) * exposure;
 
     // --- Sunset filter (subtle) ---
     // Light warm grade + gentle vignette + soft top-of-screen warmth.
@@ -102,15 +115,66 @@ void main()
         color *= grade;
 
         // Subtle radial vignette.
-        vec2 vdir = TexCoord - vec2(0.5);
+        vec2 vdir = uv - vec2(0.5);
         float vdist = length(vdir * vec2(1.0, 0.6));
         float vignette = smoothstep(0.85, 0.25, vdist);
         color *= mix(0.82, 1.0, vignette);
 
         // Soft top-of-screen warm glow.
-        float sunBias = pow(smoothstep(0.0, 1.0, 1.0 - TexCoord.y), 1.5);
+        float sunBias = pow(smoothstep(0.0, 1.0, 1.0 - uv.y), 1.5);
         color = mix(color, color * vec3(1.10, 1.03, 0.92), sunBias * 0.25);
     }
+    return color;
+}
+
+// POST-FX-CAS-1: AMD FidelityFX CAS on the graded LDR color. Samples the 3x3
+// neighborhood (diamond b/d/e/f/h + corners a/c/g/i), derives an adaptive
+// sharpening weight from the local per-channel min/max contrast, and blends the
+// center with the diamond ring. Standard AMD ffx_cas reference form.
+vec3 casFilter(vec2 uv)
+{
+    vec2 rcp = inverseScreenSize;
+    // 3x3 neighborhood (graded).
+    vec3 a = gradeColor(uv + vec2(-rcp.x, -rcp.y));
+    vec3 b = gradeColor(uv + vec2( 0.0,   -rcp.y));
+    vec3 c = gradeColor(uv + vec2( rcp.x, -rcp.y));
+    vec3 d = gradeColor(uv + vec2(-rcp.x,  0.0));
+    vec3 e = gradeColor(uv);
+    vec3 f = gradeColor(uv + vec2( rcp.x,  0.0));
+    vec3 g = gradeColor(uv + vec2(-rcp.x,  rcp.y));
+    vec3 h = gradeColor(uv + vec2( 0.0,    rcp.y));
+    vec3 i = gradeColor(uv + vec2( rcp.x,  rcp.y));
+
+    // Soft min/max over the 3x3, weighting the diamond taps double (AMD form:
+    // min/max of the '+' ring, then include corners at half influence).
+    vec3 mnRing = min(min(min(d, e), min(f, b)), h);
+    vec3 mnCorner = min(min(a, c), min(g, i));
+    vec3 mn = mnRing + min(mnRing, mnCorner);
+
+    vec3 mxRing = max(max(max(d, e), max(f, b)), h);
+    vec3 mxCorner = max(max(a, c), max(g, i));
+    vec3 mx = mxRing + max(mxRing, mxCorner);
+
+    // Adaptive amplitude: how much room to sharpen, from local contrast.
+    vec3 rcpMx = 1.0 / max(mx, vec3(1.0 / 32768.0));
+    vec3 amp = clamp(min(mn, 2.0 - mx) * rcpMx, 0.0, 1.0);
+    amp = sqrt(amp);
+
+    // Sharpness knob: 0..1 maps to AMD peak -8..-5 (softer..sharper).
+    float peak = -1.0 / mix(8.0, 5.0, u_casSharpness);
+    vec3 w = amp * peak;
+
+    // Blend center with the diamond ring (b,d,f,h), normalized.
+    vec3 rcpWeight = 1.0 / (1.0 + 4.0 * w);
+    vec3 outColor = (b * w + d * w + f * w + h * w + e) * rcpWeight;
+    return clamp(outColor, 0.0, 1.0);
+}
+
+void main()
+{
+    // POST-FX-CAS-1: gate OFF -> single grade tap (byte-identical). When ON, CAS
+    // samples/grades the 3x3 neighborhood and sharpens the graded center.
+    vec3 color = (u_casEnabled != 0) ? casFilter(TexCoord) : gradeColor(TexCoord);
 
     FragColor = vec4(color, 1.0);
 

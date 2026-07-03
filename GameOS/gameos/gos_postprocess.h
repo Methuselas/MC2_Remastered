@@ -233,6 +233,13 @@ public:
     float fxaaEdgeThreshold_;
     float fxaaEdgeThresholdMin_;
 
+    // POST-FX-CAS-1: AMD FidelityFX Contrast Adaptive Sharpening, folded into the
+    // composite shader (same precedent as FXAA above). Applied to the final graded
+    // LDR color; gate OFF -> u_casEnabled==0 -> shader skips it (byte-identical).
+    // Seeded from MC2_POST_CAS / MC2_POST_CAS_SHARPNESS at init.
+    bool  casEnabled_;
+    float casSharpness_;  // 0..1, default 0.5
+
     void runScreenShadow();
     bool screenShadowEnabled_;
     // APPLY-STATE-SCREENSHADOW-1: per-island executor-applied flag (see
