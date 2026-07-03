@@ -95,62 +95,6 @@ static const float s_cliffTessWanted = []() {
 }();
 static float s_cliffTessClamped = -1.0f;   // set once at program build (GL valid)
 
-// SLICE 3b: cliff directional-fluting displacement tuning knobs. Resolved once
-// (env override > C++ default), uploaded to the tess program in the once/frame
-// mirror. Only read when the gate is ON (tess program never built otherwise), so
-// the default-OFF path never touches them -> byte-identical. Env names + defaults
-// mirror RendererFeatureRegistry.h (MC2_TERRAIN_CLIFF_* Trace entries).
-static float cliff3b_envF(const char* name, float def) {
-    const char* v = std::getenv(name);
-    if (!v || !v[0]) return def;
-    return (float)atof(v);
-}
-static const float s_cliffAmp        = []() { return cliff3b_envF("MC2_TERRAIN_CLIFF_AMP",        8.0f);   }();
-static const float s_cliffFluteFreq  = []() { return cliff3b_envF("MC2_TERRAIN_CLIFF_FLUTE_FREQ", 0.03f);  }();
-static const float s_cliffFluteSharp = []() { return cliff3b_envF("MC2_TERRAIN_CLIFF_FLUTE_SHARP",2.0f);   }();
-static const float s_cliffDetail     = []() { return cliff3b_envF("MC2_TERRAIN_CLIFF_DETAIL",     0.4f);   }();
-static const float s_cliffSlopeLo    = []() { return cliff3b_envF("MC2_TERRAIN_CLIFF_SLOPE_LO",   0.55f);  }();
-static const float s_cliffSlopeHi    = []() { return cliff3b_envF("MC2_TERRAIN_CLIFF_SLOPE_HI",   0.85f);  }();
-static const float s_cliffCrestFade  = []() { return cliff3b_envF("MC2_TERRAIN_CLIFF_CREST_FADE", 12.0f);  }();
-static const float s_cliffDistNear   = []() { return cliff3b_envF("MC2_TERRAIN_CLIFF_DIST_NEAR",  1500.0f);}();
-static const float s_cliffDistFar    = []() { return cliff3b_envF("MC2_TERRAIN_CLIFF_DIST_FAR",   3500.0f);}();
-static const float s_cliffFootY      = []() { return cliff3b_envF("MC2_TERRAIN_CLIFF_FOOT_Y",     -1.0f);  }();
-
-// TES-only uniform locations on the tess program (not present on the base
-// program, so the full mirror does not set them). Resolved lazily on first use.
-static GLint s_tessLocCliffAmp        = -2;
-static GLint s_tessLocCliffFluteFreq  = -2;
-static GLint s_tessLocCliffFluteSharp = -2;
-static GLint s_tessLocCliffDetail     = -2;
-static GLint s_tessLocCliffSlope      = -2;
-static GLint s_tessLocCliffCrestFade  = -2;
-static GLint s_tessLocCliffDistFade   = -2;
-static GLint s_tessLocCliffFootY      = -2;
-
-// Upload the SLICE 3b cliff knobs to the tess program. Called from the once/frame
-// mirror block (gate-ON only). Locations resolved once; absent (-1) uniforms
-// (e.g. optimized out) are skipped.
-static void uploadCliffDisplaceUniforms(GLuint tessProg) {
-    if (s_tessLocCliffAmp == -2) {
-        s_tessLocCliffAmp        = glGetUniformLocation(tessProg, "u_cliffAmp");
-        s_tessLocCliffFluteFreq  = glGetUniformLocation(tessProg, "u_cliffFluteFreq");
-        s_tessLocCliffFluteSharp = glGetUniformLocation(tessProg, "u_cliffFluteSharp");
-        s_tessLocCliffDetail     = glGetUniformLocation(tessProg, "u_cliffDetail");
-        s_tessLocCliffSlope      = glGetUniformLocation(tessProg, "u_cliffSlope");
-        s_tessLocCliffCrestFade  = glGetUniformLocation(tessProg, "u_cliffCrestFade");
-        s_tessLocCliffDistFade   = glGetUniformLocation(tessProg, "u_cliffDistFade");
-        s_tessLocCliffFootY      = glGetUniformLocation(tessProg, "u_cliffFootY");
-    }
-    if (s_tessLocCliffAmp        >= 0) glProgramUniform1f(tessProg, s_tessLocCliffAmp,        s_cliffAmp);
-    if (s_tessLocCliffFluteFreq  >= 0) glProgramUniform1f(tessProg, s_tessLocCliffFluteFreq,  s_cliffFluteFreq);
-    if (s_tessLocCliffFluteSharp >= 0) glProgramUniform1f(tessProg, s_tessLocCliffFluteSharp, s_cliffFluteSharp);
-    if (s_tessLocCliffDetail     >= 0) glProgramUniform1f(tessProg, s_tessLocCliffDetail,     s_cliffDetail);
-    if (s_tessLocCliffSlope      >= 0) glProgramUniform2f(tessProg, s_tessLocCliffSlope,      s_cliffSlopeLo, s_cliffSlopeHi);
-    if (s_tessLocCliffCrestFade  >= 0) glProgramUniform1f(tessProg, s_tessLocCliffCrestFade,  s_cliffCrestFade);
-    if (s_tessLocCliffDistFade   >= 0) glProgramUniform2f(tessProg, s_tessLocCliffDistFade,   s_cliffDistNear, s_cliffDistFar);
-    if (s_tessLocCliffFootY      >= 0) glProgramUniform1f(tessProg, s_tessLocCliffFootY,      s_cliffFootY);
-}
-
 // Clamp the requested tess level to GL_MAX_TESS_GEN_LEVEL. Called once inside
 // the tess-program success branch where a GL context is valid.
 static float clampTess(float want) {
@@ -2425,9 +2369,6 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                 // material/POM/shadow/light state, samplers, u_cliffTessLevel).
                 // Per-patch uniforms are (re)set by the targeted mirror below.
                 mirrorTerrainUniforms(s_terrainProgram, tessProg);
-                // SLICE 3b: upload the TES-only cliff-fluting knobs (not present
-                // on the base program, so the full mirror above does not set them).
-                uploadCliffDisplaceUniforms(tessProg);
                 s_tessMirroredThisFrame = true;
             }
             // Targeted per-patch mirror: up-to-date per-block values every patch.
