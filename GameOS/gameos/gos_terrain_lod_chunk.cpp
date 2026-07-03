@@ -74,6 +74,125 @@ const float kTglcEdgeFeatherStr    = []() { return tglc_envStrength("MC2_TERRAIN
 const bool  kTglcMatAlbedo         = []() { return tglc_envOn("MC2_TERRAIN_MATERIAL_TEXTURES"); }();
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// SLICE 3a — cliff-tessellation PLUMBING spike (pass-through, NO displacement).
+// Gate MC2_TERRAIN_CLIFF_DISPLACE (default OFF). When OFF nothing below runs:
+// the tess program is never built, the draw stays GL_TRIANGLES on the base
+// program, and the frame is byte-identical. When ON, a variant program with
+// TCS/TES (pass-through TES, barycentric interp, no displacement) is built and
+// LOD0 (near-field) chunks draw as GL_PATCHES through it. Because the TES only
+// reconstructs the interpolated clip position, the output is visually the same
+// as the base GL_TRIANGLES draw — this slice proves the tessellation PLUMBING.
+// ---------------------------------------------------------------------------
+static const bool s_cliffTessGate = []() {
+    const char* v = std::getenv("MC2_TERRAIN_CLIFF_DISPLACE");
+    return v && v[0] && v[0] != '0';
+}();
+static const float s_cliffTessWanted = []() {
+    const char* v = std::getenv("MC2_TERRAIN_CLIFF_DISPLACE_MAXTESS");
+    return (v && v[0]) ? (float)atof(v) : 4.0f;
+}();
+static float s_cliffTessClamped = -1.0f;   // set once at program build (GL valid)
+
+// Clamp the requested tess level to GL_MAX_TESS_GEN_LEVEL. Called once inside
+// the tess-program success branch where a GL context is valid.
+static float clampTess(float want) {
+    GLint maxGen = 0;
+    glGetIntegerv(GL_MAX_TESS_GEN_LEVEL, &maxGen);
+    float m = (maxGen > 0) ? (float)maxGen : 64.0f;   // GL spec floor is 64
+    float c = want < 1.0f ? 1.0f : (want > m ? m : want);
+    if (c != want)
+        std::fprintf(stderr, "[CLIFF_TESS 3a] tess %.1f clamped to GL_MAX_TESS_GEN_LEVEL %.0f\n", want, m);
+    return c;
+}
+
+// The tess variant program + its u_cliffTessLevel location. Built in
+// gos_TerrainLodChunk_Init next to the base makeProgram when the gate is ON.
+static glsl_program* s_terrainTessProgram = nullptr;
+static GLint         s_locCliffTessLevel  = -1;
+
+// SLICE 3a — COMPLETE per-draw input mirror. The tess program shares the base
+// program's VS+FS, so it needs EVERY per-draw uniform the base program was fed.
+// Rather than duplicate the ~150-site inline bind block (and risk missing one),
+// this reads back every active uniform from the (fully-configured) base program
+// and copies it to the tess program with glProgramUniform* — provably complete
+// by construction (samplers included; sampler uniforms are just their texunit
+// int, and the textures/SSBOs themselves bind to program-independent global
+// units/binding-points that the base block already set for this draw). Runs
+// ONLY for near-field GL_PATCHES draws when the gate is ON; never default-OFF.
+static void mirrorTerrainUniforms(GLuint src, GLuint dst) {
+    GLint count = 0;
+    glGetProgramiv(src, GL_ACTIVE_UNIFORMS, &count);
+    for (GLint i = 0; i < count; ++i) {
+        char name[128];
+        GLsizei nlen = 0; GLint size = 0; GLenum type = 0;
+        glGetActiveUniform(src, (GLuint)i, sizeof(name), &nlen, &size, &type, name);
+        if (nlen == 0) continue;
+        // Strip the "[0]" array suffix glGetActiveUniform reports for arrays so
+        // the name resolves in the destination program too.
+        if (nlen >= 3 && name[nlen-1] == ']') {
+            char* br = std::strchr(name, '[');
+            if (br) *br = '\0';
+        }
+        GLint sloc = glGetUniformLocation(src, name);
+        GLint dloc = glGetUniformLocation(dst, name);
+        if (sloc < 0 || dloc < 0) continue;   // not present in both
+        switch (type) {
+            case GL_FLOAT: {
+                float v[4]={0,0,0,0}; glGetnUniformfv(src, sloc, sizeof(v), v);
+                glProgramUniform1fv(dst, dloc, size, v); break; }
+            case GL_FLOAT_VEC2: { float v[2]={0,0}; glGetnUniformfv(src, sloc, sizeof(v), v);
+                glProgramUniform2fv(dst, dloc, 1, v); break; }
+            case GL_FLOAT_VEC3: { float v[3]={0,0,0}; glGetnUniformfv(src, sloc, sizeof(v), v);
+                glProgramUniform3fv(dst, dloc, 1, v); break; }
+            case GL_FLOAT_VEC4: { float v[4]={0,0,0,0}; glGetnUniformfv(src, sloc, sizeof(v), v);
+                glProgramUniform4fv(dst, dloc, 1, v); break; }
+            case GL_FLOAT_MAT4: {
+                // Arrays of mat4 (e.g. cascade matrices) copied element-by-element.
+                for (GLint e = 0; e < size; ++e) {
+                    float m[16]; GLint sl = (e==0)?sloc:glGetUniformLocation(src, name);
+                    // For array elements re-resolve the indexed location.
+                    if (size > 1) {
+                        char en[160]; std::snprintf(en, sizeof(en), "%s[%d]", name, e);
+                        sl = glGetUniformLocation(src, en);
+                        GLint dl = glGetUniformLocation(dst, en);
+                        if (sl < 0 || dl < 0) continue;
+                        glGetnUniformfv(src, sl, sizeof(m), m);
+                        glProgramUniformMatrix4fv(dst, dl, 1, GL_FALSE, m);
+                    } else {
+                        glGetnUniformfv(src, sl, sizeof(m), m);
+                        glProgramUniformMatrix4fv(dst, dloc, 1, GL_FALSE, m);
+                    }
+                }
+                break; }
+            // Every integer/sampler uniform type used by this program.
+            case GL_INT:
+            case GL_BOOL:
+            case GL_SAMPLER_2D:
+            case GL_SAMPLER_2D_ARRAY:
+            case GL_SAMPLER_2D_SHADOW:
+            case GL_SAMPLER_2D_ARRAY_SHADOW: {
+                GLint v[4]={0,0,0,0}; glGetnUniformiv(src, sloc, sizeof(v), v);
+                glProgramUniform1iv(dst, dloc, size, v); break; }
+            case GL_INT_VEC2: { GLint v[2]={0,0}; glGetnUniformiv(src, sloc, sizeof(v), v);
+                glProgramUniform2iv(dst, dloc, 1, v); break; }
+            case GL_INT_VEC3: { GLint v[3]={0,0,0}; glGetnUniformiv(src, sloc, sizeof(v), v);
+                glProgramUniform3iv(dst, dloc, 1, v); break; }
+            case GL_INT_VEC4: { GLint v[4]={0,0,0,0}; glGetnUniformiv(src, sloc, sizeof(v), v);
+                glProgramUniform4iv(dst, dloc, 1, v); break; }
+            default:
+                // No other uniform types exist in terrain_lod_chunk. If one is
+                // ever added, this warns rather than silently dropping it.
+                std::fprintf(stderr, "[CLIFF_TESS 3a] WARN unmirrored uniform '%s' type=0x%x\n",
+                             name, (unsigned)type);
+                break;
+        }
+    }
+    // The tess-only uniform (not present on the base program).
+    if (s_locCliffTessLevel >= 0)
+        glProgramUniform1f(dst, s_locCliffTessLevel, s_cliffTessClamped);
+}
+
 // Terrain MVP matrix — exposed by gameos_graphics.cpp for all terrain draw paths.
 extern const float* gos_GetTerrainMVPMat4();
 // TERRAIN-SHORELINE-MASK-1: shared render-shader clock (SmokeMode fixed-
@@ -987,6 +1106,32 @@ void gos_TerrainLodChunk_Init()
             // Phase 7.5: separate startup confirmation line for easy grep.
             printf("[TerrainLOD v1] shader program compiled OK (program=%u)\n", s_terrainProgram);
             fflush(stdout);
+        }
+
+        // SLICE 3a: build the tessellation variant program next to the base one,
+        // reusing the SAME prefix PLUS "#define TERRAIN_TESS". Only when the gate
+        // is ON — default OFF keeps this branch dead and the frame byte-identical.
+        if (s_cliffTessGate && !s_terrainTessProgram) {
+            std::string tessPrefix = prefix + "#define TERRAIN_TESS\n";
+            s_terrainTessProgram = glsl_program::makeProgram2(
+                "terrain_lod_chunk_tess",
+                "shaders/terrain_lod_chunk.vert",
+                "shaders/terrain_lod_chunk.tesc",   // HULL = TCS
+                "shaders/terrain_lod_chunk.tese",   // DOMAINE = TES
+                nullptr,                             // no geometry shader
+                "shaders/terrain_lod_chunk.frag",
+                0, nullptr, tessPrefix.c_str());
+            if (!s_terrainTessProgram || !s_terrainTessProgram->is_valid()) {
+                std::fprintf(stderr, "[CLIFF_TESS 3a] tess program FAILED to compile\n");
+            } else {
+                s_cliffTessClamped = clampTess(s_cliffTessWanted);
+                s_locCliffTessLevel =
+                    glGetUniformLocation(s_terrainTessProgram->shp_, "u_cliffTessLevel");
+                std::fprintf(stderr,
+                    "[CLIFF_TESS 3a] tess program compiled (prog=%u maxTess=%.1f locTess=%d)\n",
+                    (unsigned)s_terrainTessProgram->shp_, s_cliffTessClamped,
+                    (int)s_locCliffTessLevel);
+            }
         }
     }
 
@@ -2069,7 +2214,27 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         glVertexAttribIPointer(0, 2, GL_SHORT, (GLsizei)(2 * sizeof(int16_t)), (const void*)0);
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, patch.ibo);
-        glDrawElements(GL_TRIANGLES, patch.indexCount, GL_UNSIGNED_SHORT, 0);
+
+        // SLICE 3a: near-field (LOD0 == lodStep 1) chunks draw as GL_PATCHES
+        // through the tess variant program when the gate is ON and the program
+        // built. Pass-through TES => visually identical to the base draw. All
+        // other bands, and the skirts below, stay GL_TRIANGLES on the base
+        // program. Default OFF => useTess is always false => byte-identical.
+        const bool useTess = s_cliffTessGate && s_terrainTessProgram
+                             && s_terrainTessProgram->is_valid()
+                             && (cmd.lodStep == 1 /* near-field proxy */);
+        if (useTess) {
+            // Copy the fully-configured base-program uniform state (per-frame +
+            // this patch's per-block uniforms) onto the tess program, then draw.
+            glUseProgram(s_terrainTessProgram->shp_);
+            mirrorTerrainUniforms(s_terrainProgram, s_terrainTessProgram->shp_);
+            glPatchParameteri(GL_PATCH_VERTICES, 3);
+            glDrawElements(GL_PATCHES, patch.indexCount, GL_UNSIGNED_SHORT, 0);
+            // Restore the base program for the skirt draw / next patch.
+            glUseProgram(s_terrainProgram);
+        } else {
+            glDrawElements(GL_TRIANGLES, patch.indexCount, GL_UNSIGNED_SHORT, 0);
+        }
 
         // --- Phase 6: Draw skirt strips ---
         if (patch.skirtIndexCount > 0 && skirtDepths != nullptr)
