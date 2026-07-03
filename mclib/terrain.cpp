@@ -1328,6 +1328,72 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 												       mipPath, msz, mipWant, mapSide);
 												fflush(stdout);
 											}
+											// TERRAIN-LOD-GEOMORPH-1 STALENESS GUARD
+											// (GEOMORPH-NEXT-SLICES.md coordination ruling):
+											// the mips sidecar is regenerated SEPARATELY
+											// from the fine bake, so a stale
+											// visual_height_mips.r32 that still matches
+											// mapSide (right SIZE, wrong DATA) was silently
+											// accepted -> coarse bands morph to a surface
+											// that no longer exists. Catch it with a
+											// zero-cost data invariant (no hash / new file):
+											// every mip level is a MAX over a footprint that
+											// INCLUDES the coarse vertex's own fine sample,
+											// so mip[L][v] >= fineCorner[v] must hold for a
+											// consistent bake; a stale bake violates it. On
+											// any violation DROP the mips and fall back to
+											// the known-safe legacy S2 layout (+ loud warn)
+											// rather than morph to a dead surface. Fresh
+											// bakes are unaffected (default path stays
+											// byte-identical).
+											if (!vmips.empty())
+											{
+												const int mipFactor = (mapSide > 1)
+													? (V - 1) / (mapSide - 1) : 1;
+												const float kFloorTol = 0.05f; // wu; f32 max round headroom
+												const size_t plane =
+													(size_t)mapSide * (size_t)mapSide;
+												const size_t nLevels =
+													plane ? (vmips.size() / plane) : 0;
+												size_t viol = 0;
+												float worstDeficit = 0.0f;
+												for (int r = 0; r < mapSide && viol == 0; ++r)
+												{
+													for (int c = 0; c < mapSide; ++c)
+													{
+														const float corner = vh[
+															(size_t)(r * mipFactor) * (size_t)V
+															+ (size_t)(c * mipFactor)];
+														for (size_t L = 0; L < nLevels; ++L)
+														{
+															const float m = vmips[
+																L * plane
+																+ (size_t)r * (size_t)mapSide
+																+ (size_t)c];
+															const float deficit = corner - m;
+															if (deficit > kFloorTol)
+															{
+																worstDeficit = deficit;
+																++viol;
+																break;
+															}
+														}
+														if (viol) break;
+													}
+												}
+												if (viol > 0)
+												{
+													printf("[VISUAL_HEIGHT v1] mips STALE path=%s "
+													       "(mip < fine corner, worst deficit "
+													       "%.2f wu) -- built from a DIFFERENT "
+													       "fine bake; DROPPING mips, coarse "
+													       "bands fall back to legacy S2. "
+													       "Regenerate the .beauty bake.\n",
+													       mipPath, worstDeficit);
+													fflush(stdout);
+													vmips.clear();
+												}
+											}
 											fclose(mf);
 										}
 									}

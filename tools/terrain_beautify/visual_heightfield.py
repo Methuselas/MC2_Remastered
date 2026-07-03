@@ -85,6 +85,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -1142,6 +1143,32 @@ def build_max_mips(visual: np.ndarray, factor: int, side: int) -> dict:
             "strides": list(MIP_STRIDES), "stats": stats}
 
 
+def mips_corner_floor_check(visual: np.ndarray, factor: int, side: int,
+                            blob: np.ndarray, tol: float = 0.05) -> dict:
+    """Data-only staleness check mirroring the engine loader guard
+    (mclib/terrain.cpp TERRAIN-LOD-GEOMORPH-1 STALENESS GUARD).
+
+    Every mip level is a MAX over a footprint that INCLUDES the coarse vertex's
+    own fine sample, so `mip[L][v] >= fineCorner[v]` for a CONSISTENT bake.
+    Returns {violations, worst_deficit_wu, levels}; nonzero `violations` proves
+    `blob` was NOT built from `visual` (i.e. a stale sidecar). `tol` is the
+    float32 max-cast rounding headroom in world units."""
+    corners = visual[::factor, ::factor][:side, :side].astype(np.float64)
+    plane = side * side
+    n_levels = int(blob.size // plane) if plane else 0
+    viol = 0
+    worst = 0.0
+    for lv in range(n_levels):
+        level = np.asarray(blob[lv * plane:(lv + 1) * plane],
+                           dtype=np.float64).reshape(side, side)
+        deficit = corners - level
+        bad = deficit > tol
+        if bad.any():
+            viol += int(bad.sum())
+            worst = max(worst, float(deficit[bad].max()))
+    return {"violations": viol, "worst_deficit_wu": worst, "levels": n_levels}
+
+
 def nearest_coarse(elev: np.ndarray, factor: int) -> np.ndarray:
     """The blocky reference: each visual cell = its containing coarse value."""
     N = elev.shape[0]
@@ -1251,12 +1278,27 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
     # fine bake (post-reshape / post-any-future-reauth) so silhouette maxes
     # track whatever surface actually ships. Emitted as a sibling sidecar the
     # engine appends to the binding-26 SSBO; absent file = legacy behavior.
+    # Provenance: sha256 of the EXACT bytes written to visual_height_<F>x.r32,
+    # so a stale mips sidecar (or a tool) can be caught against the fine bake it
+    # was supposed to come from (GEOMORPH-NEXT-SLICES.md staleness ruling).
+    fine_bytes = visual.astype("<f4").tobytes()
+    fine_sha = hashlib.sha256(fine_bytes).hexdigest()
+
     mips_info = None
     if mips:
         mm = build_max_mips(visual, factor, side)
+        # Belt-and-suspenders: assert the just-built mips satisfy the same
+        # corner-floor invariant the engine loader enforces, so a regression in
+        # build_max_mips is caught at bake time, not as a silent in-engine drop.
+        selfck = mips_corner_floor_check(visual, factor, side, mm["blob"])
+        assert selfck["violations"] == 0, (
+            "build_max_mips produced a mip below the fine corner "
+            f"(worst deficit {selfck['worst_deficit_wu']:.3f} wu) -- invariant broken")
         mips_info = {"file": "visual_height_mips.r32",
                      "strides": mm["strides"],
                      "grid_side": int(side),
+                     "built_from_sha256": fine_sha,
+                     "self_check": selfck,
                      "levels": mm["stats"]}
 
     beauty = out_root / f"{mission}.beauty"
@@ -1307,6 +1349,7 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
         "visual_delta_wu": {"max_abs": float(np.abs(delta).max()),
                             "mean_abs": float(np.abs(delta).mean())},
         "visual_height_file": f"visual_height_{factor}x.r32",
+        "visual_height_sha256": fine_sha,
         "visual_damp_file": ("visual_damp.r32" if damp is not None else None),
         "max_mips": mips_info,
         "note": note,

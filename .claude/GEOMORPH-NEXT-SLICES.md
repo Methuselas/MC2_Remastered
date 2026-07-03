@@ -98,9 +98,16 @@ portfolio), this slice's pieces map as follows — do not rebuild them:
 - **Reauth lane**: mips are built from the FINAL fine visual array inside
   `visual_heightfield.py`, so `--reauth`-modified bakes compose automatically —
   but the mips sidecar must be REGENERATED whenever the fine bake changes.
-  Add a staleness check (bake mtime/hash into the report json, loader warns) —
-  currently a stale `visual_height_mips.r32` next to a fresh `visual_height_4x.r32`
-  is silently accepted. Cheap, do it inside the reauth slice.
+  ✅ **DONE (MIPS-STALENESS-GUARD-1, 2026-07-03):** no hash/new-file needed —
+  the engine loader (`mclib/terrain.cpp`) now enforces the data invariant
+  `mip[L][v] >= fineCorner[v]` (every level MAXes a footprint that includes the
+  vertex's own fine sample). A stale `visual_height_mips.r32` (right SIZE, wrong
+  DATA — built from a different fine bake) violates it → loader DROPS the mips +
+  warns `[VISUAL_HEIGHT v1] mips STALE …`, falling back to legacy S2 rather than
+  morphing to a dead surface. Fresh bakes byte-identical. Bake side also writes
+  `visual_height_sha256` + a `self_check` into `visual_height_report.json` and
+  asserts the invariant at bake time. Unit tests:
+  `test_visual_heightfield_mips.py` (fresh passes / cross-bake stale caught).
 - **FAR=0 semantics** (recon open ruling) still unresolved: after rung b,
   `MC2_TERRAIN_VISUAL_DISPLACE_FAR=0` means "legacy point-sample coarse", i.e.
   mips are NOT applied when FAR fades to 0 at a vertex (mips ride the mode-2
