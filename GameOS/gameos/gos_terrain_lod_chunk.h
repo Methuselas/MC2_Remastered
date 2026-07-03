@@ -144,6 +144,15 @@ void gos_TerrainLodChunk_UploadOverlaySidecar(const unsigned char* rgba, int w, 
                                                float boundsTopLeftX, float boundsTopLeftY,
                                                float boundsSizeX, float boundsSizeY);
 
+// TERRAIN-OVERLAY-V2-DECAL-SUPPRESS-1: read-only accessors so the indirect
+// decal bake (gos_terrain_indirect.cpp BuildDecalStaticVBO) can skip legacy
+// runway/road/cement decals for tiles the authored OVERLAY_V2 sidecar already
+// covers -- otherwise BOTH draw and the runway visibly double-draws. Returns
+// the loaded state and the {topLeftX, topLeftY(=maxY), sizeX, sizeY} world
+// bounds (same convention as the upload). bounds valid only when loaded==true.
+bool         gos_TerrainLodChunk_OverlaySidecarLoaded();
+const float* gos_TerrainLodChunk_OverlayBounds();
+
 // TERRAIN-SHORELINE-V3: upload the authored land-side wet/foam shoreline mask
 // as a GL_RGBA8 2D texture (arbitrary WxH, NOT tied to the vertex grid) bound
 // at TERRAIN_SHORELINE_TEXUNIT. R=signed dist (0.5=waterline), G=wet weight,

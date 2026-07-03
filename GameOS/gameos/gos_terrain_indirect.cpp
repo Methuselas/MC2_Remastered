@@ -4631,6 +4631,38 @@ void BuildDecalStaticVBO() {
             c[2].wz = p2->elevation + kOverlayElevOffset;
             c[3].wz = p3->elevation + kOverlayElevOffset;
 
+            // TERRAIN-OVERLAY-V2-DECAL-SUPPRESS-1: when the authored OVERLAY_V2
+            // sidecar covers this tile it already draws the runway/road/cement
+            // here (composited in the LOD-chunk frag). Baking the legacy decal
+            // too draws it TWICE (visible double-draw at e.g. the mc2_01 runway).
+            // Skip the legacy decal for tiles FULLY inside the sidecar's world
+            // bounds so cement/runway draws once. Byte-identical when OVERLAY_V2
+            // is off (sidecar not loaded -> guard false, no tile skipped) and
+            // for tiles OUTSIDE the bounds (fall through -> baked normally, so
+            // no gaps where the sidecar doesn't reach). Bounds-rect v0 (per the
+            // decal recon): assumes the sidecar authors the overlay content
+            // within its bounds; alpha-accurate per-tile suppression is a
+            // follow-up. Env MC2_TERRAIN_OVERLAY_V2_DECAL_SUPPRESS=0 reverts.
+            {
+                static const bool s_decalSuppress = []() {
+                    const char* v = getenv("MC2_TERRAIN_OVERLAY_V2_DECAL_SUPPRESS");
+                    return !(v && v[0] == '0');   // default ON
+                }();
+                if (s_decalSuppress && gos_TerrainLodChunk_OverlaySidecarLoaded()) {
+                    const float* ob = gos_TerrainLodChunk_OverlayBounds();
+                    const float bMinX = ob[0];
+                    const float bMaxY = ob[1];
+                    const float bMaxX = ob[0] + ob[2];
+                    const float bMinY = ob[1] - ob[3];
+                    bool allInside = true;
+                    for (int k = 0; k < 4; ++k) {
+                        if (c[k].wx < bMinX || c[k].wx > bMaxX ||
+                            c[k].wy < bMinY || c[k].wy > bMaxY) { allInside = false; break; }
+                    }
+                    if (allInside) continue;   // sidecar owns this tile's overlay
+                }
+            }
+
             // [TERRAIN_OVERLAY v1] decal_corner_probe — env-gated
             // (MC2_TERRAIN_INDIRECT_TRACE), first few cement tiles only,
             // SILENT by default. Retained dormant diagnostic (demote-not-

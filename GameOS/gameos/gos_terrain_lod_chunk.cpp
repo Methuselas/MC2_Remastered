@@ -185,6 +185,12 @@ static int    s_controlMapSide = 0;
 static GLuint s_overlaySidecarTex = 0;
 static float  s_overlayBounds[4]  = {0.0f, 0.0f, 0.0f, 0.0f};  // topLeftX,topLeftY(=maxY),sizeX,sizeY
 
+// TERRAIN-OVERLAY-V2-DECAL-SUPPRESS-1: read-only accessors (see header). Let the
+// indirect decal bake key off the SAME resolved sidecar-loaded state the frag
+// samples (not a re-read of the env), so suppression matches what actually draws.
+bool         gos_TerrainLodChunk_OverlaySidecarLoaded() { return s_overlaySidecarTex != 0; }
+const float* gos_TerrainLodChunk_OverlayBounds()        { return s_overlayBounds; }
+
 // TERRAIN-SHORELINE-V3: authored land-side wet/foam shoreline mask sidecar
 // texture (unit TERRAIN_SHORELINE_TEXUNIT). Plain GLuint, same self-contained
 // single-owner pattern as s_overlaySidecarTex. glName 0 = not loaded (no
