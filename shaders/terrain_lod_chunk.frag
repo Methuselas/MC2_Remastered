@@ -857,7 +857,18 @@ void main() {
         snowWeight = smoothstep(0.25, 0.55, snowRaw);
         matWeights *= (1.0 - snowWeight);
         float tot = matWeights.x + matWeights.y + matWeights.z + matWeights.w;
-        if (tot > 0.01) matWeights /= tot; else matWeights = vec4(1.0, 0.0, 0.0, 0.0);
+        if (tot > 0.01) {
+            matWeights /= tot;
+        } else {
+            // TERRAIN-MATTEX-BLEND-1: an EMPTY / unbound control map must NOT
+            // collapse the whole surface to all-rock (1,0,0,0). That was the
+            // "100% rock, no colormap" bug when u_useControlMap is armed but no
+            // valid control-map sidecar is loaded (e.g. after the leaked test
+            // maps were quarantined). Fall back to the colormap-colour
+            // classifier — the same path used when the control map is off — so
+            // terrain reads correctly instead of turning to rock.
+            chunkWeights(base, matWeights, snowWeight);
+        }
     } else {
         chunkWeights(base, matWeights, snowWeight);
     }
