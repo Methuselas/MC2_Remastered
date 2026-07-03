@@ -115,11 +115,20 @@ static GLint         s_locCliffTessLevel  = -1;
 // program's VS+FS, so it needs EVERY per-draw uniform the base program was fed.
 // Rather than duplicate the ~150-site inline bind block (and risk missing one),
 // this reads back every active uniform from the (fully-configured) base program
-// and copies it to the tess program with glProgramUniform* — provably complete
-// by construction (samplers included; sampler uniforms are just their texunit
-// int, and the textures/SSBOs themselves bind to program-independent global
-// units/binding-points that the base block already set for this draw). Runs
-// ONLY for near-field GL_PATCHES draws when the gate is ON; never default-OFF.
+// and copies it to the tess program with glProgramUniform* (samplers included;
+// sampler uniforms are just their texunit int, and the textures/SSBOs themselves
+// bind to program-independent global units/binding-points that the base block
+// already set for this draw). Runs ONLY for near-field GL_PATCHES draws when the
+// gate is ON; never default-OFF.
+//
+// COMPLETENESS: this mirror is complete for scalar/vector/mat4 uniforms and for
+// any uniform with size==1. Uniform ARRAYS (size>1) of scalar/vector/int/sampler
+// types are NOT mirrored — the scalar/int branches read only the FIRST element
+// into a small stack buffer, so uploading `size` elements from it would read out
+// of bounds and corrupt the GPU-side array. Those cases now emit a WARN and are
+// SKIPPED (only mat4 arrays, e.g. cascade matrices, are handled per-element). If
+// slice 3b introduces such an array uniform (cascade matrices packed as vecs,
+// per-layer scalar arrays, etc.) it MUST be handled explicitly here.
 static void mirrorTerrainUniforms(GLuint src, GLuint dst) {
     GLint count = 0;
     glGetProgramiv(src, GL_ACTIVE_UNIFORMS, &count);
@@ -139,6 +148,15 @@ static void mirrorTerrainUniforms(GLuint src, GLuint dst) {
         if (sloc < 0 || dloc < 0) continue;   // not present in both
         switch (type) {
             case GL_FLOAT: {
+                // GUARD: size>1 array would read only v[0] but upload `size`
+                // elements from the 4-elem stack buffer -> OOB read + GPU
+                // corruption. Fail loud + skip rather than corrupt (see the
+                // COMPLETENESS note above; 3b must add a per-element path).
+                if (size > 1) {
+                    std::fprintf(stderr, "[CLIFF_TESS 3a] WARN unmirrored float ARRAY uniform '%s' size=%d (not handled; skipped)\n",
+                                 name, (int)size);
+                    break;
+                }
                 float v[4]={0,0,0,0}; glGetnUniformfv(src, sloc, sizeof(v), v);
                 glProgramUniform1fv(dst, dloc, size, v); break; }
             case GL_FLOAT_VEC2: { float v[2]={0,0}; glGetnUniformfv(src, sloc, sizeof(v), v);
@@ -172,6 +190,15 @@ static void mirrorTerrainUniforms(GLuint src, GLuint dst) {
             case GL_SAMPLER_2D_ARRAY:
             case GL_SAMPLER_2D_SHADOW:
             case GL_SAMPLER_2D_ARRAY_SHADOW: {
+                // GUARD: size>1 array would read only v[0] but upload `size`
+                // elements from the 4-elem stack buffer -> OOB read + GPU
+                // corruption. Fail loud + skip rather than corrupt (see the
+                // COMPLETENESS note above; 3b must add a per-element path).
+                if (size > 1) {
+                    std::fprintf(stderr, "[CLIFF_TESS 3a] WARN unmirrored int/sampler ARRAY uniform '%s' size=%d type=0x%x (not handled; skipped)\n",
+                                 name, (int)size, (unsigned)type);
+                    break;
+                }
                 GLint v[4]={0,0,0,0}; glGetnUniformiv(src, sloc, sizeof(v), v);
                 glProgramUniform1iv(dst, dloc, size, v); break; }
             case GL_INT_VEC2: { GLint v[2]={0,0}; glGetnUniformiv(src, sloc, sizeof(v), v);
@@ -2228,6 +2255,9 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             // this patch's per-block uniforms) onto the tess program, then draw.
             glUseProgram(s_terrainTessProgram->shp_);
             mirrorTerrainUniforms(s_terrainProgram, s_terrainTessProgram->shp_);
+            // NOTE: global GL state, left set intentionally. Safe today because
+            // this is the only GL_PATCHES draw in the frame; a future second
+            // tessellated path with a different patch size MUST re-set this.
             glPatchParameteri(GL_PATCH_VERTICES, 3);
             glDrawElements(GL_PATCHES, patch.indexCount, GL_UNSIGNED_SHORT, 0);
             // Restore the base program for the skirt draw / next patch.
