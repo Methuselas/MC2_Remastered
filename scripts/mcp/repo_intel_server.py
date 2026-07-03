@@ -474,6 +474,54 @@ def repo_symbol(
     return _j(result)
 
 
+@mcp.tool()
+def canonical_tip(branch: str = "", install: str = "") -> str:
+    """
+    Report the REAL current viewing tip — the canonical worktree's HEAD, its
+    subject + dirty state, and (optionally) whether a deployed install is at
+    that tip. Truth-First provenance tool: answers "what is current?" without
+    guessing.
+
+    Args:
+      branch  — canonical branch (default claude/nifty-mendeleev).
+      install — optional deployed install dir; if given, reads its
+                .deployed_manifest.csv src_commit and reports deploy_at_tip
+                (true/false) so a STALE deploy is caught immediately.
+
+    Returns JSON: {canonical_branch, tip, tip_full, tip_subject, worktree,
+    dirty, install?, deployed_commit?, deploy_at_tip?}.
+    """
+    branch = branch or rq.CANONICAL_BRANCH
+    return _j(rq.canonical_tip(_repo(), branch=branch, install=(install or None)))
+
+
+@mcp.tool()
+def lane_status(canonical: str = "", base: str = "") -> str:
+    """
+    Classify every lane worktree against the canonical tip and flag deploy-slot
+    (shared-branch) contention. Truth-First provenance tool for "which lanes are
+    stale / diverged / wrong-base?" before trusting or merging a lane.
+
+    Per-lane verdict:
+      canonical  — the canonical worktree itself
+      current    — HEAD == canonical tip
+      ancestor   — lane behind canonical (adds behind=N)
+      ahead      — lane ahead of canonical (adds ahead=N)
+      diverged   — neither is an ancestor of the other
+      wrong-base — (only with base=) lane does NOT descend from the required base
+
+    Args:
+      canonical — canonical branch (default claude/nifty-mendeleev).
+      base      — optional required-base ref; lanes not descending from it are
+                  marked wrong-base (e.g. base=9cfdc7aa for terrain executors).
+
+    Returns JSON: {canonical_branch, tip, lane_count, lanes:[...],
+    shared_branch_contention:{branch:[paths]}}.
+    """
+    canonical = canonical or rq.CANONICAL_BRANCH
+    return _j(rq.lane_status(_repo(), canonical=canonical, base=(base or None)))
+
+
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------

@@ -824,6 +824,24 @@ def main():
     write_manifest(target, hashes, git_head(src_root))
     log("deploy COMPLETE — payload verified, manifest written")
 
+    # Post-deploy hygiene scan (Truth-First arc P1 #5/#7): the payload manifest
+    # is a COMPLETENESS gate and never walks data/missions/*.beauty/, so a
+    # generated-diagnostic sidecar that leaked into the target by MANUAL copy is
+    # invisible to it. Run the standalone hygiene gate as a non-fatal warning so
+    # every deploy surfaces leaked dev artifacts. Fully skippable / advisory.
+    try:
+        hygiene = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "check-deploy-hygiene.py")
+        if os.path.isfile(hygiene):
+            r = subprocess.run([sys.executable, hygiene, target],
+                               capture_output=True, text=True, timeout=120)
+            out = (r.stdout or "").strip()
+            if out:
+                for line in out.splitlines():
+                    log(f"hygiene: {line}")
+    except Exception as e:  # noqa: BLE001 — advisory only, never block a deploy
+        log(f"hygiene scan skipped ({e})")
+
 
 if __name__ == "__main__":
     main()
