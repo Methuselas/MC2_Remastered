@@ -969,6 +969,20 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "TERRAIN-CHUNK-POM-1 knob: POM distance-fade band end in world units (default 3500). Beyond FAR the march is skipped entirely (strength 0 early-out). Clamped to > NEAR (NEAR+1 floor). NaN/non-positive -> default. Only consumed when MC2_TERRAIN_POM=1."
     },
+    {
+        "MC2_FEATURE_TERRAIN_CLIFF_DISPLACE",
+        "MC2_TERRAIN_CLIFF_DISPLACE",
+        EnvVarKind::Feature,
+        false,
+        "SLICE 3: near-field cliff tessellation on the LOD-chunk terrain path. 3a = plumbing (GL_PATCHES + pass-through TCS/TES, NO displacement, output-preserving). Default-OFF stays GL_TRIANGLES, byte-identical."
+    },
+    {
+        "MC2_TUNE_TERRAIN_CLIFF_MAXTESS",
+        "MC2_TERRAIN_CLIFF_DISPLACE_MAXTESS",
+        EnvVarKind::Trace,
+        false,
+        "SLICE 3 knob: max tessellation factor (float; C++ default 4.0, clamped to GL_MAX_TESS_GEN_LEVEL at program build). Only consumed when MC2_TERRAIN_CLIFF_DISPLACE=1."
+    },
     // TERRAIN-MATERIAL-TEXTURES-1: per-layer PBR albedo textures on the LIVE
     // LOD-chunk terrain path (gos_terrain_lod_chunk.cpp lazy loader + binder,
     // terrain_lod_chunk.frag u_useMatAlbedo branch). Gate OFF -> u_useMatAlbedo
