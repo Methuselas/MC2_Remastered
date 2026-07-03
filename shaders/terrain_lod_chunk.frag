@@ -795,6 +795,13 @@ void main() {
     // skipped). World-XY sample (not the 128wu tile grid) is the off-grid fix;
     // rides the terrain frag's displaced surface Z automatically (no z-fight
     // vs the old flat-triangle overlay pass on sloped/displaced terrain).
+    // TERRAIN-OVERLAY-V2-SUPPRESS-1: coverage of the authored overlay sidecar at
+    // this pixel (0 = none, 1 = fully authored). Used below to stop the generic
+    // concrete material tint from being re-applied OVER the authored overlay
+    // (the "double cement": overlay paints authored cement/road, then cementHit
+    // forces matWeights=concrete -> materialTint=tintConcrete muddies it again).
+    // Stays 0 when OVERLAY_V2 is off -> byte-identical.
+    float overlayCoverage = 0.0;
     if (u_useOverlaySidecar != 0) {
         vec2 ovUV;
         ovUV.x = (v_worldPos.x - u_overlayBounds.x) / max(u_overlayBounds.z, 1e-5);
@@ -802,6 +809,7 @@ void main() {
         if (ovUV.x >= 0.0 && ovUV.x <= 1.0 && ovUV.y >= 0.0 && ovUV.y <= 1.0) {
             vec4 ov = texture(u_overlaySidecar, ovUV);
             base = mix(base, ov.rgb, ov.a);
+            overlayCoverage = ov.a;
             if (ov.a > 0.5) cementHit = true;
         }
     }
@@ -1003,6 +1011,13 @@ void main() {
     // classifier-era cap toward full weight-composed albedo (materialTint).
     float tintStrength= mix(mix(tintBase, 0.85, snowWeight) * tintStrengthScale,
                              1.0, u_controlAlbedoStrength);
+    // TERRAIN-OVERLAY-V2-SUPPRESS-1: where the authored OVERLAY_V2 sidecar covers
+    // this pixel, keep its authored colour instead of muddying it toward the
+    // generic material tint (tintConcrete under the forced-concrete weights) —
+    // this is what caused cement/roads to look "doubled". Full coverage (ov.a=1)
+    // -> tintStrength 0 -> baseColor == authored overlay; edges feather. No-op
+    // when OVERLAY_V2 is off (overlayCoverage stays 0).
+    tintStrength *= (1.0 - overlayCoverage);
     vec3  baseColor   = mix(base, materialTint, tintStrength);
     if ((u_diag & 512) != 0) baseColor = base;   // DIAG 512: bypass material tint (A/B)
 
