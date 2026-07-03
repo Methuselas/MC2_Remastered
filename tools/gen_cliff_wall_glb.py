@@ -125,7 +125,7 @@ def build_wall(disp_path, subdiv, width, height, relief, noise_amp, sink, seed):
     # UVs: U across width, V up. MC2 importer V-flips (toMC2V=1-v); author raw uv.
     uv = np.stack([U, 1.0 - V], axis=-1).reshape(-1, 2).astype(np.float32)
 
-    # indices (two tris per quad), CCW
+    # indices (two tris per quad).
     idx = []
     for r in range(subdiv):
         for c in range(subdiv):
@@ -136,7 +136,29 @@ def build_wall(disp_path, subdiv, width, height, relief, noise_amp, sink, seed):
             idx += [a, e, b,  b, e, f]
     indices = np.asarray(idx, dtype=np.uint32)
 
-    # smooth normals from the displaced surface
+    # WINDING / NORMAL ORIENTATION FIX (cliff-wall dark/culled bug).
+    # The wall's OUTWARD face is +Z local (the relief/facing axis; buildCliff
+    # WallMatrix maps local Z -> world outward-facing). Two engine invariants
+    # depend on the outward face being CCW-front under +Z:
+    #   * GL_CULL_FACE GL_BACK is ON for static props (gos_static_prop_batcher):
+    #     a backward-wound outward face is culled -> we see the dark interior.
+    #   * calc_light NdotL uses max(dot(N,sun),0): an inward-pointing normal
+    #     kills the sun term -> near-black (ambient only).
+    # The (U,V) parametrization above has its width axis SIGN-FLIPPED
+    # (X = -(U*width-cx)) so the naive [a,e,b,...] order winds the +Z face
+    # CW (geometric normals land on -Z). Detect and correct deterministically:
+    # if the mean geometric face-normal points along -Z, reverse every triangle
+    # so the outward (+Z) face becomes front-facing / CCW. Then derive smooth
+    # normals from the corrected winding -> they point OUT of the wall (+Z).
+    tris = indices.reshape(-1, 3)
+    v0 = pos[tris[:, 0]]; v1 = pos[tris[:, 1]]; v2 = pos[tris[:, 2]]
+    fnz = np.cross(v1 - v0, v2 - v0)[:, 2]
+    if float(np.mean(fnz)) < 0.0:
+        # swap the 2nd and 3rd vertex of each tri to flip winding
+        tris = tris[:, [0, 2, 1]]
+        indices = tris.reshape(-1).astype(np.uint32)
+
+    # smooth normals from the (now outward-wound) displaced surface
     normals = compute_normals(pos, indices)
     return pos, uv, indices, normals
 
