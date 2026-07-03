@@ -828,6 +828,22 @@ long TerrainTextures::initOverlay (long overlayNum, long txmNum, char *txmName)
 		}
 		const char* chosenName = useHires ? (const char*)hiresName : (const char*)fileName;
 
+		// OVERLAY-TILE-HIRES-1 DIAG: settle "is 256 actually loading or falling
+		// back to 64?" -- when the hires gate is armed, count hires-hits vs
+		// legacy-fallbacks and print a running tally + the first few chosen paths
+		// to stderr. Gated on hiresEdge>0 so default (gate off) is byte-identical.
+		if (hiresEdge > 0)
+		{
+			static int s_hiresHit = 0, s_hiresMiss = 0, s_hiresLogged = 0;
+			if (useHires) ++s_hiresHit; else ++s_hiresMiss;
+			if (s_hiresLogged < 8) {
+				++s_hiresLogged;
+				printf("[OVERLAY_TILE_HIRES v1] tile chose %s path=%s (hits=%d misses=%d)\n",
+				       useHires ? "HIRES" : "fallback64", chosenName, s_hiresHit, s_hiresMiss);
+				fflush(stdout);
+			}
+		}
+
 		long result = 0;
 		//------------------------------------------------------------
 		if (InEditor || !quickLoad)
