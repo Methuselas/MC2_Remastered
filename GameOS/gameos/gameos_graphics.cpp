@@ -8534,17 +8534,16 @@ void __stdcall gos_SetupViewport( bool FillZ, float ZBuffer, bool FillBG, DWORD 
 void __stdcall gos_SetRenderViewport(float x, float y, float w, float h)
 {
     gosASSERT(g_gos_renderer);
+	// IN-MISSION-DETACH-1: store-only, EXACTLY like the nifty base (the
+	// glViewport call has been commented out there since the GL port). The
+	// UI-phase1 merge armed it with a HiDPI-scaled glViewport, which stomps
+	// the GL viewport for every in-mission caller — terrain (own MVP
+	// dispatch) and TGL objects/water (viewport-transformed) desync, so
+	// props/mechs/trees/water visibly slide off the terrain while panning.
+	// The defs/ImGui UI never needed this: it scales via
+	// GuiRuntime::GetDisplaySize, and the preview FBO sets its own viewport.
+	//glViewport(x, y, w, h);
 	g_gos_renderer->setRenderViewport(vec4(x, y, w, h));
-	// x, y, w, h are in logical screen coords (e.g. 800x600).
-	// glViewport needs physical drawable pixels.  Scale up for HiDPI displays.
-	const float scaleX = (Environment.drawableWidth > 0 && Environment.screenWidth > 0)
-	    ? (float)Environment.drawableWidth / (float)Environment.screenWidth : 1.f;
-	const float scaleY = (Environment.drawableHeight > 0 && Environment.screenHeight > 0)
-	    ? (float)Environment.drawableHeight / (float)Environment.screenHeight : 1.f;
-	// y is top-down; glViewport origin is bottom-left of drawable.
-	const float phyH = (float)g_gos_renderer->getHeight() * scaleY;
-	glViewport((GLint)(x * scaleX), (GLint)(phyH - y * scaleY - h * scaleY),
-	           (GLsizei)(w * scaleX), (GLsizei)(h * scaleY));
 }
 
 void __stdcall gos_GetRenderViewport(float* x, float* y, float* w, float* h)

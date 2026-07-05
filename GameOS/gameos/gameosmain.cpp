@@ -1303,6 +1303,18 @@ int main(int argc, char** argv)
     if(!win)
         return 1;
 
+    // [HUD-RES-CLAMP v1] (IN-MISSION-DETACH-1 restore): the WINDOW above is
+    // created at the real options.cfg resolution (crisp ImGui/defs UI wants a
+    // real-res drawable), but the legacy game logic's canvas goes back to the
+    // canonical 800x600 — the legacy 2D HUD and the in-mission viewport/MVP
+    // plumbing only lay out correctly at the tuned base. The UI-phase1 merge
+    // dropped this clamp, which (a) reverted the HUD-scale fix and (b) fed
+    // real-res Environment values into legacy in-mission math. Real drawable
+    // size stays available via Environment.drawableWidth/Height and
+    // GuiRuntime::GetDisplaySize. Memory: hud_scene_resolution_separation.
+    Environment.screenWidth  = 800;
+    Environment.screenHeight = 600;
+
     startup_phase("window_created");
 
     graphics::RenderContextHandle ctx = graphics::init_render_context(win);
