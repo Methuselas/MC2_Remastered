@@ -13,6 +13,9 @@
 // preflight-arming, and bridge entry.
 
 #include "gos_terrain_indirect.h"
+
+// ROAD-PBR-FAILSOFT-1 (defined in gameos_graphics.cpp)
+extern bool gos_TerrainRoadMaterialReady(int matId);
 #include "gos_gpu_sync.h"               // GPU-SYNC-CONTRACT typed barrier helper
 #include "gos_terrain_patch_stream.h"  // TerrainQuadRecipe
 #include "gpu_driven_common.h"         // gpu_driven::IsTerrainSolidEnabled
@@ -4715,13 +4718,19 @@ void BuildDecalStaticVBO() {
             // 0x02 (Color.a ~= 0.0078), all other tiles -> 0xff (Color.a == 1.0).
             // The vert decodes matByte<250 as the id (else 0 = no material), so the
             // 0xff tiles stay byte-identical to pre-slice behaviour.
+            // ROAD-PBR-FAILSOFT-1: only bake a PBR material id when its albedo
+            // actually loaded (gos_TerrainRoadMaterialReady). Installs without
+            // the hand-placed asphalt/gravel TGAs previously got matId anyway ->
+            // the frag sampled texture 0 -> BLACK roads (looked like the roads
+            // were gone). matId 0xff = legacy tgl/64 road tile path, untouched.
             uint32_t tileArgb;
-            if (decalOverlayType == PAVED_ROAD || decalOverlayType == RUNWAY)
+            if ((decalOverlayType == PAVED_ROAD || decalOverlayType == RUNWAY)
+                && ::gos_TerrainRoadMaterialReady(1))
                 tileArgb = 0x01000000u;       // asphalt (v_matId==1)
-            else if (decalOverlayType == DIRT_ROAD)
+            else if (decalOverlayType == DIRT_ROAD && ::gos_TerrainRoadMaterialReady(2))
                 tileArgb = 0x02000000u;       // gravel  (v_matId==2)
             else
-                tileArgb = 0xffffffffu;       // no overlay material
+                tileArgb = 0xffffffffu;       // no overlay material (legacy tile)
             for (int k = 0; k < 4; ++k) {
                 c[k].fog  = 1.0f;          // frag discards FogValue (terrain_overlay.frag:48)
                 c[k].argb = tileArgb;      // ROAD material id (alpha byte)

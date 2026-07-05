@@ -283,6 +283,16 @@ Headless Vulkan probe / backend-skeleton exercise gates. All read via bare `gete
   aspect (true proportions at any window shape); panel previews keep their
   fixed 4:3 FBO ratio via the preview-scope guard.
 
+## Road PBR fail-soft (ROAD-PBR-FAILSOFT-1)
+
+- `MC2_ROAD_PBR=0` — force legacy tgl road tiles even when the asphalt/gravel
+  TGAs are present. Default ON: the overlay bake asks
+  `gos_TerrainRoadMaterialReady(matId)` per material and only bakes the PBR
+  matId when its albedo actually loaded (`data/textures/asphalt_albedo.tga` /
+  `gravel_albedo.tga`). Installs WITHOUT the hand-placed TGAs render the
+  original 64Overlays road tiles (previously: matId baked anyway -> shader
+  sampled texture 0 -> black/invisible roads).
+
 ## Terrain fast-path drop log
 
 - `MC2_FASTPATH_DROP_LOG=1` — log terrain fast-path -> legacy setupTextures transitions (transition-only, `[FASTPATH_DROP]`). Default **OFF**.

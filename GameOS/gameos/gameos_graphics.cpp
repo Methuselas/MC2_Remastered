@@ -1634,6 +1634,11 @@ class gosRenderer {
         }
         // ROAD-PBR-ASPHALT-1: store the asphalt albedo GL handle (terrtxm2 loads
         // the TGA + creates the texture; we just hold the id for overlay binding).
+        // ROAD-PBR-FAILSOFT-1: readiness getters for the overlay bake's
+        // legacy-fallback decision (gos_TerrainRoadMaterialReady).
+        GLuint getTerrainAsphaltAlbedoTexture() const { return terrain_asphalt_albedo_tex_; }
+        GLuint getTerrainGravelAlbedoTexture()  const { return terrain_gravel_albedo_tex_; }
+
         void setTerrainAsphaltAlbedoTexture(GLuint texId) {
             terrain_asphalt_albedo_tex_ = texId;
             terrain_asphalt_load_tried_ = true;
@@ -7691,6 +7696,23 @@ void gos_RendererRebindVAO() {
 // Return 0 when the renderer does not exist yet (callers treat 0 as "no-op").
 int gosRendererLogicalWidth()  { return g_gos_renderer ? g_gos_renderer->getWidth()  : 0; }
 int gosRendererLogicalHeight() { return g_gos_renderer ? g_gos_renderer->getHeight() : 0; }
+
+// ROAD-PBR-FAILSOFT-1: is the high-res road material for this overlay
+// material id actually loaded? The overlay bake keys the per-tile matId on
+// this so installs WITHOUT the asphalt/gravel TGAs (anything but the release
+// lane the art was hand-placed into) keep the LEGACY tgl/64 road tiles
+// instead of black albedo. MC2_ROAD_PBR=0 forces legacy everywhere.
+bool gos_TerrainRoadMaterialReady(int matId)
+{
+    static const bool s_pbrOn = []() {
+        const char* v = getenv("MC2_ROAD_PBR");
+        return !(v && v[0] == '0');
+    }();
+    if (!s_pbrOn || !g_gos_renderer) return false;
+    if (matId == 1) return g_gos_renderer->getTerrainAsphaltAlbedoTexture() != 0;
+    if (matId == 2) return g_gos_renderer->getTerrainGravelAlbedoTexture()  != 0;
+    return false;
+}
 
 void gos_RendererHandleEvents() {
     gosASSERT(g_gos_renderer);
