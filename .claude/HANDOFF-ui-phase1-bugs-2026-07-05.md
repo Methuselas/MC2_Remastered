@@ -45,6 +45,10 @@ preview FBO (drawOldWay force), 4x supersample, bay/pilot icon bridge (beginGuiB
 - **Options->Gameplay paint preview**: canvas-transform composite (was full-stretch wrong size at widescreen — user report).
 - **RESULTS-CAPTURE-1**: MC2_SHOT_RESULTS=1 + MC2_DEV_SHELL=1 -> event-driven dev_shell_out/results_salvage.tga / results_promote.tga via gos_dev_shell::scheduleScreenshot. Full AAR repro: soak cheats (BOOT_TO_BAY=campaign AUTOWIN AUTO_PURCHASE KILL_ENEMY PILOT_PROMOTE) reach salvage ~30s. NEVER blind-timed screenshots.
 
+## ★META-PATTERN (USER RULING 2026-07-05 eve): unfinished modder defs pages -> PIN TO LEGACY
+
+"It works fine on just legacy" = the triage question for every new UI bug. If a screen regressed WITH the ImGui merge, do NOT chase defs-page symptoms — pin the page to legacy in `UiDefs::replacementPathForLegacyFit` (one blocklist site, env opt-in per page for authoring). Applied: `mcui_mr_layout` (AAR, MC2_UI_DEFS_RESULTS=1) + `mcl_loadingscreen*` (`aae900f8`, MC2_UI_DEFS_LOADSCREEN=1 — was BOTH the top-left-shifted doors AND the residual logo/hourglass banner; LOAD-BANNER-RESIDUE-2 enter/exit handoff REVERTED `10b31800`, enter screen owns the legacy sequence). Legacy screens are canvas-anchored first-class citizens now, so pinned screens look right at any aspect. Agent-verified: centered doors + LOADING text + no banner.
+
 ## NIFTY side (worktree .claude/worktrees/nifty-mendeleev)
 - DEV-SHELL complete (docs/dev-shell.md = playbook; ping/reload_shaders/screenshot/ui_reload/texture_refresh/framegraph). GAMEOS-SPLIT plan at docs/splits/gameos-graphics-split-1-plan.md — execute slice 1 (gosFont) when worktree free.
 
