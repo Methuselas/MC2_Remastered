@@ -856,15 +856,11 @@ void MechLabScreen::render(int xOffset, int yOffset)
 	
 	// Legacy->display scale for the text bridge (crisp TTF on the component list +
 	// variant dropdown, matching the data/defs UI layer).
-	float tbDw = 0.f, tbDh = 0.f, tbSx = 1.f, tbSy = 1.f;
-	if ( GuiRuntime::GetDisplaySize( tbDw, tbDh ) &&
-		 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
-	{
-		tbSx = tbDw / (float)Environment.screenWidth;
-		tbSy = tbDh / (float)Environment.screenHeight;
-	}
+	// UI-ASPECT-ANCHOR-1: canvas-aware transform (scale + pad origin).
+	float tbSx = 1.f, tbSy = 1.f, tbOx = 0.f, tbOy = 0.f;
+	aObject::getCanvasTransform( tbSx, tbSy, tbOx, tbOy );
 
-	aObject::beginTextBridge( tbSx, tbSy, 1.3f );
+	aObject::beginTextBridge( tbSx, tbSy, 1.3f, tbOx, tbOy );
 	componentListBox.move( xOffset, yOffset );
 	componentListBox.render();
 	componentListBox.move( -xOffset, -yOffset );
@@ -886,7 +882,7 @@ void MechLabScreen::render(int xOffset, int yOffset)
 		camera.setPreviewOffscreen( true );
 		camera.render();
 		camera.drawPreviewToPanel(
-			camera.bounds[0] * tbSx, camera.bounds[1] * tbSy,
+			camera.bounds[0] * tbSx + tbOx, camera.bounds[1] * tbSy + tbOy,
 			(camera.bounds[2] - camera.bounds[0]) * tbSx,
 			(camera.bounds[3] - camera.bounds[1]) * tbSy );
 	}
@@ -979,7 +975,7 @@ void MechLabScreen::render(int xOffset, int yOffset)
 			pSelectedComponent = 0;
 	}
 
-	aObject::beginTextBridge( tbSx, tbSy, 1.3f );
+	aObject::beginTextBridge( tbSx, tbSy, 1.3f, tbOx, tbOy );
 	variantList.move( xOffset, yOffset );
 	variantList.render();
 	variantList.move( -xOffset, -yOffset );

@@ -238,19 +238,15 @@ void MechPurchaseScreen::render( int xOffset, int yOffset )
 
 	// Legacy->display scale for the text bridge (crisp TTF labels on the two mech
 	// lists + the mech-info display, matching the data/defs UI layer).
-	float tbDw = 0.f, tbDh = 0.f, tbSx = 1.f, tbSy = 1.f;
-	if ( GuiRuntime::GetDisplaySize( tbDw, tbDh ) &&
-		 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
-	{
-		tbSx = tbDw / (float)Environment.screenWidth;
-		tbSy = tbDh / (float)Environment.screenHeight;
-	}
+	// UI-ASPECT-ANCHOR-1: canvas-aware transform (scale + pad origin).
+	float tbSx = 1.f, tbSy = 1.f, tbOx = 0.f, tbOy = 0.f;
+	aObject::getCanvasTransform( tbSx, tbSy, tbOx, tbOy );
 
 	// Only the two mech lists need the text bridge (mech names).  mechDisplay routes
 	// its info text into the mcl_mechinfo defs page and its loadout into a defs GuiList
 	// (matching Mech Bay), so it must NOT be bridged -- otherwise the legacy loadout
 	// list would TTF-draw on top of the GuiList and double up.
-	aObject::beginTextBridge( tbSx, tbSy );
+	aObject::beginTextBridge( tbSx, tbSy, 1.0f, tbOx, tbOy );
 	inventoryListBox.move( xOffset, yOffset);
 	inventoryListBox.render();
 	inventoryListBox.move( -xOffset, -yOffset );

@@ -187,6 +187,10 @@ public:
 	// and begins the bridge with it -- ALL legacy->ImGui bridge sites should
 	// use this so bridged widgets land on the same canvas as the defs page.
 	static void			beginGuiBridgeCanvas();
+	// The canvas transform itself (scale legacy->display + pad origin), for
+	// callers that composite manually (drawPreviewToPanel panel rects, text
+	// bridge). Falls back to full-stretch when no canvas is active.
+	static void			getCanvasTransform(float& sx, float& sy, float& ox, float& oy);
 	static void			endGuiBridge();
 
 	// Text-only bridge: while active, aText::render draws its label through the
@@ -195,7 +199,7 @@ public:
 	// Unlike beginGuiBridge it does NOT reroute aObject quads, so legacy widgets
 	// (mech-bay deployment icons, mech-storage list items) keep drawing their art
 	// on the GameOS layer while their text upgrades to crisp TTF on the HUD layer.
-	static void			beginTextBridge(float scaleX, float scaleY, float fontScale = 1.0f);
+	static void			beginTextBridge(float scaleX, float scaleY, float fontScale = 1.0f, float offX = 0.0f, float offY = 0.0f);
 	static void			endTextBridge();
 
 	// Shared TTF-bridge draw for legacy text widgets (aText, aTextListItem, ...).

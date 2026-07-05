@@ -27,6 +27,8 @@ static bool  s_textBridgeActive = false;
 static float s_textBridgeSx = 1.0f;
 static float s_textBridgeSy = 1.0f;
 static float s_textBridgeFontScale = 1.0f;
+static float s_textBridgeOx = 0.0f;   // UI-ASPECT-ANCHOR-1: canvas pad origin
+static float s_textBridgeOy = 0.0f;
 
 void aObject::beginGuiBridge(float scaleX, float scaleY)
 {
@@ -46,10 +48,10 @@ void aObject::beginGuiBridge(float scaleX, float scaleY, float offX, float offY)
 // UI canvas box give the exact transform the defs pages use (UiDefs
 // PageScale), so bridged legacy widgets stay aligned with page content at
 // every aspect. Falls back to full-stretch when no canvas is active.
-void aObject::beginGuiBridgeCanvas()
+void aObject::getCanvasTransform(float& sx, float& sy, float& ox, float& oy)
 {
 	float dw = 0.f, dh = 0.f;
-	float sx = 1.f, sy = 1.f, ox = 0.f, oy = 0.f;
+	sx = 1.f; sy = 1.f; ox = 0.f; oy = 0.f;
 	if ( GuiRuntime::GetDisplaySize( dw, dh ) &&
 		 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
 	{
@@ -67,6 +69,12 @@ void aObject::beginGuiBridgeCanvas()
 			sy = dh / (float)Environment.screenHeight;
 		}
 	}
+}
+
+void aObject::beginGuiBridgeCanvas()
+{
+	float sx, sy, ox, oy;
+	getCanvasTransform( sx, sy, ox, oy );
 	beginGuiBridge( sx, sy, ox, oy );
 }
 
@@ -79,12 +87,14 @@ void aObject::endGuiBridge()
 	s_guiBridgeOy = 0.0f;
 }
 
-void aObject::beginTextBridge(float scaleX, float scaleY, float fontScale)
+void aObject::beginTextBridge(float scaleX, float scaleY, float fontScale, float offX, float offY)
 {
 	s_textBridgeActive = true;
 	s_textBridgeSx = scaleX > 0.0f ? scaleX : 1.0f;
 	s_textBridgeSy = scaleY > 0.0f ? scaleY : 1.0f;
 	s_textBridgeFontScale = fontScale > 0.0f ? fontScale : 1.0f;
+	s_textBridgeOx = offX;
+	s_textBridgeOy = offY;
 }
 
 void aObject::endTextBridge()
@@ -93,6 +103,8 @@ void aObject::endTextBridge()
 	s_textBridgeSx = 1.0f;
 	s_textBridgeSy = 1.0f;
 	s_textBridgeFontScale = 1.0f;
+	s_textBridgeOx = 0.0f;
+	s_textBridgeOy = 0.0f;
 }
 
 bool aObject::renderTextBridged( aFont& font, const char* text,
@@ -103,8 +115,8 @@ bool aObject::renderTextBridged( aFont& font, const char* text,
 
 	const float sx = s_textBridgeActive ? s_textBridgeSx : s_guiBridgeSx;
 	const float sy = s_textBridgeActive ? s_textBridgeSy : s_guiBridgeSy;
-	const float bx = s_textBridgeActive ? 0.0f : s_guiBridgeOx;
-	const float by = s_textBridgeActive ? 0.0f : s_guiBridgeOy;
+	const float bx = s_textBridgeActive ? s_textBridgeOx : s_guiBridgeOx;
+	const float by = s_textBridgeActive ? s_textBridgeOy : s_guiBridgeOy;
 	const float x = x0 * sx + bx;
 	const float y = y0 * sy + by;
 	float w = ( x1 - x0 ) * sx;

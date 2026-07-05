@@ -171,6 +171,11 @@ bool silentMode = false;		//Used for automated builds to keep errors from poppin
 // in-mission rendering behavior, not just the preview panel. Needs a scoped
 // per-preview override (e.g. save/restore around the encyclopedia render call)
 // instead of a global default flip. Left at ours' value; resolve before ship.
+// RESOLVED 2026-07-05: the motivation for theirs' flip is GONE — the
+// Mechlopedia/Mech Bay previews render correctly through the drawOldWay +
+// fixed-800x600-FBO composite path (ENCYCLO-3D-2 / PREVIEW-FBO-FIXED),
+// which never needed the shader-lighting path. Default stays false; the
+// GPU-object-offload interlock is unaffected. No per-preview override needed.
 bool bShadersDrawPathEnabled = false;
 
 // Slice 2 (object-offload) — forward declaration from gos_static_prop_batcher.h.

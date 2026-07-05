@@ -141,17 +141,13 @@ void MissionBriefingScreen::render(int xOffset, int yOffset )
 	// (GuiRuntime::GetDisplaySize / Environment.screenWidth,Height), applied to
 	// camera.bounds[] (unscaled legacy 800x600 rect from camera.init() above).
 	{
-		float dw = 0.f, dh = 0.f, sx = 1.f, sy = 1.f;
-		if ( GuiRuntime::GetDisplaySize( dw, dh ) &&
-			 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
-		{
-			sx = dw / (float)Environment.screenWidth;
-			sy = dh / (float)Environment.screenHeight;
-		}
+		// UI-ASPECT-ANCHOR-1: canvas-aware composite transform (see aObject).
+		float sx = 1.f, sy = 1.f, cox = 0.f, coy = 0.f;
+		aObject::getCanvasTransform( sx, sy, cox, coy );
 		camera.setPreviewOffscreen( true );
 		camera.render();
 		camera.drawPreviewToPanel(
-			camera.bounds[0] * sx, camera.bounds[1] * sy,
+			camera.bounds[0] * sx + cox, camera.bounds[1] * sy + coy,
 			(camera.bounds[2] - camera.bounds[0]) * sx,
 			(camera.bounds[3] - camera.bounds[1]) * sy );
 	}

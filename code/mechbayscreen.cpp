@@ -269,15 +269,13 @@ void MechBayScreen::render(int xOffset, int yOffset)
 {
 	// Legacy->display scale for the text bridge (crisp TTF labels on the mech-
 	// storage list + deployment icons, matching the data/defs UI layer).
-	float tbDw = 0.f, tbDh = 0.f, tbSx = 1.f, tbSy = 1.f;
-	if ( GuiRuntime::GetDisplaySize( tbDw, tbDh ) &&
-		 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
-	{
-		tbSx = tbDw / (float)Environment.screenWidth;
-		tbSy = tbDh / (float)Environment.screenHeight;
-	}
+	// UI-ASPECT-ANCHOR-1: canvas-aware transform (scale + pad origin) so
+	// bridged icons/text and preview composites line up with the defs page
+	// at every aspect; full-stretch fallback when no canvas is active.
+	float tbSx = 1.f, tbSy = 1.f, tbOx = 0.f, tbOy = 0.f;
+	aObject::getCanvasTransform( tbSx, tbSy, tbOx, tbOy );
 
-	aObject::beginTextBridge( tbSx, tbSy );
+	aObject::beginTextBridge( tbSx, tbSy, 1.0f, tbOx, tbOy );
 	mechListBox.move( xOffset, yOffset );
 	mechListBox.render();
 	mechListBox.move( -xOffset, -yOffset );
@@ -302,7 +300,7 @@ void MechBayScreen::render(int xOffset, int yOffset)
 		mechCamera->setPreviewOffscreen( true );
 		mechCamera->render();
 		mechCamera->drawPreviewToPanel(
-			mechCamera->bounds[0] * tbSx, mechCamera->bounds[1] * tbSy,
+			mechCamera->bounds[0] * tbSx + tbOx, mechCamera->bounds[1] * tbSy + tbOy,
 			(mechCamera->bounds[2] - mechCamera->bounds[0]) * tbSx,
 			(mechCamera->bounds[3] - mechCamera->bounds[1]) * tbSy );
 	}
@@ -326,8 +324,8 @@ void MechBayScreen::render(int xOffset, int yOffset)
 	// were drawn but invisible while the bridged TEXT (names) showed. Routing
 	// the whole icon widget tree through the gui bridge draws it on the ImGui
 	// HUD layer at display scale, same as the names.
-	aObject::beginGuiBridge( tbSx, tbSy );
-	aObject::beginTextBridge( tbSx, tbSy );
+	aObject::beginGuiBridge( tbSx, tbSy, tbOx, tbOy );
+	aObject::beginTextBridge( tbSx, tbSy, 1.0f, tbOx, tbOy );
 	for (int i = 0; i < ICON_COUNT; i++ )
 	{
 		pIcons[i].render( xOffset, yOffset );

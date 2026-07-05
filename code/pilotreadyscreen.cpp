@@ -292,21 +292,19 @@ void PilotReadyScreen::render(int xOffset, int yOffset )
 {
 	// Legacy->display scale for the text bridge (crisp TTF pilot names on the pilot
 	// list + deployment icons, matching the data/defs UI layer).
-	float tbDw = 0.f, tbDh = 0.f, tbSx = 1.f, tbSy = 1.f;
-	if ( GuiRuntime::GetDisplaySize( tbDw, tbDh ) &&
-		 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
-	{
-		tbSx = tbDw / (float)Environment.screenWidth;
-		tbSy = tbDh / (float)Environment.screenHeight;
-	}
+	// UI-ASPECT-ANCHOR-1: canvas-aware transform (scale + pad origin) so
+	// bridged icons/text and preview composites line up with the defs page
+	// at every aspect; full-stretch fallback when no canvas is active.
+	float tbSx = 1.f, tbSy = 1.f, tbOx = 0.f, tbOy = 0.f;
+	aObject::getCanvasTransform( tbSx, tbSy, tbOx, tbOy );
 
 	// Pilot names get a slight font boost (1.3x) so they read larger in the list.
 	// MECH-ICON-BLANK-1: full gui bridge (quads too, not just text) — same fix as
 	// the Mech Bay deployment icons: with the defs replacement page active, legacy
 	// gos_DrawQuads are buried under the ImGui page, so pilot photos/icons in the
 	// list must draw on the ImGui HUD layer at display scale.
-	aObject::beginGuiBridge( tbSx, tbSy );
-	aObject::beginTextBridge( tbSx, tbSy, 1.3f );
+	aObject::beginGuiBridge( tbSx, tbSy, tbOx, tbOy );
+	aObject::beginTextBridge( tbSx, tbSy, 1.3f, tbOx, tbOy );
 	pilotListBox.move( xOffset, yOffset );
 	pilotListBox.render();
 	pilotListBox.move( -xOffset, -yOffset );
@@ -329,7 +327,7 @@ void PilotReadyScreen::render(int xOffset, int yOffset )
 	}
 
 	// MECH-ICON-BLANK-1: rank/skill/medal icons are textured quads too.
-	aObject::beginGuiBridge( tbSx, tbSy );
+	aObject::beginGuiBridge( tbSx, tbSy, tbOx, tbOy );
 	if ( pCurPilot )
 		rankIcons[pCurPilot->getRank()].render(xOffset, yOffset);
 
@@ -344,8 +342,8 @@ void PilotReadyScreen::render(int xOffset, int yOffset )
 
 	LogisticsScreen::render( xOffset, yOffset );
 	// MECH-ICON-BLANK-1: deployment-slot mech icons + pilot photos (same as bay).
-	aObject::beginGuiBridge( tbSx, tbSy );
-	aObject::beginTextBridge( tbSx, tbSy );
+	aObject::beginGuiBridge( tbSx, tbSy, tbOx, tbOy );
+	aObject::beginTextBridge( tbSx, tbSy, 1.0f, tbOx, tbOy );
 	for (int i = 0; i < ICON_COUNT; i++ )
 	{
 		pIcons[i].render( xOffset, yOffset );
@@ -360,7 +358,7 @@ void PilotReadyScreen::render(int xOffset, int yOffset )
 		GUI_RECT rect = { 77 + xOffset, 317 + yOffset, 720+ xOffset, 515 + yOffset };
 		drawRect( rect, 0xff000000 );
 		// MECH-ICON-BLANK-1: mech display widgets on the ImGui HUD layer too.
-		aObject::beginGuiBridge( tbSx, tbSy );
+		aObject::beginGuiBridge( tbSx, tbSy, tbOx, tbOy );
 		mechDisplay.render( xOffset, yOffset );
 		// hack, cover up list box overrruns.
 		statics[27].render( xOffset, yOffset );
