@@ -7760,9 +7760,37 @@ void gosRenderer::flushHUDBatch()
     // than they fixed (touched scene/overlay draws, pulled tall panels out
     // of their corners, etc.).
     const float scale = s_hud_scale;
+    // HUD-SCALE-SPACE-1 diagnostic: which coordinate space are the batched HUD
+    // verts in vs the band test (width_/height_ = real drawable)? One line per
+    // 300 flushes under MC2_LOG_PREVIEW.
+    if (getenv("MC2_LOG_PREVIEW")) {
+        static int s_hudDiagTick = 0;
+        if ((s_hudDiagTick++ % 300) == 0 && !hudBatch_.empty()) {
+            float ymin = 1e9f, ymax = -1e9f, xmax = -1e9f;
+            size_t nv = 0;
+            for (const HudDrawCall& c : hudBatch_)
+                for (const gos_VERTEX& v : c.vertices) {
+                    if (v.y < ymin) ymin = v.y;
+                    if (v.y > ymax) ymax = v.y;
+                    if (v.x > xmax) xmax = v.x;
+                    ++nv;
+                }
+            printf("[HUDSCALE] active=%d scale=%.2f rendererWH=%dx%d batch=%zu verts=%zu "
+                   "vertY=[%.0f..%.0f] vertXmax=%.0f band=%.0f\n",
+                (int)s_hud_scale_active, scale, width_, height_,
+                hudBatch_.size(), nv, ymin, ymax, xmax, (float)height_ * 0.60f);
+            fflush(stdout);
+        }
+    }
     if (s_hud_scale_active && scale < 0.999f) {
-        const float sw = (float)width_;
-        const float sh = (float)height_;
+        // HUD-SCALE-SPACE-1: band + anchor must live in the SAME space as the
+        // batched verts. ControlGui lays the HUD out in Environment.screenWidth/
+        // Height space (real-res on stock nifty, the 800x600 logical canvas
+        // under the ui-phase1 HUD-RES-CLAMP) — using the renderer's physical
+        // size here put the 60% band at 1296px against 800-space verts, so no
+        // HUD centroid ever entered the band and the shrink silently no-opped.
+        const float sw = (Environment.screenWidth  > 0) ? (float)Environment.screenWidth  : (float)width_;
+        const float sh = (Environment.screenHeight > 0) ? (float)Environment.screenHeight : (float)height_;
         const float bottomBand = sh * 0.60f;
         const float ax = sw * 0.5f;
         const float ay = sh;
