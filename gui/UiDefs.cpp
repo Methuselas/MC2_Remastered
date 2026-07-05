@@ -589,6 +589,7 @@ struct UiElement {
     int uvY = 0;
     int uvW = 0;
     int uvH = 0;
+    bool uvLegacySpace = false; // uvXYWH addressed in legacy size/uvScale space (PILOT-PHOTO-UV-1)
     unsigned int fillColor = 0x00000000;
     unsigned int borderColor = 0xff505050;
     unsigned int textColor = 0xffffffff;
@@ -1243,11 +1244,30 @@ static void textureUVs(UiElement& e, float& u1, float& v1, float& u2, float& v2)
         }
     }
 
+    // PILOT-PHOTO-UV-1: two UV-authoring spaces exist.
+    //   - Defs-fit and runtime PNG-space sub-rects address the LOGICAL texture
+    //     size (the modder authored coords straight off the PNG) — divide by
+    //     logical size (default, unchanged).
+    //   - LEGACY-space sub-rects (runtime callers mirroring old setUVs math,
+    //     e.g. the 92x128 per-pilot portrait crop) address size/uvScale — the
+    //     divisor aObject::init derives (fileWidth = physical/uvScale). Opt-in
+    //     via e.uvLegacySpace (setElementImageRegion legacyUvSpace=true).
+    DWORD uvScale = 1;
+    if (e.uvLegacySpace && e.textureNode && mcTextureManager)
+        uvScale = mcTextureManager->getUVScale(e.textureNode);
+    if (uvScale < 1) uvScale = 1;
+
     if (logicalWidth > 0 && logicalHeight > 0) {
-        u1 = static_cast<float>(e.uvX) / static_cast<float>(logicalWidth);
-        v1 = static_cast<float>(e.uvY) / static_cast<float>(logicalHeight);
-        u2 = static_cast<float>(e.uvX + e.uvW) / static_cast<float>(logicalWidth);
-        v2 = static_cast<float>(e.uvY + e.uvH) / static_cast<float>(logicalHeight);
+        const float effW = static_cast<float>(logicalWidth)  / static_cast<float>(uvScale);
+        const float effH = static_cast<float>(logicalHeight) / static_cast<float>(uvScale);
+        u1 = static_cast<float>(e.uvX) / effW;
+        v1 = static_cast<float>(e.uvY) / effH;
+        u2 = static_cast<float>(e.uvX + e.uvW) / effW;
+        v2 = static_cast<float>(e.uvY + e.uvH) / effH;
+        if (u2 > 1.0f) u2 = 1.0f;
+        if (v2 > 1.0f) v2 = 1.0f;
+        if (u1 > 1.0f) u1 = 1.0f;
+        if (v1 > 1.0f) v1 = 1.0f;
     }
 }
 
@@ -1323,6 +1343,21 @@ static bool drawUiImageElement(UiElement& e, int xOffset, int yOffset, const Pag
     if (e.flipV) { const float tmp = v1; v1 = v2; v2 = tmp; }
 
     FRect r = scaledRect(e.rect, xOffset, yOffset, s);
+
+    // PILOT-PHOTO-UV-1 diagnostic: full number dump for the pilot portrait
+    // element (red-striped-panel bug). Env-gated, one line per texture change.
+    if (getenv("MC2_LOG_PREVIEW") && e.key.find("this_rect_defines") != std::string::npos) {
+        static std::string s_lastDump;
+        if (s_lastDump != e.texturePath) {
+            s_lastDump = e.texturePath;
+            printf("[PHOTO] key=%s path='%s' node=%d gos=%u gl=%u texWH=%dx%d uvXYWH=%d,%d,%d,%d "
+                   "uv=(%.3f,%.3f)-(%.3f,%.3f) rect=(%.0f,%.0f %.0fx%.0f)\n",
+                e.key.c_str(), e.texturePath.c_str(), e.textureNode, e.gosTexture, glTexture,
+                e.textureWidth, e.textureHeight, e.uvX, e.uvY, e.uvW, e.uvH,
+                u1, v1, u2, v2, r.x, r.y, r.w, r.h);
+            fflush(stdout);
+        }
+    }
     // "contain" fit: scale the texture to fit inside the rect preserving aspect,
     // centered (letterboxed). Used by the personality portrait so off-aspect
     // images sit centered in their box instead of being stretched.
@@ -1745,6 +1780,15 @@ bool UiDefs::GameOSPage::setElementTexture(const std::string& key, const std::st
             if (e.texturePath != texturePath) {
                 e.texturePath = texturePath;
                 e.textureNodeAssigned = false;
+                // PILOT-PHOTO-UV-1: the fit-authored pixel sub-rect (uvX/Y/W/H)
+                // and cached texture size belong to the PREVIOUS texture. Left
+                // stale, a runtime swap (e.g. per-pilot portrait) crops the new
+                // texture with the old sheet's sub-rect -> striped garbage.
+                // Reset like setElementTextureNode does; ensureTexture re-derives
+                // size (and full-texture UV) for the new asset.
+                e.uvX = e.uvY = e.uvW = e.uvH = 0;
+                e.flipV = false;
+                e.textureWidth = e.textureHeight = 0;
             }
             return true;
         }
@@ -1816,7 +1860,8 @@ bool UiDefs::GameOSPage::setElementGosTexture(const std::string& key, unsigned i
 bool UiDefs::GameOSPage::setElementImageRegion(const std::string& key,
                                                const std::string& texturePath,
                                                int uvX, int uvY, int uvW, int uvH,
-                                               int dstX, int dstY, int dstW, int dstH)
+                                               int dstX, int dstY, int dstW, int dstH,
+                                               bool legacyUvSpace)
 {
     if (!isLoaded()) return false;
     for (UiElement& e : impl->elements) {
@@ -1825,6 +1870,8 @@ bool UiDefs::GameOSPage::setElementImageRegion(const std::string& key,
         // Runtime file-backed image with an explicit sub-rect (texel UVs) and a
         // destination rect -- e.g. the encyclopedia weapon icon, sized
         // cellW*48 x cellH*32 of its icon sheet, centered in the icon box.
+        // legacyUvSpace: uv coords are in the legacy size/uvScale addressing
+        // space (old setUVs math), not the logical PNG space (PILOT-PHOTO-UV-1).
         if (e.texturePath != texturePath) {
             e.texturePath = texturePath;
             e.textureNodeAssigned = false;        // force reload
@@ -1832,6 +1879,7 @@ bool UiDefs::GameOSPage::setElementImageRegion(const std::string& key,
             e.textureWidth = e.textureHeight = 0;  // re-query logical size on load
         }
         e.uvX = uvX; e.uvY = uvY; e.uvW = uvW; e.uvH = uvH;
+        e.uvLegacySpace = legacyUvSpace;
         e.flipV = false;
         e.rect = { dstX, dstY, dstW, dstH };
         return true;

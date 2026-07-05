@@ -76,7 +76,8 @@ public:
     // destination rect, for runtime-sized art like the encyclopedia weapon icon.
     bool setElementImageRegion(const std::string& key, const std::string& texturePath,
                                int uvX, int uvY, int uvW, int uvH,
-                               int dstX, int dstY, int dstW, int dstH);
+                               int dstX, int dstY, int dstW, int dstH,
+                               bool legacyUvSpace = false);
 
     void update(LogisticsScreen* target, int xOffset = 0, int yOffset = 0);
     void render(int xOffset = 0, int yOffset = 0);

@@ -233,20 +233,11 @@ void MissionResults::update()
 
 void MissionResults::render()
 {
-	// MECH-ICON-BLANK-1: full gui bridge for the whole after-action stack
-	// (salvage list, pilot review, MP stats) — same fix as the Mech Bay
-	// deployment icons: with the defs replacement page active, legacy
-	// gos_DrawQuads are buried under the ImGui page. The gui bridge also
-	// routes text (aText falls back to the gui-bridge scales), so widget
-	// quads AND labels land on the ImGui HUD layer at display scale.
-	float tbDw = 0.f, tbDh = 0.f, tbSx = 1.f, tbSy = 1.f;
-	if ( GuiRuntime::GetDisplaySize( tbDw, tbDh ) &&
-		 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
-	{
-		tbSx = tbDw / (float)Environment.screenWidth;
-		tbSy = tbDh / (float)Environment.screenHeight;
-	}
-	aObject::beginGuiBridge( tbSx, tbSy );
+	// NOTE (MECH-ICON-BLANK-1): do NOT blanket-wrap this stack in the gui
+	// bridge — tried 2026-07-04 and it mixed scale spaces (bridged widgets vs
+	// non-aObject legacy draws), compressing the salvage/promotion layout.
+	// The after-action screens need a per-widget bridge pass with harness
+	// captures, as their own slice.
 
 	if ( MPlayer )
 	{
@@ -267,8 +258,6 @@ void MissionResults::render()
 
 	if ( pPilotScreen && bPilotStarted )
 		pPilotScreen->render();
-
-	aObject::endGuiBridge();
 }
 
 void MissionResults::setHostLeftDlg( const char* pName )

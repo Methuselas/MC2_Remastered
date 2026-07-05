@@ -1111,10 +1111,11 @@ bool LogisticsScreen::setDefsElementGosTexture(const std::string& key, unsigned 
 }
 
 bool LogisticsScreen::setDefsElementImageRegion(const std::string& key, const std::string& texturePath,
-	int uvX, int uvY, int uvW, int uvH, int dstX, int dstY, int dstW, int dstH)
+	int uvX, int uvY, int uvW, int uvH, int dstX, int dstY, int dstW, int dstH,
+	bool legacyUvSpace)
 {
 	if (!defsUiPage || !defsUiPage->isLoaded()) return false;
-	return defsUiPage->setElementImageRegion(key, texturePath, uvX, uvY, uvW, uvH, dstX, dstY, dstW, dstH);
+	return defsUiPage->setElementImageRegion(key, texturePath, uvX, uvY, uvW, uvH, dstX, dstY, dstW, dstH, legacyUvSpace);
 }
 
 

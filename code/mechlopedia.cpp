@@ -256,7 +256,17 @@ void Mechlopedia::syncEntityList()
 		aTextListItem* pItem = (aTextListItem*)listBox.GetItem( i );
 		if ( pItem ) items.push_back( pItem->getText() );
 	}
-	setDefsListItems( "game.mcl_en.list.entity_selection", items );
+	const bool ok = setDefsListItems( "game.mcl_en.list.entity_selection", items );
+
+	// ENCYCLO-LIST-1 diagnostic: the list can be empty for two very different
+	// reasons — legacy listBox never populated (data side) vs the defs GuiList
+	// key not found (mirror side). Log both counts to tell them apart.
+	if ( getenv("MC2_LOG_PREVIEW") )
+	{
+		printf("[ENCYCLO] syncEntityList screen=%ld legacyItems=%d mirrorOk=%d\n",
+			currentScreen, (int)items.size(), (int)ok);
+		fflush(stdout);
+	}
 
 	int sel = listBox.GetSelectedItem();
 	setDefsListSelection( "game.mcl_en.list.entity_selection", sel >= 0 ? sel : 0 );

@@ -806,9 +806,12 @@ void PilotReadyScreen::setPilot( LogisticsPilot* pPilot )
 		statics[67].setUVs( 0, 0, 92, 128 );
 		// Route the per-pilot portrait TGA into the defs image (the legacy static is
 		// suppressed by the defs page).  Same pattern as the encyclopedia personnel
-		// picture.
-		setDefsElementTexture( "game.mcl_pr_layout.image.this_rect_defines_the_placement",
-			std::string( (const char*)str ) );
+		// picture. PILOT-PHOTO-UV-1: the photo is a 92x128 crop inside a padded
+		// (colorkeyed) texture -- pass the sub-rect explicitly, mirroring the
+		// legacy statics[67].setUVs(0,0,92,128); dst = the fit-authored rect.
+		setDefsElementImageRegion( "game.mcl_pr_layout.image.this_rect_defines_the_placement",
+			std::string( (const char*)str ), 0, 0, 92, 128, 398, 344, 92, 128,
+			/*legacyUvSpace*/ true );
 	}
 
 	// update pilot specific stuff

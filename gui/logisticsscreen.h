@@ -137,7 +137,8 @@ class LogisticsScreen : public aObject
 
 	// File-backed image with explicit texel sub-rect + destination rect (weapon icon).
 	bool setDefsElementImageRegion(const std::string& key, const std::string& texturePath,
-		int uvX, int uvY, int uvW, int uvH, int dstX, int dstY, int dstW, int dstH);
+		int uvX, int uvY, int uvW, int uvH, int dstX, int dstY, int dstW, int dstH,
+		bool legacyUvSpace = false);
 
 	long getStatus();
 
