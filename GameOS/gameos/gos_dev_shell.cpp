@@ -23,6 +23,7 @@
 #include "gos_frame_pass_stats.h"
 #include "gos_render_pass_timer.h"
 #include "RenderCore/RenderPassContract.h"
+#include "../../mclib/txmmgr.h"  // texture_refresh: mcTextureManager->refreshTexturesByName
 
 namespace gos_dev_shell {
 
@@ -300,6 +301,27 @@ std::string cmdSetGate(const std::string& req)
           " init-read gates (static const reads) require restart\"}");
 }
 
+// Live .tga reload: txmmgr caches textures by filename, so an edited loose
+// .tga is invisible until restart. params {"name":substring} re-reads the
+// source file from disk for every texture node whose name contains the
+// substring (case-insensitive), replaces the system-RAM copy via the SAME
+// read/compress path loadTexture used, and destroys the resident GL texture
+// so the next use re-uploads fresh pixels. Node indices stay stable (widgets
+// hold node ids). FST-only textures (no loose file) are skipped and counted.
+// Runs at the main-thread poll point = the GL thread, so destroy is safe.
+std::string cmdTextureRefresh(const std::string& req)
+{
+    const std::string name = jsonGetString(req, "name");
+    if (name.empty()) return makeReply(false, "texture_refresh: missing name (substring of texture path)", "");
+    if (!mcTextureManager) return makeReply(false, "texture_refresh: texture manager not initialized yet", "");
+    long skippedNoFile = 0;
+    const long refreshed = mcTextureManager->refreshTexturesByName(name.c_str(), skippedNoFile);
+    return makeReply(true, "",
+        "{\"refreshed\":" + std::to_string(refreshed)
+        + ",\"skipped_no_file\":" + std::to_string(skippedNoFile)
+        + ",\"note\":\"skipped = matching nodes with no loose disk file (FST-only)\"}");
+}
+
 // The frame graph, made visible. Composes ONLY existing observe-only data:
 // the descriptive pass-contract table (declared reads/writes/order), edges
 // derived producer->consumer from those declarations, and last-frame runtime
@@ -431,6 +453,7 @@ std::string dispatch(const std::string& req, uint32_t frame, bool* quitOut)
     if (type == "screenshot")      return cmdScreenshot(req, frame);
     if (type == "last_screenshot") return cmdLastScreenshot();
     if (type == "framegraph")      return cmdFramegraph(req);
+    if (type == "texture_refresh") return cmdTextureRefresh(req);
     if (type == "get_gate")        return cmdGetGate(req);
     if (type == "set_gate")        return cmdSetGate(req);
     if (type == "quit") { *quitOut = true; return makeReply(true, "", "{\"quitting\":true}"); }
