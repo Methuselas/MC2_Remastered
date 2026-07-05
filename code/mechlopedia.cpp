@@ -12,6 +12,8 @@ Mechlopedia.cpp			: Implementation of the Mechlopedia component.
 #include"mclib.h"
 #include"logisticsdata.h"
 #include"mission.h"   // ENCYCLO-LAZYLOAD-1: initTGLForLogistics
+#include <cstdlib>    // ENCYCLO-3D-2: std::getenv (boot-tab harness target)
+#include"platform_str.h"   // S_stricmp (encyclopedia_<tab> parse)
 #include"../resource.h"
 #include"prefs.h"
 #include"cmponent.h"
@@ -297,7 +299,24 @@ void Mechlopedia::begin()
 	beginFadeIn( 2.0f );
 	status = RUNNING;
 
-	if ( !currentScreen )
+	// MC2_BOOT_TO_SCREEN=encyclopedia_<tab> harness sub-target: land on a
+	// specific encyclopedia tab with no clicks (weapons/vehicles/buildings).
+	long bootTab = 0;
+	if ( const char* scr = std::getenv("MC2_BOOT_TO_SCREEN") )
+	{
+		if      ( !S_stricmp(scr, "encyclopedia_vehicles") )  bootTab = ENCYCLO_VEHIC;
+		else if ( !S_stricmp(scr, "encyclopedia_buildings") ) bootTab = ENCYCLO_BUILD;
+		else if ( !S_stricmp(scr, "encyclopedia_weapons") )   bootTab = ENCYCLO_WEAPONS;
+		else if ( !S_stricmp(scr, "encyclopedia_pilots") )    bootTab = ENCYCLO_PILOTS;
+	}
+
+	if ( bootTab )
+	{
+		getButton( bootTab )->press( true );
+		handleMessage( 0, bootTab );
+		listBox.setScrollPos( 0 );
+	}
+	else if ( !currentScreen )
 	{
 		getButton( ENCYCLO_MECHS )->press( true );
 		handleMessage( 0, ENCYCLO_MECHS );
@@ -965,12 +984,18 @@ void Mechlopedia::WeaponScreen::render()
 	}
 	else
 	{
-		// PREVIEW-FBO-FIXED-800x600-1: no Gui3DView block in mcl_en_wep.fit --
-		// weapons have no 3D preview panel in the defs page, so there's nothing
-		// to composite an offscreen render into. Leave setPreviewOffscreen
-		// false/default and draw directly, same as the legacy path (harmless
-		// either way since nothing shows it in defs mode).
+		// ENCYCLO-3D-2: the defs page DOES carry the weapon preview slot — as a
+		// GuiImage ("...image.rotating_view_of_weapon_is_centered_here"), not a
+		// Gui3DView, which is why the old "no 3D panel, draw directly" branch
+		// never showed anything (the direct 800x600-space draw lands wrong at
+		// real resolutions). Same fixed-800x600-FBO + composite as MechScreen/
+		// BuildingScreen; getElementScreenRect returns the true screen rect at
+		// any resolution.
+		camera.setPreviewOffscreen( true );
 		camera.render();
+		float px = 0, py = 0, pw = 0, ph = 0;
+		if ( getDefsElementScreenRect( "game.mcl_en_wep.image.rotating_view_of_weapon_is_centered_here", px, py, pw, ph ) )
+			camera.drawPreviewToPanel( px, py, pw, ph );
 	}
 	LogisticsScreen::render( 285, 58 );
 }

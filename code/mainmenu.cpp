@@ -461,7 +461,9 @@ void MainMenu::update()
 	{
 		static bool s_bootToEncycloFired = false;
 		const char* bootScr = std::getenv("MC2_BOOT_TO_SCREEN");
-		if ( !s_bootToEncycloFired && bootScr && !S_stricmp(bootScr, "encyclopedia")
+		// prefix match: "encyclopedia" or "encyclopedia_<tab>" (tab handled in
+		// Mechlopedia::begin)
+		if ( !s_bootToEncycloFired && bootScr && !S_strnicmp(bootScr, "encyclopedia", 12)
 			&& !std::getenv("MC2_BOOT_TO_BAY") && !introMovie )
 		{
 			s_bootToEncycloFired = true;
