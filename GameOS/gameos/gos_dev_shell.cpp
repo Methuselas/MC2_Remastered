@@ -123,6 +123,7 @@ bool s_initOk = false;
 
 // pending screenshot (set by command, consumed at the post-render hook)
 std::string s_pendingShotPath;
+bool s_pendingShotBackbuffer = false;  // front-end/menu screens draw to FBO 0, not sceneFBO
 std::string s_lastShotResult;  // "" until first capture; then "wrote <path>" / error
 
 void closeClient()
@@ -238,6 +239,9 @@ std::string cmdScreenshot(const std::string& req, uint32_t frame)
         return makeReply(false, "screenshot already pending: " + s_pendingShotPath, "");
     CreateDirectoryA("dev_shell_out", nullptr);  // ok if it already exists
     s_pendingShotPath = sanitizeShotName(jsonGetString(req, "name"), frame);
+    // source=backbuffer for front-end/menu screens (they never touch sceneFBO).
+    // Caveat: FBO 0 reads black while the window is minimized.
+    s_pendingShotBackbuffer = (jsonGetString(req, "source") == "backbuffer");
     return makeReply(true, "",
         "{\"scheduled\":true,\"path\":\"" + jsonEscape(s_pendingShotPath)
         + "\",\"note\":\"captured at end of current frame; poll last_screenshot to confirm\"}");
@@ -347,18 +351,32 @@ void capturePendingScreenshot(uint32_t frame)
     const std::string path = s_pendingShotPath;
     s_pendingShotPath.clear();
 
-    // Same source as [SCREENSHOT v1]: the offscreen post-process scene FBO,
-    // not backbuffer FBO 0 (which reads black when the window is minimized).
-    gosPostProcess* pp = getGosPostProcess();
-    const GLuint fbo = pp ? pp->getSceneFBO() : 0;
-    const int w = pp ? pp->getWidth() : 0;
-    const int h = pp ? pp->getHeight() : 0;
-    if (!fbo || w <= 0 || h <= 0) {
-        s_lastShotResult = "failed: scene FBO unavailable";
+    // Default source, same as [SCREENSHOT v1]: the offscreen post-process
+    // scene FBO — correct for missions, black for front-end/menu screens
+    // (those draw directly to FBO 0; use source=backbuffer for them).
+    GLuint fbo = 0;
+    int w = 0, h = 0;
+    if (s_pendingShotBackbuffer) {
+        GLint vp[4] = {};
+        glGetIntegerv(GL_VIEWPORT, vp);
+        w = vp[2];
+        h = vp[3];
+    } else {
+        gosPostProcess* pp = getGosPostProcess();
+        fbo = pp ? pp->getSceneFBO() : 0;
+        w = pp ? pp->getWidth() : 0;
+        h = pp ? pp->getHeight() : 0;
+        if (!fbo) {
+            s_lastShotResult = "failed: scene FBO unavailable (try source=backbuffer)";
+            return;
+        }
+    }
+    if (w <= 0 || h <= 0) {
+        s_lastShotResult = "failed: zero-size capture source";
         return;
     }
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
-    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glReadBuffer(s_pendingShotBackbuffer ? GL_BACK : GL_COLOR_ATTACHMENT0);
     const bool ok = gos::screenshot::writeTGA(path.c_str(), w, h);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     s_lastShotResult = ok
