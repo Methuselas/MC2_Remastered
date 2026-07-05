@@ -49,13 +49,6 @@ public:
 	static void			changeRes();
 	bool				waitForResChange;
 	bool				bFirstTime;
-	// LOAD-BANNER-RESIDUE-2: explicit enter->exit handoff. The legacy branch
-	// keyed on Environment.screenWidth==800, a tuned-resolution discriminator
-	// the HUD-RES clamp breaks (Environment stays 800 forever), so the EXIT
-	// screen never took over and the enter screen's end-pose art (the blue
-	// logo/hourglass banner) kept rendering through the load and over the
-	// first mission frames.
-	bool				bEnteredLoad;
 };
 
 
