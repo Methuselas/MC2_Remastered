@@ -19,6 +19,13 @@ preview FBO (drawOldWay force), 4x supersample, bay/pilot icon bridge (beginGuiB
 6. **Ultrawide #45** — after #2 lands, most of it IS #2. Verify in-mission camera aspect uses drawable (not clamped Environment) at 32:9 sim.
 7. **MERGE-CONFLICT-UI-PHASE1 markers** — grep; GuiRuntime editor-init + tgl.cpp GPU-shape branches.
 
+## 2026-07-05 PM session additions (aspect/resize arc — agent-verified except where noted)
+
+- **Field fixes from user 25:9 test `9bad5123`**: pause-menu clicks (pausewindow → getMouseHudX/Y), canvas-exempt partition (`gos_SetHudCanvasExemptMode`: cursor/dialogs/world-overlays full-surface, forcegroupbar remaps), **native camera aspect** (`MC2_CAMERA_ASPECT_NATIVE`, drawable ratio in perspective frustum — cures the 25:9 squash AND the 16:9 fat-stretch; preview FBO keeps 4:3 via g_mechPreviewRenderDepth guard), FADE-RECT-DISPLAY-1 (fades were 800x600 DISPLAY px = corner dim; now GetDisplaySize). ★Dim-corner false-blame lesson: two spaced screenshots proved fade transient, camera gate was timing noise.
+- **FREE-RESIZE-1 `3ae18fda` (the meta-fix)**: MC2_WINDOWED window is SDL_WINDOW_RESIZABLE (MC2_WINDOW_RESIZABLE=0 off); SIZE_CHANGED → refresh Environment.drawable + GuiRuntime::NotifyResize; ALL consumers re-derive per frame (pp->resize, canvas box, mouse, camera). Drag any shape → works. Verified via external SetWindowPos incl odd 2437x917. Screenshot shear at odd widths fixed (GL_PACK_ALIGNMENT=1 in gos_screenshot).
+- Smoke mc2_01 PASS on this exe (79fps, world overlays aligned, correct mech proportions at 4K). In-mission HUD chrome at wide aspect + click-through still needs USER eyes.
+- Verify recipe additions: `run_smoke.py --exe <deploy>/mc2.exe --mission mc2_01` + `MC2_SCREENSHOT_AT_FRAME/PATH` for in-mission frames; desktop `CopyFromScreen` via powershell for live-window ground truth.
+
 ## NIFTY side (worktree .claude/worktrees/nifty-mendeleev)
 - DEV-SHELL complete (docs/dev-shell.md = playbook; ping/reload_shaders/screenshot/ui_reload/texture_refresh/framegraph). GAMEOS-SPLIT plan at docs/splits/gameos-graphics-split-1-plan.md — execute slice 1 (gosFont) when worktree free.
 
