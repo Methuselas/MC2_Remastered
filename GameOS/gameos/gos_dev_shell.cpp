@@ -19,6 +19,9 @@
 #include "utils/graphics.h"
 #include "gos_screenshot.h"
 #include "gos_postprocess.h"
+#include "gos_frame_pass_stats.h"
+#include "gos_render_pass_timer.h"
+#include "RenderCore/RenderPassContract.h"
 
 namespace gos_dev_shell {
 
@@ -283,6 +286,128 @@ std::string cmdSetGate(const std::string& req)
           " init-read gates (static const reads) require restart\"}");
 }
 
+// The frame graph, made visible. Composes ONLY existing observe-only data:
+// the descriptive pass-contract table (declared reads/writes/order), edges
+// derived producer->consumer from those declarations, and last-frame runtime
+// rows (GL state + draw counts from gos_frame_pass_stats, GPU ms from
+// gos_render_pass_timer). params {"collect":true|false} flips both runtime
+// collectors' in-process flags (same mechanism as the editor Frame Inspector)
+// so live data flows without an env-var restart — call with collect:true,
+// wait a frame or two, call again to read populated rows.
+std::string cmdFramegraph(const std::string& req)
+{
+    using namespace RenderCore;
+
+    const std::string collect = jsonGetString(req, "collect");
+    if (collect == "true" || collect == "1") {
+        gos_frame_pass_stats::SetCollect(true);
+        gos_render_pass_timer::SetCollect(true);
+    } else if (collect == "false" || collect == "0") {
+        gos_frame_pass_stats::SetCollect(false);
+        gos_render_pass_timer::SetCollect(false);
+    }
+
+    auto contractFor = [](RenderPassId id) -> const RenderPassContract* {
+        for (const auto& c : kRenderPassContracts)
+            if (c.id == id) return &c;
+        return nullptr;
+    };
+    auto resList = [](const RenderResourceId* rs) {
+        std::string out = "[";
+        for (int i = 0; i < 4 && rs[i] != RenderResourceId::Unknown; ++i) {
+            if (i) out += ',';
+            out += '"';
+            out += toString(rs[i]);
+            out += '"';
+        }
+        out += ']';
+        return out;
+    };
+
+    // Logical passes in dependency order, with declared resources.
+    std::string passes = "[";
+    for (int i = 0; i < kFramePassOrderCount; ++i) {
+        const RenderPassContract* c = contractFor(kFramePassOrder[i]);
+        if (!c) continue;
+        if (passes.size() > 1) passes += ',';
+        passes += "{\"name\":\"" + jsonEscape(c->name)
+            + "\",\"owner\":\"" + jsonEscape(c->ownerSubsystem)
+            + "\",\"kill_switch\":" + (c->killSwitchEnv
+                ? "\"" + jsonEscape(c->killSwitchEnv) + "\"" : "null")
+            + ",\"reads\":" + resList(c->reads)
+            + ",\"writes\":" + resList(c->writes) + "}";
+    }
+    passes += ']';
+
+    // Edges: for each consumer's read, the LATEST earlier pass writing that
+    // resource in kFramePassOrder is the producer (same derivation the pass-
+    // table harness uses — edges are never stored, only derived).
+    std::string edges = "[";
+    for (int j = 0; j < kFramePassOrderCount; ++j) {
+        const RenderPassContract* consumer = contractFor(kFramePassOrder[j]);
+        if (!consumer) continue;
+        for (int r = 0; r < 4 && consumer->reads[r] != RenderResourceId::Unknown; ++r) {
+            const RenderPassContract* producer = nullptr;
+            for (int i = 0; i < j; ++i) {
+                const RenderPassContract* p = contractFor(kFramePassOrder[i]);
+                if (!p) continue;
+                for (int w = 0; w < 4 && p->writes[w] != RenderResourceId::Unknown; ++w)
+                    if (p->writes[w] == consumer->reads[r]) producer = p;
+            }
+            if (!producer) continue;
+            if (edges.size() > 1) edges += ',';
+            edges += "{\"from\":\"" + jsonEscape(producer->name)
+                + "\",\"to\":\"" + jsonEscape(consumer->name)
+                + "\",\"resource\":\"" + std::string(toString(consumer->reads[r])) + "\"}";
+        }
+    }
+    edges += ']';
+
+    // Runtime rows, last completed frame (13 coarse timer passes; zeroed when
+    // the collectors are off — "ran":false everywhere means enable collect).
+    std::string runtime = "[";
+    for (int i = 0; i < gos_frame_pass_stats::PassCount(); ++i) {
+        const auto& row = gos_frame_pass_stats::GetPassRow(i);
+        const auto tp = static_cast<gos_render_pass_timer::Pass>(i);
+        if (i) runtime += ',';
+        char buf[320];
+        snprintf(buf, sizeof(buf),
+            "{\"pass\":\"%s\",\"ran\":%s,\"fbo\":%u,"
+            "\"viewport\":[%d,%d,%d,%d],"
+            "\"depthTest\":%s,\"depthMask\":%s,\"blend\":%s,\"cull\":%s,"
+            "\"drawCount\":%u,\"instanceCount\":%u,"
+            "\"gpu_ms\":%.3f,\"gpu_sampled\":%s}",
+            gos_frame_pass_stats::PassKey(i),
+            row.ran ? "true" : "false", row.fbo,
+            row.viewport[0], row.viewport[1], row.viewport[2], row.viewport[3],
+            row.depthTest ? "true" : "false", row.depthMask ? "true" : "false",
+            row.blend ? "true" : "false", row.cull ? "true" : "false",
+            row.drawCount, row.instanceCount,
+            gos_render_pass_timer::LastMs(tp),
+            gos_render_pass_timer::HasSample(tp) ? "true" : "false");
+        runtime += buf;
+    }
+    runtime += ']';
+
+    const auto& agg = gos_frame_pass_stats::GetFrameAggregates();
+    char aggBuf[192];
+    snprintf(aggBuf, sizeof(aggBuf),
+        "{\"visibleTerrainChunks\":%u,\"staticPropBatches\":%u,"
+        "\"mechBatchInstances\":%u,\"vfxCount\":%u}",
+        agg.visibleTerrainChunks, agg.staticPropBatches,
+        agg.mechBatchInstances, agg.vfxCount);
+
+    std::string data = "{\"collectors\":{\"pass_stats\":";
+    data += gos_frame_pass_stats::Enabled() ? "true" : "false";
+    data += ",\"pass_time\":";
+    data += gos_render_pass_timer::Enabled() ? "true" : "false";
+    data += "},\"passes\":" + passes
+        + ",\"edges\":" + edges
+        + ",\"runtime\":" + runtime
+        + ",\"aggregates\":" + std::string(aggBuf) + "}";
+    return makeReply(true, "", data);
+}
+
 // Dispatch one complete request line -> reply string. `quitOut` set on "quit".
 std::string dispatch(const std::string& req, uint32_t frame, bool* quitOut)
 {
@@ -291,6 +416,7 @@ std::string dispatch(const std::string& req, uint32_t frame, bool* quitOut)
     if (type == "reload_shaders")  return cmdReloadShaders(req);
     if (type == "screenshot")      return cmdScreenshot(req, frame);
     if (type == "last_screenshot") return cmdLastScreenshot();
+    if (type == "framegraph")      return cmdFramegraph(req);
     if (type == "get_gate")        return cmdGetGate(req);
     if (type == "set_gate")        return cmdSetGate(req);
     if (type == "quit") { *quitOut = true; return makeReply(true, "", "{\"quitting\":true}"); }
