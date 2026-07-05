@@ -49,6 +49,13 @@ preview FBO (drawOldWay force), 4x supersample, bay/pilot icon bridge (beginGuiB
 
 "It works fine on just legacy" = the triage question for every new UI bug. If a screen regressed WITH the ImGui merge, do NOT chase defs-page symptoms — pin the page to legacy in `UiDefs::replacementPathForLegacyFit` (one blocklist site, env opt-in per page for authoring). Applied: `mcui_mr_layout` (AAR, MC2_UI_DEFS_RESULTS=1) + `mcl_loadingscreen*` (`aae900f8`, MC2_UI_DEFS_LOADSCREEN=1 — was BOTH the top-left-shifted doors AND the residual logo/hourglass banner; LOAD-BANNER-RESIDUE-2 enter/exit handoff REVERTED `10b31800`, enter screen owns the legacy sequence). Legacy screens are canvas-anchored first-class citizens now, so pinned screens look right at any aspect. Agent-verified: centered doors + LOADING text + no banner.
 
+## LOOSE ENDS CLOSED (2026-07-05 late)
+
+- Canvas-aware bridges everywhere: `aObject::getCanvasTransform` = THE transform helper; all tbSx full-stretch sites migrated (bay/pilotready/mechlab/purchase/mp*/salvage/briefing); textBridge grew pad offsets. 16:9 identity bay-verified.
+- Mouse sweep: formation line = only raw-mouse chrome, correct by design (world-space + canvas-exempt).
+- tgl.cpp:165 deferral RESOLVED (flip motivation moot — previews fixed via FBO composite); tgl.cpp:3078 hardware-shape emission port still deliberately deferred (needs PBR-field-aware port, documented in place).
+- REMAINING for modder: PNG/magenta transparency, Viewer, UI-Editor->GOS hookup, authoring the pinned pages (results/loadscreen).
+
 ## NIFTY side (worktree .claude/worktrees/nifty-mendeleev)
 - DEV-SHELL complete (docs/dev-shell.md = playbook; ping/reload_shaders/screenshot/ui_reload/texture_refresh/framegraph). GAMEOS-SPLIT plan at docs/splits/gameos-graphics-split-1-plan.md — execute slice 1 (gosFont) when worktree free.
 
