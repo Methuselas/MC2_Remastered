@@ -5839,6 +5839,13 @@ void gosRenderer::beginFrame()
         SPEW(("GRAPHICS", "[HUD] gos_State_IsHUD still set at frame start -- callsite leak\n"));
         renderStates_[gos_State_IsHUD] = 0;
     }
+    // HUD-SCALE-EXEMPT-LEAK-1: same hygiene for the scale-exempt bracket. The
+    // cursor's z-order fix re-issues userInput->render() as a PostImGuiRender
+    // callback, which runs AFTER flushHUDBatch's end-of-flush exempt reset —
+    // its gos_SetHudScaleExempt(true) then leaked into the whole NEXT frame's
+    // HUD recording, tagging every call exempt and silently no-opping the 85%
+    // HUD shrink (observed: [HUDSCALE] apply skipExempt=100 scaled=0).
+    s_hud_scale_exempt = false;
     hudBatch_.clear();
     hudFlushed_ = false;
     glBindVertexArray(gVAO);
@@ -7759,13 +7766,27 @@ void gosRenderer::flushHUDBatch()
     // iteration; later attempts at max-Y gating / shrink-in-place broke more
     // than they fixed (touched scene/overlay draws, pulled tall panels out
     // of their corners, etc.).
+    // HUD-SCALE-SPACE-1: env override for harness A/B (MC2_HUD_SCALE=0.4 etc.);
+    // read once, wins over the default until the ImGui slider changes it.
+    {
+        static bool s_envScaleDone = false;
+        if (!s_envScaleDone) {
+            s_envScaleDone = true;
+            if (const char* e = getenv("MC2_HUD_SCALE")) {
+                const float v = (float)atof(e);
+                if (v >= 0.2f && v <= 1.0f) s_hud_scale = v;
+            }
+        }
+    }
     const float scale = s_hud_scale;
     // HUD-SCALE-SPACE-1 diagnostic: which coordinate space are the batched HUD
     // verts in vs the band test (width_/height_ = real drawable)? One line per
     // 300 flushes under MC2_LOG_PREVIEW.
     if (getenv("MC2_LOG_PREVIEW")) {
         static int s_hudDiagTick = 0;
-        if ((s_hudDiagTick++ % 300) == 0 && !hudBatch_.empty()) {
+        // Sample every flush while the shrink is supposed to be active (mission),
+        // every 300th otherwise — the earlier cadence missed the mission window.
+        if ((s_hud_scale_active || (s_hudDiagTick++ % 300) == 0) && !hudBatch_.empty()) {
             float ymin = 1e9f, ymax = -1e9f, xmax = -1e9f;
             size_t nv = 0;
             for (const HudDrawCall& c : hudBatch_)
@@ -7775,11 +7796,13 @@ void gosRenderer::flushHUDBatch()
                     if (v.x > xmax) xmax = v.x;
                     ++nv;
                 }
-            printf("[HUDSCALE] active=%d scale=%.2f rendererWH=%dx%d batch=%zu verts=%zu "
-                   "vertY=[%.0f..%.0f] vertXmax=%.0f band=%.0f\n",
-                (int)s_hud_scale_active, scale, width_, height_,
-                hudBatch_.size(), nv, ymin, ymax, xmax, (float)height_ * 0.60f);
-            fflush(stdout);
+            if (FILE* hf = fopen("preview_debug.log", "a")) {
+                fprintf(hf,"[HUDSCALE] active=%d scale=%.2f rendererWH=%dx%d batch=%zu verts=%zu "
+                       "vertY=[%.0f..%.0f] vertXmax=%.0f band=%.0f\n",
+                    (int)s_hud_scale_active, scale, width_, height_,
+                    hudBatch_.size(), nv, ymin, ymax, xmax, (float)height_ * 0.60f);
+                fclose(hf);
+            }
         }
     }
     if (s_hud_scale_active && scale < 0.999f) {
@@ -7794,16 +7817,31 @@ void gosRenderer::flushHUDBatch()
         const float bottomBand = sh * 0.60f;
         const float ax = sw * 0.5f;
         const float ay = sh;
+        int scaled = 0, skippedBand = 0, skippedExempt = 0;
         for (HudDrawCall& call : hudBatch_) {
             if (call.vertices.empty()) continue;
-            if (call.scaleExempt) continue;   // cursor + modal dialogs: never shrink
+            if (call.scaleExempt) { ++skippedExempt; continue; }   // cursor + modal dialogs: never shrink
             float cy = 0.0f;
             for (const gos_VERTEX& v : call.vertices) cy += v.y;
             cy /= (float)call.vertices.size();
-            if (cy < bottomBand) continue;
+            if (cy < bottomBand) { ++skippedBand; continue; }
+            ++scaled;
             for (gos_VERTEX& v : call.vertices) {
                 v.x = ax + (v.x - ax) * scale;
                 v.y = ay + (v.y - ay) * scale;
+            }
+        }
+        if (getenv("MC2_LOG_PREVIEW")) {
+            static int s_hudApplyTick = 0;
+            if ((s_hudApplyTick++ % 60) == 0) {
+                float sampleY = -1.f;
+                for (const HudDrawCall& c : hudBatch_)
+                    if (!c.vertices.empty() && !c.scaleExempt) { sampleY = c.vertices[0].y; break; }
+                if (FILE* hf = fopen("preview_debug.log", "a")) {
+                    fprintf(hf,"[HUDSCALE] apply sw=%.0f sh=%.0f band=%.0f scaled=%d skipBand=%d skipExempt=%d firstVertYafter=%.0f\n",
+                        sw, sh, bottomBand, scaled, skippedBand, skippedExempt, sampleY);
+                    fclose(hf);
+                }
             }
         }
     }
