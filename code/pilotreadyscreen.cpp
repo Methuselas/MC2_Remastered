@@ -301,11 +301,17 @@ void PilotReadyScreen::render(int xOffset, int yOffset )
 	}
 
 	// Pilot names get a slight font boost (1.3x) so they read larger in the list.
+	// MECH-ICON-BLANK-1: full gui bridge (quads too, not just text) — same fix as
+	// the Mech Bay deployment icons: with the defs replacement page active, legacy
+	// gos_DrawQuads are buried under the ImGui page, so pilot photos/icons in the
+	// list must draw on the ImGui HUD layer at display scale.
+	aObject::beginGuiBridge( tbSx, tbSy );
 	aObject::beginTextBridge( tbSx, tbSy, 1.3f );
 	pilotListBox.move( xOffset, yOffset );
 	pilotListBox.render();
 	pilotListBox.move( -xOffset, -yOffset );
 	aObject::endTextBridge();
+	aObject::endGuiBridge();
 
 
 	if ( !xOffset && !yOffset )
@@ -322,7 +328,8 @@ void PilotReadyScreen::render(int xOffset, int yOffset )
 		attributeMeters[i].render( xOffset, yOffset );
 	}
 
-
+	// MECH-ICON-BLANK-1: rank/skill/medal icons are textured quads too.
+	aObject::beginGuiBridge( tbSx, tbSy );
 	if ( pCurPilot )
 		rankIcons[pCurPilot->getRank()].render(xOffset, yOffset);
 
@@ -332,15 +339,19 @@ void PilotReadyScreen::render(int xOffset, int yOffset )
 
 	for (int i = 0; i < MAX_MEDAL; i++ )
 		medalIcons[i].render(xOffset, yOffset);
+	aObject::endGuiBridge();
 
 
 	LogisticsScreen::render( xOffset, yOffset );
+	// MECH-ICON-BLANK-1: deployment-slot mech icons + pilot photos (same as bay).
+	aObject::beginGuiBridge( tbSx, tbSy );
 	aObject::beginTextBridge( tbSx, tbSy );
 	for (int i = 0; i < ICON_COUNT; i++ )
 	{
 		pIcons[i].render( xOffset, yOffset );
 	}
 	aObject::endTextBridge();
+	aObject::endGuiBridge();
 
 
 	if ( mechSelected )
@@ -348,10 +359,13 @@ void PilotReadyScreen::render(int xOffset, int yOffset )
 		// hack, cover up pilot stuff.
 		GUI_RECT rect = { 77 + xOffset, 317 + yOffset, 720+ xOffset, 515 + yOffset };
 		drawRect( rect, 0xff000000 );
+		// MECH-ICON-BLANK-1: mech display widgets on the ImGui HUD layer too.
+		aObject::beginGuiBridge( tbSx, tbSy );
 		mechDisplay.render( xOffset, yOffset );
 		// hack, cover up list box overrruns.
 		statics[27].render( xOffset, yOffset );
 		statics[28].render( xOffset, yOffset );
+		aObject::endGuiBridge();
 	}
 
 	if ( launchFadeTime )
