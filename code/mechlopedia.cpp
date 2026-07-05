@@ -132,6 +132,19 @@ static bool mc2IsUndefinedName( const char* n )
 	return !n || !n[0] || S_stricmp( n, "undefined" ) == 0;
 }
 
+// ENCYCLO-UNDEFINED-FILTER-2: mod content can carry a VALID display name but a
+// placeholder encyclopedia entry — the description string resolves to
+// "undefined". Hide those rows too (a list entry whose page is just
+// "undefined" is noise). Resolves the id through the same cLoadString path
+// the detail page uses.
+static bool mc2IsUndefinedDescription( int descID )
+{
+	char desc[256];
+	desc[0] = 0;
+	cLoadString( descID, desc, 255 );
+	return mc2IsUndefinedName( desc );
+}
+
 int			Mechlopedia::handleMessage( unsigned long, unsigned long who)
 {
 	// unpress all the others
@@ -427,6 +440,7 @@ void Mechlopedia::MechScreen::begin()
 			char name[256];
 			cLoadString( pVehicles[i]->getNameID(), name, 255 );
 			if ( mc2IsUndefinedName( name ) ) continue;
+			if ( mc2IsUndefinedDescription( pVehicles[i]->getEncyclopediaID() ) ) continue;   // ENCYCLO-UNDEFINED-FILTER-2
 			EString text = name;
 			text.MakeUpper();
 			pEntry->setText( text );
@@ -449,6 +463,7 @@ void Mechlopedia::MechScreen::begin()
 		for (int i = 0; i < copterCount; i++ )
 		{
 			if ( mc2IsUndefinedName( pCopters[i]->getName() ) ) continue;
+			if ( mc2IsUndefinedDescription( pCopters[i]->getEncyclopediaID() ) ) continue;   // ENCYCLO-UNDEFINED-FILTER-2
 			MechlopediaListItem* pEntry = new MechlopediaListItem();
 			EString text = pCopters[i]->getName();
 			text.MakeUpper();
