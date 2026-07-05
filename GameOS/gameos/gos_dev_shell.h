@@ -10,6 +10,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <string>
 
 namespace gos_dev_shell {
 
@@ -22,5 +23,17 @@ bool pollCommands(uint32_t frame);
 // capture point (same site as [SCREENSHOT v1] / visual capture — sceneFBO is
 // intact just before swap). No-op when nothing pending.
 void capturePendingScreenshot(uint32_t frame);
+
+// Extension seam: upper layers (game code, editor) register their own shell
+// commands without gameos linking back at them — same inversion as the
+// GuiRuntime panel registrations. Handler runs on the main thread at the
+// poll point; returns true + fills dataJsonOut (a JSON object, "{}" ok) on
+// success, false + errorOut on failure. Registering an existing name
+// replaces it. Registration is cheap and safe when the shell gate is OFF
+// (handlers just never fire).
+typedef bool (*CommandHandler)(const char* paramsJson,
+                               std::string& dataJsonOut,
+                               std::string& errorOut);
+void registerCommand(const char* name, CommandHandler fn);
 
 }  // namespace gos_dev_shell
