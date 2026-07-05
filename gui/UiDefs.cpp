@@ -1669,6 +1669,20 @@ std::string UiDefs::replacementPathForLegacyFit(const char* legacyFitPath)
     // legacy renders it correctly. Keep the AAR on the legacy path until the
     // page is actually authored. MC2_UI_DEFS_RESULTS=1 opts the page back in
     // for iterating on it.
+    // LOADSCREEN-LEGACY-FALLBACK-1: same ruling as the AAR — the generated
+    // loading-screen pages (mcl_loadingscreen*) regressed the load sequence
+    // (door art shifted to the top-left instead of centered, residual
+    // logo/hourglass banner art over pilot-ready and mission start) while
+    // pure legacy renders it correctly. Pin them to legacy until authored.
+    // MC2_UI_DEFS_LOADSCREEN=1 opts back in for iteration.
+    if (stem.rfind("mcl_loadingscreen", 0) == 0) {
+        static const bool s_loadDefs = (std::getenv("MC2_UI_DEFS_LOADSCREEN") != nullptr);
+        if (!s_loadDefs) {
+            uiDefsTrace("legacy FIT %s -> LEGACY (loadscreen page opt-out)", legacyFitPath ? legacyFitPath : "<null>");
+            return std::string();
+        }
+    }
+
     if (stem == "mcui_mr_layout") {
         static const bool s_resultsDefs = (std::getenv("MC2_UI_DEFS_RESULTS") != nullptr);
         if (!s_resultsDefs) {
