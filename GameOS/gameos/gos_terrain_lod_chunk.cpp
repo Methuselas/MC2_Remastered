@@ -706,6 +706,7 @@ static GLint    s_locUseMaterialLib = -1;
 // Remaining legacy tunables (env gates replicated in the upload so default==legacy).
 extern float gos_GetTerrainLightingV1Strength();
 extern float gos_GetTerrainLightingV2Floor();
+extern float gos_GetTerrainCliffShadowFloor();  // CLIFF SHADOW FLOOR
 extern float gos_GetTerrainNormalsFromHeightStrength();
 extern float gos_GetTerrainPOMScale();
 // TERRAIN-CHUNK-POM-1: Stuff/MLR eye position (the SAME vec4 the legacy terrain
@@ -715,6 +716,7 @@ extern void  gos_GetTerrainCameraPos(float*, float*, float*);
 extern int   g_terrainMaterialProfile;   // global; 0 = legacy
 static GLint s_locLightingV1     = -1;
 static GLint s_locLightingV2     = -1;
+static GLint s_locCliffShadowFloor = -1;  // CLIFF SHADOW FLOOR
 static GLint s_locNfhStrength    = -1;
 static GLint s_locUseRockSlopeBias = -1;  // TERRAIN-SLOPE-BIAS-VISUAL-1 (B4a)
 static GLint s_locRockSlopeBiasStr = -1;
@@ -1150,6 +1152,7 @@ void gos_TerrainLodChunk_Init()
             s_locUseMaterialLib = glGetUniformLocation(s_terrainProgram, "u_useMaterialLib");
             s_locLightingV1  = glGetUniformLocation(s_terrainProgram, "terrainLightingV1Strength");
             s_locLightingV2  = glGetUniformLocation(s_terrainProgram, "terrainLightingV2ShadowFillFloor");
+            s_locCliffShadowFloor = glGetUniformLocation(s_terrainProgram, "u_terrainCliffShadowFloor");
             s_locNfhStrength = glGetUniformLocation(s_terrainProgram, "terrainNormalsFromHeightStrength");
             s_locUseRockSlopeBias = glGetUniformLocation(s_terrainProgram, "useRockSlopeBias");
             s_locRockSlopeBiasStr = glGetUniformLocation(s_terrainProgram, "rockSlopeBiasStrength");
@@ -2172,6 +2175,18 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         static const bool s_v2Env = (getenv("MC2_TERRAIN_LIGHTING_V2") != nullptr);
         if (s_locLightingV1  >= 0) glUniform1f(s_locLightingV1,  s_v1Env ? gos_GetTerrainLightingV1Strength() : 0.0f);
         if (s_locLightingV2  >= 0) glUniform1f(s_locLightingV2,  s_v2Env ? gos_GetTerrainLightingV2Floor()    : 1.0f);
+        // CLIFF SHADOW FLOOR: env-gated. Unset/=0 uploads 0.0 (shader no-op,
+        // byte-identical). Non-zero uploads the member value (ImGui-tunable), 0..1.
+        {
+            static const char* s_cliffEnv = getenv("MC2_TERRAIN_CLIFF_SHADOW_FLOOR");
+            static const bool  s_cliffOn  = (s_cliffEnv && s_cliffEnv[0] && s_cliffEnv[0] != '0');
+            if (s_locCliffShadowFloor >= 0) {
+                float cf = s_cliffOn ? gos_GetTerrainCliffShadowFloor() : 0.0f;
+                if (cf < 0.0f) cf = 0.0f;
+                if (cf > 1.0f) cf = 1.0f;
+                glUniform1f(s_locCliffShadowFloor, cf);
+            }
+        }
         if (s_locNfhStrength >= 0) glUniform1f(s_locNfhStrength, gos_GetTerrainNormalsFromHeightStrength());
         // TERRAIN-SLOPE-BIAS-VISUAL-1 (B4a): env gate MC2_TERRAIN_SLOPE_BIAS, default
         // OFF. When unset/0 the gate uploads 0 and the frag block is a no-op

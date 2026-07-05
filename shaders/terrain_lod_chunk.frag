@@ -272,6 +272,7 @@ uniform float u_matAlbedoStrength;  // 0..1 mix toward textured composite
 // legacy (no shader consumer) -> not wired.
 uniform float terrainLightingV1Strength;       // hemisphere ambient; 0 = off (env-gated default off)
 uniform float terrainLightingV2ShadowFillFloor;// shadow-aware fill floor; 1 = no influence
+uniform float u_terrainCliffShadowFloor;// CLIFF SHADOW FLOOR: lifts steep faces off near-black; 0 = byte-identical
 uniform float terrainNormalsFromHeightStrength;// macro-slope strength scalar (default 1.0)
 uniform int   useRockSlopeBias;                 // TERRAIN-SLOPE-BIAS-VISUAL-1: 0=off (byte-identical)
 uniform float rockSlopeBiasStrength;            // rock-weight bias on steep slopes (default 1.0)
@@ -1408,6 +1409,11 @@ void main() {
         float staticS = calcShadow(v_worldPos, shadowN, terrainLightDir.xyz, 16);
         float dynS    = calcDynamicShadow(v_worldPos, shadowN, terrainLightDir.xyz, 8);
         shadow = min(staticS, dynS);
+        // CLIFF SHADOW FLOOR: steep faces fall to ~0 under CSM (calcDynamicShadow
+        // is unfloored) → near-black voids. Lift ONLY steep faces by a gated floor.
+        // Default 0.0 => no-op (byte-identical). macroNz is the MACRO slope Z.
+        float cliffShadowBlend = smoothstep(0.85, 0.55, abs(macroNz));
+        shadow = max(shadow, u_terrainCliffShadowFloor * cliffShadowBlend);
         // CEMENT-CLEAN-LIGHTING-1: concrete/cement is an authored flat slab. The
         // terrain STATIC self-shadow (calcShadow) lands as world-fixed blotches that
         // do not tile with the cement atlas (the "spots bleeding through" report).

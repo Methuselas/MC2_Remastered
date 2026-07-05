@@ -1995,6 +1995,8 @@ class gosRenderer {
         float getTerrainLightingV1Strength() const  { return terrain_lighting_v1_strength_; }
         void  setTerrainLightingV2Floor(float f) { terrain_lighting_v2_floor_ = f; }
         float getTerrainLightingV2Floor() const  { return terrain_lighting_v2_floor_; }
+        void  setTerrainCliffShadowFloor(float f) { terrain_cliff_shadow_floor_ = f; }
+        float getTerrainCliffShadowFloor() const  { return terrain_cliff_shadow_floor_; }
 
         // Terrain draw killswitch
         void setTerrainDrawEnabled(bool e) { terrain_draw_enabled_ = e; }
@@ -2509,6 +2511,10 @@ class gosRenderer {
         // V2 gate is OFF the upload site forces the uploaded value to 1.0
         // so V1 behavior is preserved (byte-equivalent to pre-slice).
         float terrain_lighting_v2_floor_ = 0.3f;
+        // CLIFF SHADOW FLOOR: lifts shadow-side steep terrain faces off near-black.
+        // Slider 0..0.6; default 0.0 = byte-identical (no-op). Effective only when
+        // env gate MC2_TERRAIN_CLIFF_SHADOW_FLOOR is set to a non-zero float.
+        float terrain_cliff_shadow_floor_ = 0.0f;
 
         // Cached uniform locations for terrain shader (avoid per-draw glGetUniformLocation)
         struct TerrainUniformLocs {
@@ -2552,6 +2558,8 @@ class gosRenderer {
             GLint terrainLightingV1Strength = -1; // float, 0=off; effective only when env gate ON
             // TERRAIN-LIGHTING-2
             GLint terrainLightingV2ShadowFillFloor = -1; // float, 1=V1 (no shadow influence)
+            // CLIFF SHADOW FLOOR: lifts steep faces off near-black; 0=byte-identical
+            GLint terrainCliffShadowFloor = -1;
             // TERRAIN-MATERIAL-LIB-1
             GLint tintConcrete = -1;              // promoted frag-literal (vec3)
             GLint tintSnow     = -1;               // promoted frag-literal (vec3)
@@ -2605,6 +2613,8 @@ class gosRenderer {
             GLint terrainLightingV1Strength = -1;
             // TERRAIN-LIGHTING-2
             GLint terrainLightingV2ShadowFillFloor = -1;
+            // CLIFF SHADOW FLOOR
+            GLint terrainCliffShadowFloor = -1;
             // TERRAIN-MATERIAL-LIB-1: shares gosRenderer members with the chunk
             // path (see file header); these locs stay -1 on gos_terrain.frag
             // until the uniforms are declared there too, so the upload calls
@@ -2705,6 +2715,8 @@ class gosRenderer {
             // TERRAIN-LIGHTING-2
             terrainLocs_.terrainLightingV2ShadowFillFloor =
                 glGetUniformLocation(shp, "terrainLightingV2ShadowFillFloor");
+            terrainLocs_.terrainCliffShadowFloor =
+                glGetUniformLocation(shp, "u_terrainCliffShadowFloor");
             // TERRAIN-MATERIAL-LIB-1
             terrainLocs_.tintConcrete   = glGetUniformLocation(shp, "tintConcrete");
             terrainLocs_.tintSnow       = glGetUniformLocation(shp, "tintSnow");
@@ -2778,6 +2790,8 @@ class gosRenderer {
             // TERRAIN-LIGHTING-2
             thinTerrainLocs_.terrainLightingV2ShadowFillFloor =
                 glGetUniformLocation(shp, "terrainLightingV2ShadowFillFloor");
+            thinTerrainLocs_.terrainCliffShadowFloor =
+                glGetUniformLocation(shp, "u_terrainCliffShadowFloor");
             // TERRAIN-CONTROLMAP-ALBEDO-1: stays -1 until gos_terrain_thin's frag
             // declares the uniform too (thin path is the dead/legacy indirect
             // shader per recon) -- upload call below is >=0 guarded, no-op.
@@ -2845,6 +2859,8 @@ class gosRenderer {
             GLint terrainNormalsFromHeightStrength   = -1;
             GLint terrainLightingV1Strength          = -1;
             GLint terrainLightingV2ShadowFillFloor   = -1;
+            // CLIFF SHADOW FLOOR
+            GLint terrainCliffShadowFloor            = -1;
             // ROAD-PBR-ASPHALT-1: asphalt material samplers + UV scale. Declared
             // only in terrain_overlay.frag → populated only on overlayProg_;
             // decalProg_ (decal.frag) leaves these -1 and the helper skips them.
@@ -5418,6 +5434,7 @@ void gosRenderer::init() {
         locs.terrainNormalsFromHeightStrength = glGetUniformLocation(shp, "terrainNormalsFromHeightStrength");
         locs.terrainLightingV1Strength        = glGetUniformLocation(shp, "terrainLightingV1Strength");
         locs.terrainLightingV2ShadowFillFloor = glGetUniformLocation(shp, "terrainLightingV2ShadowFillFloor");
+        locs.terrainCliffShadowFloor = glGetUniformLocation(shp, "u_terrainCliffShadowFloor");
         // ROAD-PBR-ASPHALT-1: asphalt material uniforms (overlayProg_ only).
         locs.asphaltAlbedo   = glGetUniformLocation(shp, "u_asphaltAlbedo");
         locs.matNormalArray  = glGetUniformLocation(shp, "matNormalArray");
@@ -6720,7 +6737,9 @@ static void bindTerrainHeightTexUniforms(GLint heightTexLoc, GLint paramsLoc,
                                          GLint lightingV1StrengthLoc,
                                          float lightingV1Strength,
                                          GLint lightingV2FloorLoc,
-                                         float lightingV2Floor)
+                                         float lightingV2Floor,
+                                         GLint cliffShadowFloorLoc,
+                                         float cliffShadowFloor)
 {
     const GLuint htex = (GLuint)gos_terrainHeightTexHandle();
     if (htex != 0 && heightTexLoc >= 0) {
@@ -6778,6 +6797,21 @@ static void bindTerrainHeightTexUniforms(GLint heightTexLoc, GLint paramsLoc,
     }
     if (lightingV2FloorLoc >= 0) {
         glUniform1f(lightingV2FloorLoc, effectiveV2Floor);
+    }
+    // CLIFF SHADOW FLOOR: lifts shadow-side steep terrain faces off near-black.
+    // Env gate MC2_TERRAIN_CLIFF_SHADOW_FLOOR is authoritative — unset/=0 forces
+    // 0.0 (shader max(shadow, 0*blend) => no-op, byte-identical). When set to a
+    // non-zero float the member value (ImGui-tunable) is uploaded, bounded 0..1.
+    float effectiveCliffFloor = 0.0f;
+    if (const char* e = getenv("MC2_TERRAIN_CLIFF_SHADOW_FLOOR")) {
+        if (e[0] && e[0] != '0') {
+            effectiveCliffFloor = cliffShadowFloor;
+            if (effectiveCliffFloor < 0.0f) effectiveCliffFloor = 0.0f;
+            if (effectiveCliffFloor > 1.0f) effectiveCliffFloor = 1.0f;
+        }
+    }
+    if (cliffShadowFloorLoc >= 0) {
+        glUniform1f(cliffShadowFloorLoc, effectiveCliffFloor);
     }
 }
 
@@ -7029,7 +7063,9 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
                                  tl.terrainLightingV1Strength,
                                  terrain_lighting_v1_strength_,
                                  tl.terrainLightingV2ShadowFillFloor,
-                                 terrain_lighting_v2_floor_);
+                                 terrain_lighting_v2_floor_,
+                                 tl.terrainCliffShadowFloor,
+                                 terrain_cliff_shadow_floor_);
     glActiveTexture(GL_TEXTURE0);
 
     gosPostProcess* pp = getGosPostProcess();
@@ -7169,7 +7205,9 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
                                  tl.terrainLightingV1Strength,
                                  terrain_lighting_v1_strength_,
                                  tl.terrainLightingV2ShadowFillFloor,
-                                 terrain_lighting_v2_floor_);
+                                 terrain_lighting_v2_floor_,
+                                 tl.terrainCliffShadowFloor,
+                                 terrain_cliff_shadow_floor_);
     glActiveTexture(GL_TEXTURE0);
 
     gosPostProcess* pp = getGosPostProcess();
@@ -9978,6 +10016,13 @@ void gos_SetTerrainLightingV2Floor(float f) {
 float gos_GetTerrainLightingV2Floor() {
     return g_gos_renderer ? g_gos_renderer->getTerrainLightingV2Floor() : 0.3f;
 }
+// CLIFF SHADOW FLOOR
+void gos_SetTerrainCliffShadowFloor(float f) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainCliffShadowFloor(f);
+}
+float gos_GetTerrainCliffShadowFloor() {
+    return g_gos_renderer ? g_gos_renderer->getTerrainCliffShadowFloor() : 0.0f;
+}
 
 void gos_SetTerrainDrawEnabled(bool e) {
     if (g_gos_renderer) g_gos_renderer->setTerrainDrawEnabled(e);
@@ -10183,7 +10228,9 @@ void gosRenderer::uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& 
                                  L.terrainLightingV1Strength,
                                  terrain_lighting_v1_strength_,
                                  L.terrainLightingV2ShadowFillFloor,
-                                 terrain_lighting_v2_floor_);
+                                 terrain_lighting_v2_floor_,
+                                 L.terrainCliffShadowFloor,
+                                 terrain_cliff_shadow_floor_);
 
     // ROAD-PBR-ASPHALT-1: bind the asphalt material samplers for the asphalt
     // branch in terrain_overlay.frag (v_matId==1). Only touches the program that
