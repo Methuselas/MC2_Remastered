@@ -66,6 +66,7 @@ LoadScreenWrapper::LoadScreenWrapper()
 	enterScreen = new LoadScreen;
 	exitScreen = new LoadScreen;
 	bFirstTime = 0;
+	bEnteredLoad = false;   // LOAD-BANNER-RESIDUE-2
 }
 
 LoadScreenWrapper::~LoadScreenWrapper()
@@ -84,6 +85,7 @@ void LoadScreenWrapper::init( FitIniFile& file )
 
 //	changeRes();
 	bFirstTime = 0;
+	bEnteredLoad = false;   // LOAD-BANNER-RESIDUE-2
 }
 
 void LoadScreenWrapper::changeRes()
@@ -307,6 +309,7 @@ void LoadScreenWrapper::begin()
 {
 	waitForResChange = 0;
 	bFirstTime = true;
+	bEnteredLoad = false;   // LOAD-BANNER-RESIDUE-2
 
 	enterScreen->begin();
 }
@@ -324,11 +327,15 @@ void LoadScreenWrapper::update()
 	{
 		status = READYTOLOAD;
 		waitForResChange = 0;
+		bEnteredLoad = true;   // LOAD-BANNER-RESIDUE-2: exit screen owns it now
 	}
 	else
 	{
 
-	if ( Environment.screenWidth == 800 )
+	// LOAD-BANNER-RESIDUE-2: explicit handoff flag instead of the
+	// Environment.screenWidth==800 discriminator (always true under the
+	// HUD-RES clamp, so the exit screen never ran).
+	if ( !bEnteredLoad )
 		{
 			enterScreen->update();
 			status = enterScreen->getStatus();
@@ -349,7 +356,8 @@ void LoadScreenWrapper::update()
 
 void LoadScreenWrapper::render( int xOffset, int yOffset )
 {
-	if ( Environment.screenWidth == 800 )
+	// LOAD-BANNER-RESIDUE-2: same explicit handoff as update().
+	if ( !bEnteredLoad )
 	{
 		enterScreen->render( xOffset, yOffset );
 	}
