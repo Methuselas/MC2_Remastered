@@ -560,15 +560,23 @@ def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
 # Deploy + verify
 # ---------------------------------------------------------------------------
 
-def deploy(items, target_dir, allow_stale_pdb):
+def deploy(items, target_dir, allow_stale_pdb, preserve=()):
     src_hashes = {}
     shader_mismatches = []
     pdb_problem = None
+    preserve = {p.replace(os.sep, "/") for p in preserve}
 
     for src, rel, kind in items:
         dst = os.path.join(target_dir, rel)
         if kind == "pdb" and not os.path.isfile(src):
             pdb_problem = f"source PDB missing: {src}"
+            continue
+        if rel.replace(os.sep, "/") in preserve and os.path.isfile(dst):
+            # user-owned file at target (e.g. hand-edited run-with-log.bat):
+            # keep the deployed copy, record its hash so the manifest matches
+            # what's actually on disk.
+            src_hashes[rel] = (sha256_file(dst), os.path.getsize(dst))
+            log(f"preserved {rel} (existing target copy kept)")
             continue
         os.makedirs(os.path.dirname(dst) or target_dir, exist_ok=True)
         try:
@@ -833,6 +841,12 @@ def main():
                     help="DELIBERATELY deploy to a NON-canonical / new ~5GB install "
                          "(release cut, fresh install). Off by default — deploys are "
                          "forced to the canonical DEPLOY_ALLOWLIST to stop per-lane bloat.")
+    ap.add_argument("--preserve", action="append", default=[],
+                    metavar="RELPATH",
+                    help="payload file (repeatable) whose EXISTING target copy "
+                         "is kept instead of overwritten (e.g. a hand-edited "
+                         "run-with-log.bat). Only skips if the target copy "
+                         "exists; fresh targets still get the source file.")
     args = ap.parse_args()
 
     preset = TARGET_PRESETS.get(args.target) if args.target else None
@@ -889,7 +903,7 @@ def main():
                               build64_root=args.build64_root)
     log(f"payload: {len(items)} files "
         f"({sum(1 for *_x, k in items if k == 'shader')} shaders)")
-    hashes = deploy(items, target, args.allow_stale_pdb)
+    hashes = deploy(items, target, args.allow_stale_pdb, preserve=args.preserve)
     write_manifest(target, hashes, git_head(src_root))
     log("deploy COMPLETE — payload verified, manifest written")
 

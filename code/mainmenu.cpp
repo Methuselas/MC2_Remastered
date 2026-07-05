@@ -455,6 +455,26 @@ void MainMenu::update()
 		}
 	}
 
+	// MC2_BOOT_TO_SCREEN=encyclopedia: headless boot straight into the
+	// Mechlopedia from the main menu (mirrors MM_MSG_ENCYCLOPEDIA, no fade so
+	// captures start immediately). One-shot; harness-capturable without clicks.
+	{
+		static bool s_bootToEncycloFired = false;
+		const char* bootScr = std::getenv("MC2_BOOT_TO_SCREEN");
+		if ( !s_bootToEncycloFired && bootScr && !S_stricmp(bootScr, "encyclopedia")
+			&& !std::getenv("MC2_BOOT_TO_BAY") && !introMovie )
+		{
+			s_bootToEncycloFired = true;
+			bDrawMechlopedia = true;
+			if ( !mechlopedia )
+			{
+				mechlopedia = new Mechlopedia;
+				mechlopedia->init();
+			}
+			mechlopedia->begin();
+		}
+	}
+
 	if ( bDrawBackground || MPlayer || LogisticsData::instance->isSingleMission() )
 	{
 		getButton( MM_MSG_SAVE )->disable( true );
