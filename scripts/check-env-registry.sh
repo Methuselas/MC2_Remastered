@@ -89,6 +89,8 @@ ALLOWLIST=(
     MC2_DEPTHBIAS_CALIB         # trace
     MC2_DEPTH_TRANSITION_PROBE  # trace
     MC2_DESTROY_TRACE           # trace
+    MC2_DEV_SHELL               # infra -- dev command socket (DEV-SHELL-1)
+    MC2_DEV_SHELL_PORT          # infra -- dev command socket port override
     MC2_DISABLE_GOSFX           # feature -- promote-to-registry
     MC2_EDITOR_BYPASS_BLDG_CULL # feature -- editor-only override
     MC2_EDITOR_MODE             # infra -- editor mode flag

@@ -140,6 +140,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gos_postprocess.h"
 #include "gos_validate.h"
 #include "gos_screenshot.h"   // deterministic backbuffer->TGA capture (oracle)
+#include "gos_dev_shell.h"    // DEV-SHELL-1: localhost dev command socket (MC2_DEV_SHELL)
 #include "gos_visual_capture.h"  // [VISUAL_CAPTURE v1] S9 PNG+sidecar + bookmark replay
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: isEnabled() for [INSTR v1]
@@ -1372,6 +1373,11 @@ int main(int argc, char** argv)
 		    gos_RendererHandleEvents();
         }
 
+        // DEV-SHELL-1: dev command socket poll. Single static-bool check when
+        // MC2_DEV_SHELL unset. Commands run here, on the GL-owning main thread.
+        if (gos_dev_shell::pollCommands(g_mc2FrameCounter))
+            g_exit = true;
+
         // RenderSnapshot is a shallow struct — spans are (ptr, count) into the
         // ping-pong arena. Copy is safe: arena is not reset until the next
         // ExtractRenderSnapshot() call. Emit must complete before any second extraction.
@@ -1787,6 +1793,8 @@ int main(int argc, char** argv)
                     fflush(stderr);
                 }
             }
+            // DEV-SHELL-1: pending shell screenshot, same sceneFBO source.
+            gos_dev_shell::capturePendingScreenshot(g_mc2FrameCounter);
         }
 
         {
