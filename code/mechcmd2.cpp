@@ -792,7 +792,7 @@ void __stdcall UpdateRenderers()
 			// use) so it composites on top instead. Cheap: one extra sprite
 			// draw per frame, only fires if GuiRuntime actually rendered a
 			// frame (no-op otherwise).
-			GuiRuntime::RegisterPostImGuiRender( []() { userInput->render(); } );
+			GuiRuntime::RegisterPostImGuiRender( []() { userInput->renderForImGuiOverlay(); } );
 #endif
 		}
 
