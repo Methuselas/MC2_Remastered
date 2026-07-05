@@ -2923,6 +2923,19 @@ void __stdcall gos_SetScreenMode( DWORD Width, DWORD Height, DWORD bitDepth=16, 
 // because gameos_graphics.cpp compiles into the gameos_editor lib without it.
 void __stdcall gos_SetHudResClampEnabled( bool enabled );
 
+// PREVIEW-FBO-FIXED-800x600-1: offscreen mech-preview render target, fixed at
+// 800x600 (the legacy 2D UI's native virtual canvas -- Environment.screenWidth
+// stays 800x600 by design, see gos_SetHudResClampEnabled above). Bind/unbind
+// around the legacy CPU MLR preview draw (SimpleCamera::render()) so it keeps
+// using its existing 800x600-relative math completely unchanged; the caller
+// then draws gos_GetCameraPreviewTexture() as a normal ImGui image (via
+// GuiRuntime::DrawUiImage), UV-cropped to just the small preview rect and
+// scaled to fit the real-resolution defs UI panel. No resolution/scale math
+// needed at the call site -- ImGui's own image draw handles that.
+void __stdcall gos_BeginCameraPreviewRender();
+void __stdcall gos_EndCameraPreviewRender();
+unsigned int __stdcall gos_GetCameraPreviewTexture();   // GLuint, avoids a GL include here
+
 //
 // This API sets the current gamma correction value. The default value is 1.0 (no correction applied). All color values are effected by (value/255 ^ (1.0/gamma)).
 //

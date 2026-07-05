@@ -16,6 +16,7 @@ MechPurchaseScreen.cpp			: Implementation of the MechPurchaseScreen component.
 #include"attributemeter.h"
 #include"chatwindow.h"
 #include"multplyr.h"
+#include"../GuiRuntime/GuiRuntime.h"
 
 MechPurchaseScreen* MechPurchaseScreen::s_instance = NULL;
 
@@ -230,13 +231,29 @@ void MechPurchaseScreen::render( int xOffset, int yOffset )
 		}
 	}
 
+	// Legacy->display scale for the text bridge (crisp TTF labels on the two mech
+	// lists + the mech-info display, matching the data/defs UI layer).
+	float tbDw = 0.f, tbDh = 0.f, tbSx = 1.f, tbSy = 1.f;
+	if ( GuiRuntime::GetDisplaySize( tbDw, tbDh ) &&
+		 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
+	{
+		tbSx = tbDw / (float)Environment.screenWidth;
+		tbSy = tbDh / (float)Environment.screenHeight;
+	}
+
+	// Only the two mech lists need the text bridge (mech names).  mechDisplay routes
+	// its info text into the mcl_mechinfo defs page and its loadout into a defs GuiList
+	// (matching Mech Bay), so it must NOT be bridged -- otherwise the legacy loadout
+	// list would TTF-draw on top of the GuiList and double up.
+	aObject::beginTextBridge( tbSx, tbSy );
 	inventoryListBox.move( xOffset, yOffset);
 	inventoryListBox.render();
 	inventoryListBox.move( -xOffset, -yOffset );
 
 	variantListBox.move(xOffset, yOffset);
 	variantListBox.render();
-	variantListBox.move(-xOffset, -yOffset);	
+	variantListBox.move(-xOffset, -yOffset);
+	aObject::endTextBridge();
 
 	mechDisplay.render( xOffset, yOffset );
 

@@ -10,7 +10,117 @@
 #include"paths.h"
 #include"userinput.h"
 #include "../GameOS/gameos/gos_profiler.h"
+#include "../GuiRuntime/GuiRuntime.h"
 
+// --- data/defs UI bridge ---------------------------------------------------
+// While active, aObject::render draws through GuiRuntime (ImGui HUD layer)
+// instead of gos_DrawQuads, scaled from Environment space to display space.
+static bool  s_guiBridgeActive = false;
+static float s_guiBridgeSx = 1.0f;
+static float s_guiBridgeSy = 1.0f;
+
+static bool  s_textBridgeActive = false;
+static float s_textBridgeSx = 1.0f;
+static float s_textBridgeSy = 1.0f;
+static float s_textBridgeFontScale = 1.0f;
+
+void aObject::beginGuiBridge(float scaleX, float scaleY)
+{
+	s_guiBridgeActive = true;
+	s_guiBridgeSx = scaleX > 0.0f ? scaleX : 1.0f;
+	s_guiBridgeSy = scaleY > 0.0f ? scaleY : 1.0f;
+}
+
+void aObject::endGuiBridge()
+{
+	s_guiBridgeActive = false;
+	s_guiBridgeSx = 1.0f;
+	s_guiBridgeSy = 1.0f;
+}
+
+void aObject::beginTextBridge(float scaleX, float scaleY, float fontScale)
+{
+	s_textBridgeActive = true;
+	s_textBridgeSx = scaleX > 0.0f ? scaleX : 1.0f;
+	s_textBridgeSy = scaleY > 0.0f ? scaleY : 1.0f;
+	s_textBridgeFontScale = fontScale > 0.0f ? fontScale : 1.0f;
+}
+
+void aObject::endTextBridge()
+{
+	s_textBridgeActive = false;
+	s_textBridgeSx = 1.0f;
+	s_textBridgeSy = 1.0f;
+	s_textBridgeFontScale = 1.0f;
+}
+
+bool aObject::renderTextBridged( aFont& font, const char* text,
+	float x0, float y0, float x1, float y1, unsigned long argb, long alignment )
+{
+	if ( !( s_textBridgeActive || s_guiBridgeActive ) || !text || !text[0] )
+		return false;
+
+	const float sx = s_textBridgeActive ? s_textBridgeSx : s_guiBridgeSx;
+	const float sy = s_textBridgeActive ? s_textBridgeSy : s_guiBridgeSy;
+	const float x = x0 * sx;
+	const float y = y0 * sy;
+	float w = ( x1 - x0 ) * sx;
+	float h = ( y1 - y0 ) * sy;
+
+	// aFont::getSize() (the .size field) is 1 for these fonts -- the real size
+	// lives in the .fnt.  Measure the bitmap font's rendered height, then scale
+	// env->display like the defs UI (x sy).
+	DWORD mw = 0, mh = 0;
+	font.getSize( mw, mh, text );
+	int fs = (int)mh;
+	if ( fs < 1 ) fs = 8;
+	const float fontScale = s_textBridgeActive ? s_textBridgeFontScale : 1.0f;
+	fs = (int)( (float)fs * sy * fontScale + 0.5f );
+
+	if ( w < 1.f ) w = (float)Environment.screenWidth * sx;
+	if ( h < 1.f ) h = (float)fs * 1.5f;
+	int align = (int)alignment;
+	if ( align < 0 || align > 2 ) align = 0; // gos bottom(3) etc -> left
+
+	GuiRuntime::DrawUiText( x, y, w, h, text, argb, fs, align, "Agency Regular" );
+	return true;
+}
+
+// Quad vertex layout (see aObject::init): 0=TL, 1=BL, 2=BR, 3=TR.
+static void renderObjectViaGuiBridge(const gos_VERTEX* location, unsigned long textureHandle)
+{
+	const unsigned int argb = location[0].argb;
+	if ((argb & 0xff000000) == 0)
+		return; // fully transparent (e.g. fade animation at alpha 0)
+
+	const float x = location[0].x * s_guiBridgeSx;
+	const float y = location[0].y * s_guiBridgeSy;
+	const float w = (location[2].x - location[0].x) * s_guiBridgeSx;
+	const float h = (location[2].y - location[0].y) * s_guiBridgeSy;
+	if (w <= 0.0f || h <= 0.0f)
+		return;
+
+	unsigned int glTexture = 0;
+	if (textureHandle && mcTextureManager)
+	{
+		const unsigned long gosID = mcTextureManager->get_gosTextureHandle(textureHandle);
+		if (gosID && gosID != 0xffffffff)
+			glTexture = gos_GetGLTextureName(gosID);
+	}
+
+	if (glTexture)
+	{
+		GuiRuntime::DrawUiImage(glTexture, x, y, w, h,
+								location[0].u, location[0].v,
+								location[2].u, location[2].v,
+								argb);
+	}
+	else
+	{
+		GuiRuntime::DrawUiRect(x, y, w, h, argb, true);
+	}
+}
+// ---------------------------------------------------------------------------
 
 long helpTextID = 0;
 long helpTextHeaderID = 0;
@@ -476,6 +586,17 @@ void aObject::render()
 {
 	if ( showWindow )
 	{
+		if ( s_guiBridgeActive )
+		{
+			// Route to the ImGui HUD layer; children inherit the bridge.
+			renderObjectViaGuiBridge( location, textureHandle );
+			for ( int i = 0; i < pNumberOfChildren; i++ )
+			{
+				pChildren[i]->render();
+			}
+			return;
+		}
+
 		unsigned long gosID = mcTextureManager->get_gosTextureHandle( textureHandle );
 		gos_SetRenderState( gos_State_Texture, gosID );
 		gos_SetRenderState(gos_State_Filter, gos_FilterNone);
@@ -822,8 +943,16 @@ void aText::setText(const EString& str)
 void aText::render()
 {
 	if ( showWindow && text.Length()>0)
-		font.render( text, location[0].x, location[0].y, location[2].x - location[0].x, 
+	{
+		// Text bridge: draw the label via the ImGui TTF path (crisp, matches the
+		// data/defs UI) instead of the GameOS bitmap font.
+		if ( renderTextBridged( font, (const char*)text,
+			location[0].x, location[0].y, location[2].x, location[2].y,
+			location[0].argb, alignment ) )
+			return;
+		font.render( text, location[0].x, location[0].y, location[2].x - location[0].x,
 		location[2].y - location[0].y, location[0].argb, 0, alignment );
+	}
 }
 
 void aText::render( long x, long y )

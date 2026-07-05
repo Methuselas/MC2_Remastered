@@ -7,6 +7,7 @@ OptionsArea.cpp			: Implementation of the OptionsArea component.
 \*************************************************************************************************/
 
 #include"optionsarea.h"
+#include "../GuiRuntime/GuiRuntime.h"
 #include"prefs.h"
 #include"inifile.h"
 #include"userinput.h"
@@ -128,9 +129,16 @@ int OptionsXScreen::indexOfButtonWithID(int id)
 void OptionsXScreen::init(FitIniFile* file)
 {
 
-	LogisticsScreen::init( *file, "Static", "Text", "Rect", "Button", "Edit" );	
+	LogisticsScreen::init( *file, "Static", "Text", "Rect", "Button", "Edit" );
 
-	const char* fileNames[4] = 
+	// Route help captions into the defs help-text element (like the Mechlopedia).
+	// Hovered defs buttons publish their helpDescLegacyId via ::helpTextID, which
+	// the LogisticsScreen::update help block loads here. Covers the parent-page
+	// controls (tab buttons, accept/cancel/default); per-tab control help arrives
+	// with the ImGui widget conversion.
+	defsHelpTextKey = "game.mcl_options.text.help_text";
+
+	const char* fileNames[4] =
 	{
 		"mcl_optionsgraphics",
 		"mcl_optionsaudio",
@@ -236,9 +244,15 @@ void OptionsXScreen::init(FitIniFile* file)
 void OptionsXScreen::render()
 {
 	GUI_RECT rect = { 0, 0, Environment.screenWidth, Environment.screenHeight };
+	// Draw black backgrounds immediately (IsHUD=0) so camera.render() inside
+	// tabAreas[0] can overdraw them in the GL framebuffer.  These must NOT go
+	// through the HUD batch: flushHUDBatch runs after camera.render() and
+	// would paint them on top of the 3D mech, hiding it.
+	gos_SetRenderState( gos_State_IsHUD, 0 );
 	drawRect( rect, 0xff000000 );
 	rects[1].setColor( 0xff000000 );
 	rects[1].render();
+	gos_SetRenderState( gos_State_IsHUD, 1 );
 	if ( curTab < 2 )
 		tabAreas[curTab]->render();
 	rects[1].setColor( 0 );
@@ -524,24 +538,78 @@ void OptionsGraphics::init(long xOffset, long yOffset)
 int		OptionsGraphics::handleMessage( unsigned long message, unsigned long fromWho )
 {
 	if ( fromWho == MSG_RESET )
+	{
 		reset(originalSettings);
-
+	}
+	else
+	{
+		switch ( fromWho )
+		{
+			case MSG_PILOT_VIDS:
+			case MSG_TERRAIN_DETAIL:
+			case MSG_OBJECT_DETAIL:
+			case MSG_SHADOWS:
+			case MSG_NON_WEAPON:
+			case MSG_LOCAL_SHADOWS:
+			case MSG_ASYNC_MOUSE:
+			case MSG_HARDWARE_RASTERIZER:
+				getButton( fromWho )->press( !getButton( fromWho )->isPressed() );
+				break;
+		}
+	}
 	return 1;
 }
 
 void OptionsGraphics::render()
 {
-
 	LogisticsScreen::render();
-
-	resolutionList.render();
-	
-	cardList.render();
-
+	if (!hasDefsUiPage())
+	{
+		resolutionList.render();
+		cardList.render();
+	}
 }
 
 void OptionsGraphics::update()
 {
+	if (hasDefsUiPage()) {
+		static const std::string kResKey  = "game.mcl_optionsgraphics.combo.resolution";
+		static const std::string kCardKey = "game.mcl_optionsgraphics.combo.video_card";
+
+		// Safety net: begin() may have run before the v2 page was ready, or the
+		// page may have been reloaded.  Populate items if the combo is empty.
+		if (getDefsListItemCount(kResKey) == 0 && numResolutionModes > 0) {
+			std::vector<std::string> resItems;
+			resItems.reserve(numResolutionModes);
+			for (int i = 0; i < numResolutionModes; ++i)
+				resItems.push_back(resolutionModesStr[i]);
+			setDefsListItems(kResKey, resItems);
+			setDefsListSelection(kResKey, resolutionList.GetSelectedItem());
+		}
+		if (getDefsListItemCount(kCardKey) == 0) {
+			const int cardCount = cardList.ListBox().GetItemCount();
+			if (cardCount > 0) {
+				std::vector<std::string> cardItems;
+				cardItems.reserve(cardCount);
+				for (int i = 0; i < cardCount; ++i) {
+					aListItem* item = cardList.ListBox().GetItem(i);
+					aTextListItem* titem = dynamic_cast<aTextListItem*>(item);
+					cardItems.push_back(titem ? std::string(titem->getText()) : std::string());
+				}
+				setDefsListItems(kCardKey, cardItems);
+				setDefsListSelection(kCardKey, cardList.GetSelectedItem());
+			}
+		}
+
+		LogisticsScreen::update();
+		const int guiResSel  = getDefsListSelection(kResKey);
+		if (guiResSel >= 0 && guiResSel != resolutionList.GetSelectedItem())
+			resolutionList.SelectItem(guiResSel);
+		const int guiCardSel = getDefsListSelection(kCardKey);
+		if (guiCardSel >= 0 && guiCardSel != cardList.GetSelectedItem())
+			cardList.SelectItem(guiCardSel);
+		return;
+	}
 
 	if ( resolutionList.IsExpanded() )
 	{
@@ -578,7 +646,6 @@ void OptionsGraphics::update()
 	{
 		soundSystem->playDigitalSample( LOG_WRONGBUTTON );
 	}
-	
 
 }
 
@@ -587,6 +654,25 @@ void OptionsGraphics::begin()
 	helpTextArrayID = 1;
 	reset(prefs);
 
+	if (hasDefsUiPage()) {
+		static const std::string kResKey  = "game.mcl_optionsgraphics.combo.resolution";
+		static const std::string kCardKey = "game.mcl_optionsgraphics.combo.video_card";
+
+		std::vector<std::string> resItems;
+		for (int i = 0; i < numResolutionModes; ++i)
+			resItems.push_back(resolutionModesStr[i]);
+		setDefsListItems(kResKey, resItems);
+		setDefsListSelection(kResKey, resolutionList.GetSelectedItem());
+
+		std::vector<std::string> cardItems;
+		for (int i = 0; i < cardList.ListBox().GetItemCount(); ++i) {
+			aListItem* item = cardList.ListBox().GetItem(i);
+			aTextListItem* titem = dynamic_cast<aTextListItem*>(item);
+			cardItems.push_back(titem ? std::string(titem->getText()) : std::string());
+		}
+		setDefsListItems(kCardKey, cardItems);
+		setDefsListSelection(kCardKey, cardList.GetSelectedItem());
+	}
 }
 void OptionsGraphics::end()
 {
@@ -759,28 +845,39 @@ void OptionsAudio::render()
 {
 	LogisticsScreen::render();
 
-	for ( int i = 0; i < 5; i++ )
+	if ( !hasDefsUiPage() )
 	{
-		scrollBars[i].render();
+		for ( int i = 0; i < 5; i++ )
+			scrollBars[i].render();
 	}
 }
 
 void OptionsAudio::update()
 {
 	LogisticsScreen::update();
-	for ( int i = 0; i < 5; i++ )
-	{
-		scrollBars[i].update();
-	}
-	
-	//Lets update these on the fly so they can hear how much better it sounds.
-	prefs.DigitalMasterVolume = scrollBars[0].GetScrollPos();
-	prefs.MusicVolume = scrollBars[1].GetScrollPos();
-	prefs.sfxVolume = scrollBars[2].GetScrollPos();
-	prefs.RadioVolume = scrollBars[3].GetScrollPos();
-	prefs.BettyVolume = scrollBars[4].GetScrollPos();
 
-	if (sndSystem) 
+	//Lets update these on the fly so they can hear how much better it sounds.
+	if ( hasDefsUiPage() )
+	{
+		prefs.DigitalMasterVolume = getDefsSliderValue( "game.mcl_optionsaudio.slider.master_digital" );
+		prefs.MusicVolume         = getDefsSliderValue( "game.mcl_optionsaudio.slider.music" );
+		prefs.sfxVolume           = getDefsSliderValue( "game.mcl_optionsaudio.slider.sfx" );
+		prefs.RadioVolume         = getDefsSliderValue( "game.mcl_optionsaudio.slider.radio" );
+		prefs.BettyVolume         = getDefsSliderValue( "game.mcl_optionsaudio.slider.computer_message" );
+	}
+	else
+	{
+		for ( int i = 0; i < 5; i++ )
+			scrollBars[i].update();
+
+		prefs.DigitalMasterVolume = scrollBars[0].GetScrollPos();
+		prefs.MusicVolume = scrollBars[1].GetScrollPos();
+		prefs.sfxVolume = scrollBars[2].GetScrollPos();
+		prefs.RadioVolume = scrollBars[3].GetScrollPos();
+		prefs.BettyVolume = scrollBars[4].GetScrollPos();
+	}
+
+	if (sndSystem)
 	{
 		sndSystem->setDigitalMasterVolume(prefs.DigitalMasterVolume);
 		sndSystem->setSFXVolume(prefs.sfxVolume);
@@ -813,6 +910,17 @@ void OptionsAudio::reset(const CPrefs& newPrefs)
 	scrollBars[2].SetScrollPos( newPrefs.sfxVolume );
 	scrollBars[3].SetScrollPos( newPrefs.RadioVolume );
 	scrollBars[4].SetScrollPos( newPrefs.BettyVolume );
+
+	// Seed the ImGui sliders from prefs (begin() routes through here, as does the
+	// DEFAULT button). The user's drag is read back in update().
+	if ( hasDefsUiPage() )
+	{
+		setDefsSliderValue( "game.mcl_optionsaudio.slider.master_digital", newPrefs.DigitalMasterVolume );
+		setDefsSliderValue( "game.mcl_optionsaudio.slider.music",            newPrefs.MusicVolume );
+		setDefsSliderValue( "game.mcl_optionsaudio.slider.sfx",              newPrefs.sfxVolume );
+		setDefsSliderValue( "game.mcl_optionsaudio.slider.radio",            newPrefs.RadioVolume );
+		setDefsSliderValue( "game.mcl_optionsaudio.slider.computer_message", newPrefs.BettyVolume );
+	}
 
 
 }
@@ -882,8 +990,15 @@ int		OptionsGamePlay::handleMessage( unsigned long message, unsigned long fromWh
 			getButton( MSG_BASE )->press( 0 );
 			getButton( MSG_ACCENT )->press( 0 );
 			getButton( fromWho )->press( true );
+			break;
 
-		break;
+		case MSG_UNLIMITED_AMMO:
+			getButton( MSG_UNLIMITED_AMMO )->press( !getButton( MSG_UNLIMITED_AMMO )->isPressed() );
+			break;
+
+		case MSG_LEFT_CLICK:
+			getButton( MSG_LEFT_CLICK )->press( !getButton( MSG_LEFT_CLICK )->isPressed() );
+			break;
 	}
 
 	return 1;
@@ -915,7 +1030,24 @@ void OptionsGamePlay::render()
 	rects[37].render();
 	rects[36].render();
 
-	camera.render();
+	// PREVIEW-FBO-FIXED-800x600-1: composite via real-resolution ratio, same
+	// pattern as the other mech-preview cameras (no known defs placement rect
+	// for this options-gameplay paint preview).
+	{
+		float dw = 0.f, dh = 0.f, sx = 1.f, sy = 1.f;
+		if ( GuiRuntime::GetDisplaySize( dw, dh ) &&
+			 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
+		{
+			sx = dw / (float)Environment.screenWidth;
+			sy = dh / (float)Environment.screenHeight;
+		}
+		camera.setPreviewOffscreen( true );
+		camera.render();
+		camera.drawPreviewToPanel(
+			camera.bounds[0] * sx, camera.bounds[1] * sy,
+			(camera.bounds[2] - camera.bounds[0]) * sx,
+			(camera.bounds[3] - camera.bounds[1]) * sy );
+	}
 
 }
 
@@ -944,7 +1076,15 @@ void OptionsGamePlay::update()
 	}
 
 	if ( bChanged )
-		camera.setMech( "Bushwacker", rects[36].getColor(), rects[37].getColor(), rects[37].getColor() );
+	{
+		// setColors avoids recreating the mech; parameter order matches
+		// what setMech("Bushwacker", rects[36], rects[37], rects[37]) would
+		// pass to resetPaintScheme(highlight1, highlight2, baseColor).
+		if ( camera.getObjectAppearance() )
+			camera.setColors( rects[37].getColor(), rects[37].getColor(), rects[36].getColor() );
+		else
+			camera.setMech( "Bushwacker", rects[36].getColor(), rects[37].getColor(), rects[37].getColor() );
+	}
 }
 
 void OptionsGamePlay::begin()
@@ -1044,10 +1184,33 @@ int		OptionsHotKeys::handleMessage( unsigned long message, unsigned long fromWho
 	return 1;
 }
 
+void OptionsHotKeys::refreshHotKeyList()
+{
+	if (!hasDefsUiPage())
+		return;
+	static const std::string kListKey = "game.mcl_optionshotkeys.list.hotkeys";
+	MissionInterfaceManager::Command* commands = MissionInterfaceManager::getCommands();
+	std::vector<std::string> rows;
+	rows.reserve(hotKeyList.GetItemCount());
+	for (int i = 0; i < hotKeyList.GetItemCount(); ++i) {
+		HotKeyListItem* item = static_cast<HotKeyListItem*>(hotKeyList.GetItem(i));
+		if (!item) continue;
+		char descText[128] = {};
+		cLoadString(commands[item->getCommand()].hotKeyDescriptionText, descText, 127);
+		char keysString[256] = {};
+		makeKeyString(item->getHotKey(), keysString);
+		std::string row = descText;
+		row += '\t';
+		row += keysString;
+		rows.push_back(std::move(row));
+	}
+	setDefsListItems(kListKey, rows);
+}
+
 void OptionsHotKeys::render()
 {
-
-	hotKeyList.render();
+	if (!hasDefsUiPage())
+		hotKeyList.render();
 	LogisticsScreen::render();
 
 	if ( bShowDlg )
@@ -1058,6 +1221,7 @@ void OptionsHotKeys::render()
 
 void OptionsHotKeys::update()
 {
+	static const std::string kListKey = "game.mcl_optionshotkeys.list.hotkeys";
 
 	if ( bShowDlg )
 	{
@@ -1130,6 +1294,8 @@ void OptionsHotKeys::update()
 					pItemToSet->setKey( keysString );
 					pItemToSet->setHotKey( curHotKey );
 					hotKeyList.SelectItem( -1 );
+					setDefsListSelection(kListKey, -1);
+					refreshHotKeyList();
 				}
 				HK_TRACE("event=swap_end");
 
@@ -1141,14 +1307,17 @@ void OptionsHotKeys::update()
 		return;
 	}
 	LogisticsScreen::update();
-	
-	hotKeyList.update();
+
+	if (!hasDefsUiPage())
+		hotKeyList.update();
 
 	long tmpKey = 1;
 
 	while( tmpKey ) // empty out keyboard buffers...
 	{
-		int index = hotKeyList.GetSelectedItem( );
+		int index = hasDefsUiPage()
+			? getDefsListSelection(kListKey)
+			: hotKeyList.GetSelectedItem();
 		tmpKey = 0;
 
 		if ( index > -1 )
@@ -1188,6 +1357,8 @@ void OptionsHotKeys::update()
 					pItem->setHotKey( tmpKey );
 					pItem->setKey( hotKeyString );
 					hotKeyList.SelectItem( -1 );
+					setDefsListSelection(kListKey, -1);
+					refreshHotKeyList();
 				}
 				else
 				{
@@ -1295,7 +1466,7 @@ void OptionsHotKeys::begin()
 	HK_TRACE("event=screen_begin items=%ld", (long)hotKeyList.GetItemCount());
 	helpTextArrayID = 2;
 	reset(0);
-
+	refreshHotKeyList();
 }
 void OptionsHotKeys::end()
 {

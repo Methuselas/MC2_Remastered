@@ -167,6 +167,16 @@ static const bool s_soakCheckScreens =
 static const bool s_soakAutoPurchase =
 	( std::getenv("MC2_SOAK_AUTO_PURCHASE") != nullptr );
 
+// SOAK-STOP-AT-BAY-1 (MC2_SOAK_STOP_AT_BAY). For validation harnesses that only
+// need to auto-win ONE mission to reach the bay and then sit there (e.g. to
+// screenshot a logistics-screen fix) without running a full campaign soak.
+// When set (with MC2_SOAK_AUTOWIN), suppresses the normal autowin advance
+// (soakForceNext) the first time curScreenX==2 && curScreenY==1 (mech bay) is
+// reached, so the soak parks there instead of clicking NEXT into
+// purchase/loadout/launch/mission2. Default OFF = byte-identical.
+static const bool s_soakStopAtBay =
+	( std::getenv("MC2_SOAK_STOP_AT_BAY") != nullptr );
+
 // SOAK-LANCE-RANDOM-1 (MC2_SOAK_LANCE_RANDOM). Requires MC2_SOAK_AUTO_PURCHASE.
 // When set, REPLACES the single-mech buy with a full random-sized lance purchase:
 // picks a random target count N in [1..12] per mission (seeded from a per-bay
@@ -1385,6 +1395,18 @@ const char* MissionBegin::update()
 				if ( curScreenX != s_soakLastAdvX || curScreenY != s_soakLastAdvY )
 				{
 					s_soakSettleTimer += frameLength;
+					// SOAK-STOP-AT-BAY-1: park here instead of advancing. Still latch
+					// s_soakLastAdvX/Y so this doesn't re-fire/spam every frame, and
+					// skip the soakForceNext assignment (leave it false).
+					if ( s_soakStopAtBay && curScreenX == 2 && curScreenY == 1 )
+					{
+						s_soakLastAdvX = curScreenX;
+						s_soakLastAdvY = curScreenY;
+						s_soakSettleTimer = 0.0f;
+						printf("[SOAK] parked screen=bay (MC2_SOAK_STOP_AT_BAY)\n");
+						fflush(stdout);
+					}
+					else
 					if ( s_soakSettleTimer >= 0.5f )
 					{
 						soakForceNext = true;
@@ -1573,10 +1595,18 @@ void MissionBegin::render()
 	{
 		if ( pCurScreen )
 		{
-			if ( !MainMenu::bDrawMechlopedia)
-				pCurScreen->render();
-			else
+			if ( MainMenu::bDrawMechlopedia )
 				pCurScreen->beginFadeIn(1.0);
+			else if ( !mainMenu->occludesLogisticsScreens() )
+			{
+				// Only render the screen behind the menu when it can actually
+				// be seen (menu slide animations).  The defs UI path draws
+				// through ImGui, which composites AFTER the menu's GameOS
+				// movie/background draws -- rendering here while the menu is
+				// opaque would put this screen ON TOP of the movie and menu
+				// background instead of behind them.
+				pCurScreen->render();
+			}
 		}
 		mainMenu->render();		
 		return;

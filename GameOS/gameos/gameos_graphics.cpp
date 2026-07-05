@@ -6,6 +6,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <climits>
+#include <cctype>
+#include <filesystem>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "gameos.hpp"
 #include "font3d.hpp"
@@ -20,6 +28,10 @@
 
 #include "utils/shader_builder.h"
 #include "utils/gl_utils.h"
+
+#ifdef MC2_IMGUI
+#include "../../GuiRuntime/GuiRuntime.h"
+#endif
 #include "utils/Image.h"
 #include "utils/vec.h"
 #include "utils/string_utils.h"
@@ -1328,10 +1340,18 @@ bool gosTexture::createHardwareTexture() {
 
     } else if(pcompdata_ && size_ > 0) {
 
-        // TODO: this is texture from memory, so maybe do not load it from file eh?
+        // The texture cache stores raw file bytes; pick the decoder by
+        // signature instead of assuming TGA.  data/defs UI Editor pages
+        // reference .png art that flows through this from-memory path.
+        const bool looksLikePNG = size_ >= 8 &&
+            pcompdata_[0] == 0x89 && pcompdata_[1] == 'P' &&
+            pcompdata_[2] == 'N'  && pcompdata_[3] == 'G';
 
         Image img;
-        if(!img.loadTGA(pcompdata_, size_)) {
+        bool decoded = looksLikePNG
+            ? img.loadPNG(pcompdata_, size_)
+            : img.loadTGA(pcompdata_, size_);
+        if(!decoded) {
             SPEW(("DBG", "failed to load texture from data, filename: %s, texname: %s\n", filename_? filename_ : "NO FILENAME", texname_?texname_:"NO TEXNAME"));
             return false;
         }
@@ -5927,6 +5947,18 @@ void gosRenderer::handleEvents()
 
 			{ ZoneScopedN("gosRenderer::handleEvents drawableSize"); graphics::get_drawable_size(win_h_, &Environment.drawableWidth, &Environment.drawableHeight); }
 
+#ifdef MC2_IMGUI
+            // Keep ImGui DisplaySize and FramebufferScale in sync with the
+            // actual window after a resolution change.  Without this,
+            // io.DisplaySize stays at the startup value (800x600) and all
+            // ImGui layout, hit-testing, and text rendering use stale dimensions.
+            GuiRuntime::NotifyResize(
+                Environment.drawableWidth,
+                Environment.drawableHeight,
+                Environment.screenWidth,
+                Environment.screenHeight);
+#endif
+
         }
         }
         pendingRequest = false;
@@ -6120,6 +6152,11 @@ void gosRenderer::drawTris(gos_VERTEX* vertices, int count) {
 
     gosASSERT((count % 3) == 0);
 
+    if ( getenv("MC2_LOG_PREVIEW") ) {
+        GLint curFbo = 0; glGetIntegerv(GL_FRAMEBUFFER_BINDING, &curFbo);
+        FILE* f = fopen("preview_debug.log","a");
+        if (f) { fprintf(f,"[PREVIEW] drawTris count=%d isHUD=%d curFbo=%d\n", count, (int)renderStates_[gos_State_IsHUD], curFbo); fflush(f); fclose(f); }
+    }
     if (renderStates_[gos_State_IsHUD]) {
         if (hudFlushed_) {
             SPEW(("GRAPHICS", "[HUD] Late drawTris discarded (after flushHUDBatch)\n"));
@@ -7928,12 +7965,52 @@ gosFont::~gosFont()
     delete[] font_id_;
 }
 
+// ui-phase1: "fontFile,pointSize" request-splitting helper so gosFont::load()
+// can parse an appended ",<pointSize>" suffix off fontFile before calling
+// _splitpath. requestedPointSize is currently parsed but unused by the
+// D3F-first loader below; reserved for future per-size atlas support.
+namespace {
+
+static std::string mc2Lower(std::string v)
+{
+    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return v;
+}
+
+static bool mc2SplitFontRequest(const char* fontFile, std::string& path, int& pointSize)
+{
+    if (!fontFile || !fontFile[0])
+        return false;
+
+    path = fontFile;
+    pointSize = 0;
+
+    const std::size_t comma = path.find_last_of(',');
+    if (comma != std::string::npos) {
+        try {
+            pointSize = std::abs(std::stoi(path.substr(comma + 1)));
+        } catch (...) {
+            pointSize = 0;
+        }
+        path = path.substr(0, comma);
+    }
+
+    return !path.empty();
+}
+
+} // namespace
+
 ////////////////////////////////////////////////////////////////////////////////
 gosFont* gosFont::load(const char* fontFile) {
 
+    std::string requestedPath;
+    int requestedPointSize = 0;
+    if (!mc2SplitFontRequest(fontFile, requestedPath, requestedPointSize))
+        return NULL;
+
     char fname[256];
     char dir[256];
-    _splitpath(fontFile, NULL, dir, fname, NULL);
+    _splitpath(requestedPath.c_str(), NULL, dir, fname, NULL);
 
     // Retail .d3f wins when present. .bmp + .glyph stays as the
     // permanent fallback for converted fonts and community content.
@@ -8368,13 +8445,29 @@ void __stdcall gos_SetRenderState( gos_RenderState RenderState, int Value )
     g_gos_renderer->setRenderState(RenderState, Value);
 }
 
-// [HUD-RES-CLAMP v1] runtime gate. Default ON (game path). The Mission Editor
-// disables it via gos_SetHudResClampEnabled(false) so it renders at native
-// window resolution; clamping the editor's render base to 800x600 desyncs the
-// GL viewport (gos_GetViewport) from the MFC window/mouse space and corrupts
-// editor object pick + drag-move projection. Runtime gate (not #ifdef
-// MC2_IS_EDITOR) because gameos_graphics.cpp is compiled into the gameos_editor
-// library WITHOUT that define (GameOS/gameos/CMakeLists.txt:104).
+// [HUD-RES-CLAMP v1] runtime gate. The Mission Editor disables it via
+// gos_SetHudResClampEnabled(false) so it renders at native window resolution;
+// clamping the editor's render base to 800x600 desyncs the GL viewport
+// (gos_GetViewport) from the MFC window/mouse space and corrupts editor
+// object pick + drag-move projection. Runtime gate (not #ifdef MC2_IS_EDITOR)
+// because gameos_graphics.cpp is compiled into the gameos_editor library
+// WITHOUT that define (GameOS/gameos/CMakeLists.txt:104).
+//
+// ui-phase1 investigation update: tried flipping this default OFF to make
+// Environment.screenWidth/Height reflect the real resolution for the new
+// defs/ImGui pages. REVERTED -- adversarial+meta review (multi-agent, see
+// session notes) found several OTHER legacy files (mechicon.cpp,
+// keyboardref.cpp, loadscreen.cpp) branch on Environment.screenWidth==800/
+// 640/etc as a TUNED-RESOLUTION discriminator, and other code
+// (mechcmd2.cpp:2988-2989, logmain.cpp:780-781) independently re-hardcodes
+// 800x600/640x480 elsewhere in the same state machine regardless of this
+// gate -- so flipping this default doesn't reliably help and risks breaking
+// those other tuned-resolution branches. Real fix for the mech-preview-panel
+// scale bug: render the legacy MLR preview into its own fixed 800x600
+// offscreen FBO (untouched legacy math, Environment.screenWidth stays 800
+// exactly as every other legacy system already expects) and composite that
+// texture into the ImGui panel via GuiRuntime::DrawUiImage with UV cropping
+// -- see SimpleCamera::render()/mechlopedia.cpp. Default back to ON.
 static bool g_hudResClampEnabled = true;
 void __stdcall gos_SetHudResClampEnabled( bool enabled )
 {
@@ -8441,8 +8534,17 @@ void __stdcall gos_SetupViewport( bool FillZ, float ZBuffer, bool FillBG, DWORD 
 void __stdcall gos_SetRenderViewport(float x, float y, float w, float h)
 {
     gosASSERT(g_gos_renderer);
-	//glViewport(x, y, w, h);
 	g_gos_renderer->setRenderViewport(vec4(x, y, w, h));
+	// x, y, w, h are in logical screen coords (e.g. 800x600).
+	// glViewport needs physical drawable pixels.  Scale up for HiDPI displays.
+	const float scaleX = (Environment.drawableWidth > 0 && Environment.screenWidth > 0)
+	    ? (float)Environment.drawableWidth / (float)Environment.screenWidth : 1.f;
+	const float scaleY = (Environment.drawableHeight > 0 && Environment.screenHeight > 0)
+	    ? (float)Environment.drawableHeight / (float)Environment.screenHeight : 1.f;
+	// y is top-down; glViewport origin is bottom-left of drawable.
+	const float phyH = (float)g_gos_renderer->getHeight() * scaleY;
+	glViewport((GLint)(x * scaleX), (GLint)(phyH - y * scaleY - h * scaleY),
+	           (GLsizei)(w * scaleX), (GLsizei)(h * scaleY));
 }
 
 void __stdcall gos_GetRenderViewport(float* x, float* y, float* w, float* h)
@@ -9282,6 +9384,27 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 	gosASSERT(material);
 	gosASSERT(g_gos_renderer);
 
+	// MERGE-CONFLICT-UI-PHASE1: theirs (ui-phase1 fork) wanted to move this
+	// `gosPostProcess* pp = getGosPostProcess(); if (!pp) return;` guard to
+	// AFTER the terrainMVP upload block below, so that 3D camera views shown
+	// during the logistics/menu phase (encyclopedia mech viewer, options
+	// gameplay preview — added by the ui-phase1 GuiRuntime work) still get a
+	// valid MVP uniform even when gosPostProcess hasn't been created yet
+	// (pp is only created once a mission/scene is loaded). Ours has since
+	// substantially rewritten the terrainMVP upload block itself
+	// (OBJECT-DECAL-MATRIX-SHARE-1 / OBJECT-SHADOW-MVP-CURRENCY-1: routes
+	// object MVP through gos_GetObjectDrawMVP with a view-epoch check +
+	// MC2_PROP_FIXB_MVP killswitch, rather than always using
+	// getTerrainMVP() directly) — the exact lines theirs' hunk reorders.
+	// Reordering the pp-null-check without re-verifying that rewritten
+	// block's assumptions (e.g. whether gos_GetObjectDrawMVP or
+	// g_gos_renderer state depends on pp already existing) is exactly the
+	// kind of renderer-internals change this merge must not blind-apply.
+	// Preserving ours' early-return-before-MVP-upload ordering as-is;
+	// theirs' pp-guard-after-MVP reordering was NOT applied. If the
+	// encyclopedia/options 3D preview needs a valid MVP without
+	// gosPostProcess, this is the seam to revisit — verify the rewritten
+	// MVP block tolerates pp==nullptr before moving the guard.
 	gosPostProcess* pp = getGosPostProcess();
 	if (!pp) return;
 
@@ -9439,6 +9562,166 @@ void __stdcall gos_ForceApplyRenderStates() {
 void __stdcall gos_InvalidateRenderStateCache() {
     if (!g_gos_renderer) return;
     g_gos_renderer->invalidateRenderStateCache();
+}
+
+// Called from GuiRuntime::Render() just before post-ImGui 3D camera callbacks.
+// Restores GL state that shadow sub-passes leave dirty and that applyRenderStates()
+// has no tracking for (glColorMask, scissor test, FB binding).
+void __stdcall gos_PrepareForPostImGuiRender() {
+    // Shadow passes (gosPostProcess::beginShadowPass*) call
+    // glColorMask(GL_FALSE,...) and restore in endShadowPass(). If endScene()
+    // finishes with colorMask still FALSE (e.g. shadows disabled mid-frame or
+    // early-out path), all subsequent color writes are silently suppressed.
+    // applyRenderStates() has no gos_State_ColorMask and never fixes this.
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+    // Ensure we are on the default framebuffer and scissor is not clipping.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_SCISSOR_TEST);
+
+    static const bool s_diag = (getenv("MC2_3DVIEW_DIAG") != nullptr);
+    if (s_diag) {
+        static bool s_diagDone = false;
+        if (!s_diagDone) {
+            s_diagDone = true;
+            GLint fbo = 0; glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+            GLboolean depthTest = glIsEnabled(GL_DEPTH_TEST);
+            GLboolean scissor   = glIsEnabled(GL_SCISSOR_TEST);
+            GLint depthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+            GLboolean depthMask = GL_FALSE; glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+            GLboolean cm[4] = {}; glGetBooleanv(GL_COLOR_WRITEMASK, cm);
+            GLint vp[4] = {}; glGetIntegerv(GL_VIEWPORT, vp);
+            fprintf(stderr,
+                "[3DVIEW_DIAG v1] post-imgui: fbo=%d depthTest=%d depthFunc=0x%x "
+                "depthMask=%d scissor=%d colorMask=%d%d%d%d vp=[%d,%d,%d,%d]\n",
+                fbo, (int)depthTest, depthFunc, (int)depthMask, (int)scissor,
+                (int)cm[0], (int)cm[1], (int)cm[2], (int)cm[3],
+                vp[0], vp[1], vp[2], vp[3]);
+            fflush(stderr);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Camera preview FBO — used by SimpleCamera to render 3D panel views
+// (encyclopedia, options gameplay) into a clean offscreen buffer so they
+// are unaffected by the scene's reverse-Z depth state or gosPostProcess
+// lifecycle.
+//
+// PREVIEW-FBO-FIXED-800x600-1: the FBO is a FIXED 800x600 (the legacy 2D
+// UI's native virtual canvas), NOT the real drawable size. The legacy MLR
+// mech-preview draw (SimpleCamera::render(), gos_GetViewport(), TG_Shape's
+// screen-space math) is written entirely in terms of that 800x600 canvas
+// and Environment.screenWidth/Height (which stays 800x600 by design -- see
+// g_hudResClampEnabled above; do not "fix" that to real resolution, it desyncs
+// other legacy tuned-resolution code). Rendering into an 800x600 FBO means
+// none of that legacy math needs to know or care about the real window size
+// at all -- it draws exactly as it always has. The caller then samples just
+// the small preview rect (in 0..800/0..600 UV space) out of this texture and
+// draws it, scaled to fit, as a normal ImGui image in the real-resolution
+// defs UI panel (see GuiRuntime::DrawUiImage + gos_GetCameraPreviewTexture
+// below, wired from SimpleCamera::render()/mechlopedia.cpp/mechbayscreen.cpp).
+// This avoids EVERY resolution-mismatch class of bug the direct-draw
+// approach hit: no real-vs-800 scale math, no glViewport scoping, no
+// depth-state-after-ImGui issues (the FBO gets its own clean depth buffer
+// every frame).
+// ---------------------------------------------------------------------------
+namespace {
+    GLuint s_camPreviewFbo = 0;
+    GLuint s_camPreviewColorTex = 0;
+    GLuint s_camPreviewDepthRbo = 0;
+    int    s_camPreviewW = 0;
+    int    s_camPreviewH = 0;
+
+    void ensureCamPreviewFbo(int w, int h)
+    {
+        if (s_camPreviewFbo && s_camPreviewW == w && s_camPreviewH == h)
+            return;
+
+        if (s_camPreviewFbo)
+        {
+            glDeleteFramebuffers(1, &s_camPreviewFbo);
+            glDeleteTextures(1, &s_camPreviewColorTex);
+            glDeleteRenderbuffers(1, &s_camPreviewDepthRbo);
+            s_camPreviewFbo = s_camPreviewColorTex = s_camPreviewDepthRbo = 0;
+        }
+
+        glGenFramebuffers(1, &s_camPreviewFbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_camPreviewFbo);
+
+        glGenTextures(1, &s_camPreviewColorTex);
+        glBindTexture(GL_TEXTURE_2D, s_camPreviewColorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_camPreviewColorTex, 0);
+
+        glGenRenderbuffers(1, &s_camPreviewDepthRbo);
+        glBindRenderbuffer(GL_RENDERBUFFER, s_camPreviewDepthRbo);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, w, h);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, s_camPreviewDepthRbo);
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        s_camPreviewW = w;
+        s_camPreviewH = h;
+    }
+}
+
+// Bind the offscreen preview FBO (fixed 800x600, the legacy 2D UI's native
+// canvas) and prepare it for a fresh mech render. Must be paired with
+// gos_EndCameraPreviewRender(). See PREVIEW-FBO-FIXED-800x600-1 above for why
+// this is fixed-size rather than drawable-size.
+void __stdcall gos_BeginCameraPreviewRender()
+{
+    if (!g_gos_renderer) return;
+    ensureCamPreviewFbo(800, 600);
+
+    static bool s_once = false;
+    if (!s_once) {
+        s_once = true;
+        GLenum status = GL_FRAMEBUFFER_UNDEFINED;
+        if (s_camPreviewFbo) {
+            glBindFramebuffer(GL_FRAMEBUFFER, s_camPreviewFbo);
+            status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        }
+        fprintf(stderr, "[3DVIEW_DIAG v2] BeginCameraPreviewRender: fbo=%u 800x600 status=0x%x\n",
+                s_camPreviewFbo, status);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, s_camPreviewFbo);
+    glViewport(0, 0, 800, 600);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    // 3D-viewer background: black, matching the surrounding panel.
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(0.0);  // reverse-Z: far=0, near=1
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
+}
+
+// Restore the default framebuffer (and its real-resolution glViewport) after
+// camera preview rendering.
+void __stdcall gos_EndCameraPreviewRender()
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (g_gos_renderer) {
+        glViewport(0, 0, g_gos_renderer->getWidth(), g_gos_renderer->getHeight());
+        g_gos_renderer->invalidateRenderStateCache();
+    }
+}
+
+// GL texture name of the 800x600 preview color attachment, for a caller to
+// wrap as an ImTextureID and draw via GuiRuntime::DrawUiImage with UV
+// cropping -- the composite-to-real-screen step happens entirely in ImGui
+// space, not via glBlitFramebuffer, so no resolution/scale math is needed
+// here at all.
+GLuint __stdcall gos_GetCameraPreviewTexture()
+{
+    return s_camPreviewColorTex;
 }
 
 // Terrain tessellation API

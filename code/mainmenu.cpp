@@ -68,7 +68,7 @@ void SplashIntro::init()
 		Assert(0,0,errorStr );
 	}
 
-	LogisticsScreen::init( file, "Static", "Text", "Rect", "Button" );
+	LogisticsScreen::init( file, "Static", "Text", "Rect", "Button", NULL, "AnimObject" );
 }
 
 MainMenu::MainMenu(  )
@@ -101,7 +101,7 @@ int MainMenu::init( FitIniFile& file )
 	file.seekBlock("Tunes");
 	file.readIdLong("TuneId",tuneId);
 
-	LogisticsScreen::init( file, "Static", "Text", "Rect", "Button" );
+	LogisticsScreen::init( file, "Static", "Text", "Rect", "Button", NULL, "AnimObject" );
 
 	FullPathFileName name;
 	name.init( artPath, "mcl_sp", ".fit" );
@@ -710,7 +710,7 @@ void MainMenu::update()
 	{
 		if ( bDrawBackground  )
 		{
-			if ( !intro.animObjects[0].isDone() )
+			if ( !intro.allAnimObjectsDone() )
 			{
 				intro.update();
 				background.update();
@@ -745,6 +745,25 @@ void MainMenu::update()
 			handleMessage( 0, MM_MSG_RETURN_TO_GAME );
 		}
 	}
+}
+
+bool MainMenu::occludesLogisticsScreens() const
+{
+	// Bink intro plays as a fullscreen GameOS quad; anything routed through
+	// the ImGui HUD would composite on top of it.
+	if ( introMovie )
+		return true;
+
+	// Splash-mode menu (bDrawBackground): render() covers the screen with an
+	// opaque fullscreen rect plus the splash background, so the logistics
+	// screen behind is never meant to be visible.  NOTE: aAnimation's
+	// isAnimating() means "begin() was called and end() was not" -- it stays
+	// true for the menu's whole lifetime after the slide-in starts -- so it
+	// cannot be used to detect the transition window.  bDrawBackground alone
+	// is the correct gate: MissionBegin sets it true for the entire splash
+	// and false for the in-logistics ESC menu, where the screen behind the
+	// semi-transparent dim is supposed to show.
+	return bDrawBackground;
 }
 
 void MainMenu::render()
@@ -809,9 +828,9 @@ void MainMenu::render()
 
 		if ( bDrawBackground )
 		{
-			background.render();
+			background.renderLegacy();
 			intro.render();
-			if ( !intro.animObjects[0].isDone() && !introOver && !bHostLeftDlg )
+			if ( !intro.allAnimObjectsDone() && !introOver && !bHostLeftDlg )
 				return;
 
 
@@ -823,9 +842,12 @@ void MainMenu::render()
 		drawRect( rect, color );
 	}
 
-	if ( !xDelta && !yDelta )
+	if ( !xDelta && !yDelta && !hasDefsUiPage() )
 	{
-		drawShadowText( 0xffc66600, 0xff000000, textObjects[1].font.getTempHandle(), 
+		// Legacy GameOS copyright line.  When the data/defs UI page is
+		// active it renders this text itself through ImGui; drawing it here
+		// too produces a second, GameOS-scaled copy across the screen.
+		drawShadowText( 0xffc66600, 0xff000000, textObjects[1].font.getTempHandle(),
 			textObjects[1].globalX(), textObjects[1].globalTop(),
 			textObjects[1].globalRight(), textObjects[1].globalBottom(),
 			true, textObjects[1].text, false, textObjects[1].font.getSize(), 1, 1 );

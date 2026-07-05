@@ -15,6 +15,7 @@ PilotReadyScreen.cpp			: Implementation of the PilotReadyScreen component.
 #include"gamesound.h"
 #include"multplyr.h"
 #include"chatwindow.h"
+#include"../GuiRuntime/GuiRuntime.h"
 
 PilotReadyScreen* PilotReadyScreen::s_instance = NULL;
 
@@ -55,7 +56,8 @@ void PilotReadyScreen::init(FitIniFile* file)
 	mechDisplay.init();
 	// init button, texts, statics, rects
 	LogisticsScreen::init( *file, "PilotReadyStatic", "PilotReadyTextEntry", "PilotReadyRect", "PilotReadyButton" );
-	
+	defsHelpTextKey = "game.mcl_pr_layout.text.help_text";
+
 	// initialize little icons
 	FitIniFile iconFile;
 	char path[256];
@@ -288,9 +290,22 @@ void PilotReadyScreen::end()
 
 void PilotReadyScreen::render(int xOffset, int yOffset )
 {
+	// Legacy->display scale for the text bridge (crisp TTF pilot names on the pilot
+	// list + deployment icons, matching the data/defs UI layer).
+	float tbDw = 0.f, tbDh = 0.f, tbSx = 1.f, tbSy = 1.f;
+	if ( GuiRuntime::GetDisplaySize( tbDw, tbDh ) &&
+		 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
+	{
+		tbSx = tbDw / (float)Environment.screenWidth;
+		tbSy = tbDh / (float)Environment.screenHeight;
+	}
+
+	// Pilot names get a slight font boost (1.3x) so they read larger in the list.
+	aObject::beginTextBridge( tbSx, tbSy, 1.3f );
 	pilotListBox.move( xOffset, yOffset );
 	pilotListBox.render();
 	pilotListBox.move( -xOffset, -yOffset );
+	aObject::endTextBridge();
 
 
 	if ( !xOffset && !yOffset )
@@ -320,10 +335,12 @@ void PilotReadyScreen::render(int xOffset, int yOffset )
 
 
 	LogisticsScreen::render( xOffset, yOffset );
+	aObject::beginTextBridge( tbSx, tbSy );
 	for (int i = 0; i < ICON_COUNT; i++ )
 	{
 		pIcons[i].render( xOffset, yOffset );
 	}
+	aObject::endTextBridge();
 
 
 	if ( mechSelected )
@@ -370,6 +387,7 @@ void PilotReadyScreen::update()
 		// RP
 		sprintf( str, "%ld ", LogisticsData::instance->getCBills() );
 		textObjects[1].setText( str );
+		setDefsElementText( "game.mcl_pr_layout.text.cbills_text", str );
 
 		for ( int i = 0; i < 4; i++ )
 			skillIcons[i].update();
@@ -772,6 +790,11 @@ void PilotReadyScreen::setPilot( LogisticsPilot* pPilot )
 		statics[67].setTexture( str );
 		statics[67].setColor( 0xffffffff );
 		statics[67].setUVs( 0, 0, 92, 128 );
+		// Route the per-pilot portrait TGA into the defs image (the legacy static is
+		// suppressed by the defs page).  Same pattern as the encyclopedia personnel
+		// picture.
+		setDefsElementTexture( "game.mcl_pr_layout.image.this_rect_defines_the_placement",
+			std::string( (const char*)str ) );
 	}
 
 	// update pilot specific stuff
@@ -779,26 +802,31 @@ void PilotReadyScreen::setPilot( LogisticsPilot* pPilot )
 	{
 		char str[256];
 		//ACE not continguous with other ranks.  Added too late!
-		if (pCurPilot->getRank() != 4)
-			textObjects[4].setText( IDS_GREEN + pCurPilot->getRank() );
-		else
-			textObjects[4].setText( IDS_ACE );
+		long rankID = ( pCurPilot->getRank() != 4 ) ? ( IDS_GREEN + pCurPilot->getRank() ) : IDS_ACE;
+		textObjects[4].setText( rankID );
+		char rankBuf[128];
+		cLoadString( rankID, rankBuf, sizeof( rankBuf ) - 1 );
+		setDefsElementText( "game.mcl_pr_layout.text.pilot_info_rank", rankBuf );
 
 		sprintf( str, "%ld", (long)pCurPilot->getGunnery() );
 		textObjects[5].setText( str );
+		setDefsElementText( "game.mcl_pr_layout.text.pilot_info_targeting_number", str );
 		attributeMeters[0].setValue( ((float)pCurPilot->getGunnery())/80.f );
 
 		char number[64];
 		sprintf( number, "%ld", (long)pCurPilot->getPiloting() );
 		textObjects[6].setText( number );
+		setDefsElementText( "game.mcl_pr_layout.text.pilot_info_piloting_number", number );
 		attributeMeters[1].setValue( pCurPilot->getPiloting()/80.f );
 
 		sprintf( number, "%ld", pCurPilot->getMechKills() );
 		textObjects[7].setText( number );
+		setDefsElementText( "game.mcl_pr_layout.text.pilot_info_kills_number", number );
 
 		EString name = pCurPilot->getName();
 		name.MakeUpper();
 		textObjects[8].setText( name  );
+		setDefsElementText( "game.mcl_pr_layout.text.pilot_name_header", (const char*)name );
 
 		int count = 32;
 		const char* specialtySkills[32];
@@ -809,16 +837,19 @@ void PilotReadyScreen::setPilot( LogisticsPilot* pPilot )
         int i = 0;
 		for (; i < 4; i++ )
 		{
+			char skillKey[64];
+			sprintf( skillKey, "game.mcl_pr_layout.text.special_skill_%d", i + 1 );
 			if ( i < count )
 			{
 				textObjects[9+i].setText( specialtySkills[i] );
+				setDefsElementText( skillKey, specialtySkills[i] );
 				textObjects[9+i].resize( textObjects[9+i].width(), textObjects[9+i].font.height() );
 				textObjects[9+i].setHelpID( skillIDs[i] + IDS_SPECIALTY_HELP1 );
 				skillIcons[i] = specialtySkillIcons[MechWarrior::skillTypes[skillIDs[i]]];
 				skillIcons[i].resize( skillLocations[i].right - skillLocations[i].left,
 									  skillLocations[i].bottom - skillLocations[i].top );
 				skillIcons[i].moveTo( skillLocations[i].left, skillLocations[i].top );
-				
+
 				skillIcons[i].setColor( 0xffffffff );
 				skillIcons[i].setHelpID( skillIDs[i] + IDS_SPECIALTY_HELP1 );
 
@@ -827,6 +858,7 @@ void PilotReadyScreen::setPilot( LogisticsPilot* pPilot )
 			else
 			{
 				textObjects[9+i].setText( "" );
+				setDefsElementText( skillKey, "" );
 				skillIcons[i].setColor( 0 );
 				skillIcons[i].setHelpID( 0 );
 			}
@@ -863,6 +895,15 @@ void PilotReadyScreen::setPilot( LogisticsPilot* pPilot )
 	{
 		for ( int i = 4; i < 13; i++ )
 			textObjects[i].setText( "" );
+		setDefsElementText( "game.mcl_pr_layout.text.pilot_info_rank", "" );
+		setDefsElementText( "game.mcl_pr_layout.text.pilot_info_targeting_number", "" );
+		setDefsElementText( "game.mcl_pr_layout.text.pilot_info_piloting_number", "" );
+		setDefsElementText( "game.mcl_pr_layout.text.pilot_info_kills_number", "" );
+		setDefsElementText( "game.mcl_pr_layout.text.pilot_name_header", "" );
+		setDefsElementText( "game.mcl_pr_layout.text.special_skill_1", "" );
+		setDefsElementText( "game.mcl_pr_layout.text.special_skill_2", "" );
+		setDefsElementText( "game.mcl_pr_layout.text.special_skill_3", "" );
+		setDefsElementText( "game.mcl_pr_layout.text.special_skill_4", "" );
 
 		statics[staticCount-1].setColor( 0 );
 

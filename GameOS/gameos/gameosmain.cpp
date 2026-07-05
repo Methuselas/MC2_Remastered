@@ -625,6 +625,13 @@ static void draw_screen( void )
     drainGLErrors("hud");
     //CHECK_GL_ERROR;
 #ifdef MC2_IMGUI
+    // FB 0 depth starts at 1.0 (GL default); only sceneFBO_ gets cleared during
+    // draw_screen().  Post-ImGui 3D camera renders (encyclopedia mech viewer) use
+    // GL_GEQUAL (reverse-Z), so fragments at depth 0.x all fail "0.x >= 1.0".
+    // Clear to 0.0 (reverse-Z far) once per frame so the depth test passes.
+    glDepthMask(GL_TRUE);
+    glClearDepth(0.0);
+    glClear(GL_DEPTH_BUFFER_BIT);
     GuiRuntime::Render();
 #endif
 }
@@ -1175,17 +1182,119 @@ int main(int argc, char** argv)
     // fills in Environment structure
     GetGameOSEnvironment(cmdline);
 
+    // Pre-window resolution bootstrap (ui-phase1: supersedes [HUD-RES-CLAMP v1]).
+    //
+    // GetGameOSEnvironment (mechcmd2.cpp) hardcodes 800x600.  prefs.load()
+    // + gos_SetScreenMode run inside InitializeGameEngine — after the window
+    // is already created — so the window and all UI coordinate math start
+    // with the wrong dimensions.
+    //
+    // Fix: read ResolutionX/Y (and FullScreen) from options.cfg here, before
+    // create_window, so the window is sized correctly from the first frame.
+    // Uses a simple line scanner to avoid pulling in the full FitIniFile stack
+    // before the GL context exists.  Falls back to 800x600 if the file is
+    // absent or the keys are missing.
+    //
+    // Env var overrides (highest priority, useful for CI/smoke/debugging):
+    //   MC2_WIDTH=<px>   MC2_HEIGHT=<px>
+    //
+    // The old [HUD-RES-CLAMP v1] hardcoded 800x600 unconditionally to keep the
+    // legacy 2D HUD's layout correct; that was a stopgap for the pre-ImGui HUD
+    // and is retired now that the defs/ImGui UI drives real-resolution layout.
+    {
+        const char* envW = std::getenv("MC2_WIDTH");
+        const char* envH = std::getenv("MC2_HEIGHT");
+        if (envW && atoi(envW) > 0)
+            Environment.screenWidth = atoi(envW);
+        if (envH && atoi(envH) > 0)
+            Environment.screenHeight = atoi(envH);
+
+        // If no env override, try options.cfg.
+        if (!envW && !envH)
+        {
+            FILE* f = std::fopen("options.cfg", "r");
+            if (f)
+            {
+                char line[256];
+                bool inBlock = false;
+                int foundW = 0, foundH = 0;
+                bool foundFS = false;
+                bool fullscreenVal = false;
+
+                while (std::fgets(line, sizeof(line), f))
+                {
+                    // Strip CR/LF
+                    char* nl = std::strrchr(line, '\n');
+                    if (nl) *nl = '\0';
+                    nl = std::strrchr(line, '\r');
+                    if (nl) *nl = '\0';
+
+                    if (std::strstr(line, "[MechCommander2]"))
+                    {
+                        inBlock = true;
+                        continue;
+                    }
+                    // Any new block ends the section we want
+                    if (inBlock && line[0] == '[')
+                        break;
+                    if (!inBlock)
+                        continue;
+
+                    // Lines look like: "lg ResolutionX = 1920"
+                    const char* eq = std::strchr(line, '=');
+                    if (!eq)
+                        continue;
+
+                    char key[64] = {};
+                    // Copy everything before '=' and find the last word (the key name)
+                    std::ptrdiff_t beforeEq = eq - line;
+                    if (beforeEq <= 0 || beforeEq >= 63)
+                        continue;
+                    char before[64] = {};
+                    std::strncpy(before, line, (size_t)beforeEq);
+
+                    // The key is the last whitespace-delimited token before '='
+                    char* tok = std::strtok(before, " \t");
+                    char* lastTok = tok;
+                    while (tok) { lastTok = tok; tok = std::strtok(nullptr, " \t"); }
+                    if (!lastTok)
+                        continue;
+
+                    const int val = std::atoi(eq + 1);
+                    if      (std::strcmp(lastTok, "ResolutionX") == 0 && val > 0) foundW = val;
+                    else if (std::strcmp(lastTok, "ResolutionY") == 0 && val > 0) foundH = val;
+                    else if (std::strcmp(lastTok, "FullScreen")  == 0)
+                    {
+                        foundFS = true;
+                        // FitIniFile booleans: "1" or "true"
+                        fullscreenVal = (val != 0 || std::strstr(eq + 1, "true") != nullptr);
+                    }
+                }
+                std::fclose(f);
+
+                if (foundW > 0) Environment.screenWidth  = foundW;
+                if (foundH > 0) Environment.screenHeight = foundH;
+                if (foundFS)    Environment.fullScreen   = fullscreenVal ? 1 : 0;
+
+                printf("[RESOLUTION] Pre-window: %dx%d fullscreen=%d (from options.cfg)\n",
+                       Environment.screenWidth, Environment.screenHeight,
+                       Environment.fullScreen);
+            }
+            else
+            {
+                printf("[RESOLUTION] Pre-window: %dx%d (options.cfg not found, using defaults)\n",
+                       Environment.screenWidth, Environment.screenHeight);
+            }
+        }
+        else
+        {
+            printf("[RESOLUTION] Pre-window: %dx%d (from MC2_WIDTH/MC2_HEIGHT env)\n",
+                   Environment.screenWidth, Environment.screenHeight);
+        }
+    }
+
     delete[] cmdline;
     cmdline = NULL;
-
-    // [HUD-RES-CLAMP v1] Force the startup render base to the canonical 800x600
-    // regardless of options.cfg ResolutionX/Y. The legacy 2D HUD only lays out
-    // correctly at the discrete tuned widths; a non-tuned options value breaks
-    // it. 800x600 + FULLSCREEN_DESKTOP upscale matches the known-good shipped 4K
-    // config and is immune to the options-menu resolution rewrite. Mirrors the
-    // runtime clamp in gos_SetScreenMode. Memory: hud_scene_resolution_separation.
-    Environment.screenWidth  = 800;
-    Environment.screenHeight = 600;
 
     int w = Environment.screenWidth;
     int h = Environment.screenHeight;
@@ -1289,6 +1398,14 @@ int main(int argc, char** argv)
     startup_phase("renderer_created");
 #ifdef MC2_IMGUI
     GuiRuntime::Init();
+    // SDL_ImplSDL2_NewFrame sets DisplaySize from SDL_GetWindowSize (logical pixels).
+    // Set it explicitly here as well so the very first frame is correct even before
+    // the first NewFrame call, and FramebufferScale is initialised for HiDPI paths.
+    {
+        int fbW = 0, fbH = 0;
+        graphics::get_drawable_size(win, &fbW, &fbH);
+        GuiRuntime::NotifyResize(fbW, fbH, Environment.screenWidth, Environment.screenHeight);
+    }
 #endif
     if(!gos_CreateAudio())
     {   // not an error
@@ -1762,8 +1879,35 @@ int main(int argc, char** argv)
             static const long  s_ssFrame = getenv("MC2_SCREENSHOT_AT_FRAME")
                 ? atol(getenv("MC2_SCREENSHOT_AT_FRAME")) : -1L;
             static bool s_ssDone = false;
+            // MC2_SCREENSHOT_SOURCE=backbuffer: capture FBO 0 (the real, finished
+            // present-ready framebuffer -- includes the legacy 2D HUD/logistics
+            // draws AND GuiRuntime::Render()'s ImGui compositing) instead of the
+            // mission-only offscreen scene FBO below. Needed for validating
+            // logistics/menu UI (Mech Bay, Mechlopedia, etc.) headlessly -- those
+            // screens never touch sceneFBO_ at all, so the default sceneFBO
+            // capture always shows stale/unrelated mission terrain for them.
+            // Requires a non-minimized window (driver only composites to FBO 0
+            // then); the default (unset) sceneFBO path remains the robust
+            // works-when-minimized oracle for mission/terrain visual diffs.
+            static const bool s_ssBackbuffer = []{
+                const char* v = getenv("MC2_SCREENSHOT_SOURCE");
+                return v && !_stricmp(v, "backbuffer");
+            }();
             if (s_ssPath && s_ssFrame >= 0 && !s_ssDone
                 && (long)g_mc2FrameCounter >= s_ssFrame) {
+                if (s_ssBackbuffer) {
+                    const int ssW = Environment.drawableWidth  > 0 ? Environment.drawableWidth  : Environment.screenWidth;
+                    const int ssH = Environment.drawableHeight > 0 ? Environment.drawableHeight : Environment.screenHeight;
+                    if (ssW > 0 && ssH > 0) {
+                        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                        glReadBuffer(GL_BACK);
+                        gos::screenshot::writeTGA(s_ssPath, ssW, ssH);
+                        s_ssDone = true;
+                        fprintf(stderr, "[SCREENSHOT v1] frame=%u wrote %s (%dx%d, backbuffer)\n",
+                                g_mc2FrameCounter, s_ssPath, ssW, ssH);
+                        fflush(stderr);
+                    }
+                } else {
                 // Capture the offscreen post-process scene FBO, NOT the window
                 // backbuffer (FBO 0) — when the window is minimized the driver
                 // never composites to FBO 0 (it reads black), but sceneFBO_ is
@@ -1785,6 +1929,7 @@ int main(int argc, char** argv)
                     fprintf(stderr, "[SCREENSHOT v1] frame=%u wrote %s (%dx%d, sceneFBO)\n",
                             g_mc2FrameCounter, s_ssPath, ssW, ssH);
                     fflush(stderr);
+                }
                 }
             }
         }

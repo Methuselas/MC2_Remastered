@@ -448,6 +448,32 @@ static bool tryReadTgaLogicalSize(File& textureFile, DWORD uvScale, DWORD& logic
 	if (textureFile.fileSize() < sizeof(TGAFileHeader))
 		return false;
 
+	// [UI-PHASE1] carried from mc2r_ui_phase1 (base->theirs hunk @txmmgr.cpp:202+).
+	// PNG check first: the data/defs UI art is .png, and interpreting the
+	// PNG signature bytes as a TGA header yields garbage width/height.
+	// PNG IHDR stores big-endian width/height at offsets 16 and 20.
+	unsigned char sniff[24] = {0};
+	if (textureFile.read((MemoryPtr)sniff, sizeof(sniff)) == sizeof(sniff) &&
+		sniff[0] == 0x89 && sniff[1] == 'P' && sniff[2] == 'N' && sniff[3] == 'G')
+	{
+		textureFile.seek(0);
+		const DWORD pngWidth = (static_cast<DWORD>(sniff[16]) << 24) |
+							   (static_cast<DWORD>(sniff[17]) << 16) |
+							   (static_cast<DWORD>(sniff[18]) << 8) |
+							   static_cast<DWORD>(sniff[19]);
+		const DWORD pngHeight = (static_cast<DWORD>(sniff[20]) << 24) |
+								(static_cast<DWORD>(sniff[21]) << 16) |
+								(static_cast<DWORD>(sniff[22]) << 8) |
+								static_cast<DWORD>(sniff[23]);
+		if (!pngWidth || !pngHeight)
+			return false;
+		// PNG UI art is authored 1:1; do not apply the TGA uvScale shrink.
+		logicalWidth = pngWidth;
+		logicalHeight = pngHeight;
+		return true;
+	}
+	textureFile.seek(0);
+
 	TGAFileHeader header;
 	if (textureFile.read((MemoryPtr)&header, sizeof(header)) != sizeof(header))
 	{

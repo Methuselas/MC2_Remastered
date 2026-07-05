@@ -125,6 +125,23 @@ TG_DWORDPool			*facePool = NULL;
 TG_ShadowPool			*shadowPool = NULL;
 TG_TrianglePool			*trianglePool = NULL;
 
+// Encyclopedia 3D-preview auto-framing: when armed, the software vertex
+// transform accumulates the projected screen-space bounding box of the
+// geometry it draws. This is the *real* rendered extent (rotation- and
+// geometry-correct), used by SimpleCamera to fit the object to the panel.
+// Disarmed by default; zero cost on the normal in-mission path.
+// [UI-PHASE1] carried from mc2r_ui_phase1 (base->theirs hunk @tgl.cpp:90-105);
+// consumed by code/simplecamera.cpp + code/mechlopedia.cpp (Mechlopedia/Mechbay preview).
+bool  g_previewCaptureBounds = false;
+float g_previewBoundsMinX =  1e9f;
+float g_previewBoundsMaxX = -1e9f;
+float g_previewBoundsMinY =  1e9f;
+float g_previewBoundsMaxY = -1e9f;
+// Diagnostic: triangles actually emitted to the draw list by TG_Shape::Render.
+// Reset and read by SimpleCamera::render to tell "transformed but not drawn"
+// (render gate / cull) apart from "not transformed".
+int   g_previewDrawTris = 0;
+
 //-------------------------------------------------------------------------------
 extern bool useVertexLighting;
 extern bool useFaceLighting;
@@ -144,6 +161,15 @@ bool silentMode = false;		//Used for automated builds to keep errors from poppin
 // (will render them offset a bit to check that they are rendered exactly same as old way)
 // for now everything seems to be correct thoug, so could enable it by default
 // look into gos_tex_vertex_lighted.vert for where offset is defined
+// MERGE-CONFLICT-UI-PHASE1: theirs (mc2r_ui_phase1) flips this default false->true,
+// apparently so the Mechlopedia/Mechbay preview's hardware-vertex shapes take the
+// shader-lighting path. NOT applied: this flag also gates the live
+// `eligibleForGpuObjects(this)`-interlocked addRenderShape branch in
+// TG_Shape::MultiTransformShape (tgl.cpp, ~line 2698+17) used by the slice-2
+// GPU-object-offload work — flipping the *global* default changes normal
+// in-mission rendering behavior, not just the preview panel. Needs a scoped
+// per-preview override (e.g. save/restore around the encyclopedia render call)
+// instead of a global default flip. Left at ours' value; resolve before ship.
 bool bShadersDrawPathEnabled = false;
 
 // Slice 2 (object-offload) — forward declaration from gos_static_prop_batcher.h.
@@ -1782,8 +1808,46 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 		&::mc2_object_recon::g_per_frame.shape_calls);
 
 	if (!numVertices)		//WE are the root Shape which may have no shape or a helper shape which defintely has no shape!
+	{
+		// [UI-PHASE1] carried from mc2r_ui_phase1 (base->theirs hunk @tgl.cpp:1722+).
+		// GPU-only shape: Assimp-imported mesh with ib_/vb_ but no SW vertex pipeline.
+		// Claim the hardware vertex node slot now so TG_Shape::Render can fill it via
+		// the 3-arg path.  Also set lastTurnTransformed so Render's staleness guard passes.
+		// Guard: only TG_TypeShape (SHAPE_NODE) carries ib_/vb_/listOfTextures — casting
+		// a bare TG_TypeNode (root/helper) reads garbage at those offsets and crashes.
+		TG_TypeShapePtr hwShape = (myType && myType->GetNodeType() == SHAPE_NODE)
+			? (TG_TypeShapePtr)myType : nullptr;
+		if (bShadersDrawPathEnabled && hwShape && hwShape->ib_ && hwShape->vb_
+			&& hwShape->listOfTypeTriangles && hwShape->listOfTextures
+			&& shapeToClip
+			&& !eligibleForGpuObjects(this) && !isSpotlight && !isWindow
+			&& !hwShape->listOfTextures[hwShape->listOfTypeTriangles[0].localTextureHandle].textureAlpha
+			&& (alphaValue == 0xff))
+		{
+			DWORD addFlags = 0;
+			if (isHudElement) addFlags |= MC2_ISCOMPASS;
+			if (isClamped)    addFlags |= MC2_ISTERRAIN;
+			if (hwShape->alphaTestOn) addFlags |= MC2_ALPHATEST;
+
+			size_t numLights = MAX_HW_LIGHTS_IN_WORLD;
+			GatherLightsParameters(&lightData_);
+			gosASSERT(numLights > 0);
+
+			cur_viewport[0] = viewMulX;
+			cur_viewport[1] = viewMulY;
+			cur_viewport[2] = viewAddX;
+			cur_viewport[3] = viewAddY;
+			cur_shape2clip = *shapeToClip;
+
+			mcTextureManager->addRenderShape(
+				hwShape->listOfTextures[hwShape->listOfTypeTriangles[0].localTextureHandle].mcTextureNodeIndex,
+				MC2_DRAWSOLID | addFlags);
+
+			lastTurnTransformed = turn;
+		}
 		return(1);
-		
+	}
+
 	//-------------------------------------------------
 	// Transform entire list of vertices.
 	// shapeOrigin is ShapeToWorld.
@@ -1891,6 +1955,16 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 		listOfVertices[j].rhw = screen.w;
 		listOfVertices[j].frgb = fogRGB;
 		memset(&listOfColors[j],0,sizeof(listOfColors[j]));
+
+		// [UI-PHASE1] carried from mc2r_ui_phase1: Encyclopedia preview accumulates
+		// the real projected screen bounds when armed (see g_previewCaptureBounds).
+		if (g_previewCaptureBounds)
+		{
+			if (screen.x < g_previewBoundsMinX) g_previewBoundsMinX = screen.x;
+			if (screen.x > g_previewBoundsMaxX) g_previewBoundsMaxX = screen.x;
+			if (screen.y < g_previewBoundsMinY) g_previewBoundsMinY = screen.y;
+			if (screen.y > g_previewBoundsMaxY) g_previewBoundsMaxY = screen.y;
+		}
 
 		//----------------------------------------------------
 		// Lighting goes here.
@@ -2878,6 +2952,16 @@ long TG_Shape::MultiTransformShape_PositionsOnly (Stuff::Matrix4D *shapeToClip, 
 		listOfVertices[j].frgb = fogRGB;
 		memset(&listOfColors[j],0,sizeof(listOfColors[j]));
 
+		// [UI-PHASE1] carried from mc2r_ui_phase1: Encyclopedia preview accumulates
+		// the real projected screen bounds when armed (see g_previewCaptureBounds).
+		if (g_previewCaptureBounds)
+		{
+			if (screen.x < g_previewBoundsMinX) g_previewBoundsMinX = screen.x;
+			if (screen.x > g_previewBoundsMaxX) g_previewBoundsMaxX = screen.x;
+			if (screen.y < g_previewBoundsMinY) g_previewBoundsMinY = screen.y;
+			if (screen.y > g_previewBoundsMaxY) g_previewBoundsMaxY = screen.y;
+		}
+
 		// Per-vertex lighting kernel STRIPPED (slice 2 _PositionsOnly):
 		// redFinal/greenFinal/blueFinal accumulation, hot-color tag dispatch,
 		// per-light loop, .argb write, fog-elevation recomputation, frgb
@@ -2987,10 +3071,30 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 	}
 	if (!renderTGLShapes)
 		return;
-		
+
 	if (!numVertices)		//WE are the root Shape which may have no shape or a helper shape which defintely has no shape!
+	{
+		// MERGE-CONFLICT-UI-PHASE1: theirs (mc2r_ui_phase1) adds a hardware-only-shape
+		// emission branch here (numVertices==0 but ib_/vb_ populated by the Assimp
+		// import path — root/helper node repurposed by MultiTransformShape's new
+		// GPU-only-shape branch above, gated by bShadersDrawPathEnabled).
+		// NOT applied: ours already has a richer TG_RenderShape emission block further
+		// down this function (~tgl.cpp:3319-3344, the `theShape->ib_ && theShape->vb_`
+		// branch) carrying PBR-override fields (programOverride_/pbrNormalTexture_/
+		// pbrOrmTexture_/pbrMaterialSsbo_/pbrTileScale_/pbrRoughnessBias_/
+		// pbrMetallicInfluence_) and the LcsScope<LcsBucket::C2> light-cost-split
+		// wrapper that theirs' plain patch (built against the pre-PBR-override,
+		// pre-LCS base) does not know about. Porting their numVertices==0 branch
+		// verbatim would emit TG_RenderShape structs missing those fields (silently
+		// defaulting the PBR override off / skipping LCS accounting) — needs a
+		// deliberate port that reuses the existing field set, not a blind copy.
+		// Their source (base->theirs hunk, tgl.cpp:2979+) for reference:
+		//   TG_TypeShapePtr hwType = (myType && myType->GetNodeType()==SHAPE_NODE) ? (TG_TypeShapePtr)myType : nullptr;
+		//   if (hwType && hwType->ib_ && hwType->vb_ && hwType->listOfTypeTriangles &&
+		//       hwType->listOfTextures && shapeToClip && shapeToWorld && (lastTurnTransformed==turn)) { ...addRenderShape(&rs)... }
 		return;
-		
+	}
+
 	if (!listOfVertices ||
 		!listOfColors ||
 		!listOfShadowTVertices ||
@@ -3162,9 +3266,10 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 						}
 						else
 						{
+							// [UI-PHASE1] carried from mc2r_ui_phase1: read by SimpleCamera
+							// to tell "transformed but not drawn" apart from "not transformed".
+							++g_previewDrawTris;
 							mcTextureManager->addVertices(theShape->listOfTextures[triType.localTextureHandle].mcTextureNodeIndex,gVertex,MC2_DRAWSOLID | addFlags);
-
-							
 						}
 					}
 				}

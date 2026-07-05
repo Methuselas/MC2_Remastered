@@ -7,6 +7,7 @@ mpprefs.cpp			: Implementation of the mpprefs component.ef
 \*************************************************************************************************/
 
 #include"mpprefs.h"
+#include "../GuiRuntime/GuiRuntime.h"
 #include"mclib.h"
 #include"mechbayscreen.h"
 #include"prefs.h"
@@ -481,7 +482,22 @@ void MPPrefs ::render(int OffsetX, int OffsetY )
 	if ( OffsetX == 0 && OffsetY == 0 )
 	{
 
-		camera.render();
+		// PREVIEW-FBO-FIXED-800x600-1: composite via real-resolution ratio.
+		{
+			float dw = 0.f, dh = 0.f, sx = 1.f, sy = 1.f;
+			if ( GuiRuntime::GetDisplaySize( dw, dh ) &&
+				 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
+			{
+				sx = dw / (float)Environment.screenWidth;
+				sy = dh / (float)Environment.screenHeight;
+			}
+			camera.setPreviewOffscreen( true );
+			camera.render();
+			camera.drawPreviewToPanel(
+				camera.bounds[0] * sx, camera.bounds[1] * sy,
+				(camera.bounds[2] - camera.bounds[0]) * sx,
+				(camera.bounds[3] - camera.bounds[1]) * sy );
+		}
 
 		for ( int i = 0; i < 3; i++ )
 		{
