@@ -1296,6 +1296,12 @@ int main(int argc, char** argv)
     delete[] cmdline;
     cmdline = NULL;
 
+    // WINDOWED-8006-1: explicit windowed-mode override (launcher "Windowed
+    // mode" checkbox). Wins over options.cfg fullscreen.
+    if (const char* wenv = std::getenv("MC2_WINDOWED")) {
+        if (wenv[0] && wenv[0] != '0') Environment.fullScreen = 0;
+    }
+
     int w = Environment.screenWidth;
     int h = Environment.screenHeight;
 
