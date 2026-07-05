@@ -169,58 +169,8 @@ static_assert(kTerrainMatNormalUnits[4] < 16,
 // binding state that glGetTexImage / glTexSubImage3D are sensitive to.
 // Construct once, destructor restores. Use in any function that calls
 // glGetTexImage or bulk texture upload to avoid clobbering surrounding state.
-struct GlPixelStoreGuard {
-    GLint packBuffer = 0, unpackBuffer = 0;
-    GLint packAlign = 0, unpackAlign = 0;
-    GLint packRowLen = 0, unpackRowLen = 0;
-    GLint packSkipRows = 0, packSkipPixels = 0;
-    GLint unpackSkipRows = 0, unpackSkipPixels = 0;
-    GLint activeTex = 0;
-    GLint binding2D = 0, binding2DArray = 0;
-
-    GlPixelStoreGuard() {
-        glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,   &packBuffer);
-        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
-        glGetIntegerv(GL_PACK_ALIGNMENT,    &packAlign);
-        glGetIntegerv(GL_UNPACK_ALIGNMENT,  &unpackAlign);
-        glGetIntegerv(GL_PACK_ROW_LENGTH,   &packRowLen);
-        glGetIntegerv(GL_UNPACK_ROW_LENGTH, &unpackRowLen);
-        glGetIntegerv(GL_PACK_SKIP_ROWS,    &packSkipRows);
-        glGetIntegerv(GL_PACK_SKIP_PIXELS,  &packSkipPixels);
-        glGetIntegerv(GL_UNPACK_SKIP_ROWS,  &unpackSkipRows);
-        glGetIntegerv(GL_UNPACK_SKIP_PIXELS,&unpackSkipPixels);
-        glGetIntegerv(GL_ACTIVE_TEXTURE,    &activeTex);
-        glGetIntegerv(GL_TEXTURE_BINDING_2D,       &binding2D);
-        glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &binding2DArray);
-
-        glBindBuffer(GL_PIXEL_PACK_BUFFER,   0);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-        glPixelStorei(GL_PACK_ALIGNMENT,    1);
-        glPixelStorei(GL_PACK_ROW_LENGTH,   0);
-        glPixelStorei(GL_PACK_SKIP_ROWS,    0);
-        glPixelStorei(GL_PACK_SKIP_PIXELS,  0);
-        glPixelStorei(GL_UNPACK_ALIGNMENT,  1);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-        glPixelStorei(GL_UNPACK_SKIP_ROWS,  0);
-        glPixelStorei(GL_UNPACK_SKIP_PIXELS,0);
-    }
-
-    ~GlPixelStoreGuard() {
-        glBindBuffer(GL_PIXEL_PACK_BUFFER,   (GLuint)packBuffer);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, (GLuint)unpackBuffer);
-        glPixelStorei(GL_PACK_ALIGNMENT,    packAlign);
-        glPixelStorei(GL_PACK_ROW_LENGTH,   packRowLen);
-        glPixelStorei(GL_PACK_SKIP_ROWS,    packSkipRows);
-        glPixelStorei(GL_PACK_SKIP_PIXELS,  packSkipPixels);
-        glPixelStorei(GL_UNPACK_ALIGNMENT,  unpackAlign);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, unpackRowLen);
-        glPixelStorei(GL_UNPACK_SKIP_ROWS,  unpackSkipRows);
-        glPixelStorei(GL_UNPACK_SKIP_PIXELS,unpackSkipPixels);
-        glBindTexture(GL_TEXTURE_2D,       (GLuint)binding2D);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)binding2DArray);
-        glActiveTexture((GLenum)activeTex);
-    }
-};
+// GAMEOS-GRAPHICS-SPLIT-1 slice 2: GlPixelStoreGuard moved to
+// gameos_graphics_internal.h (used by gosTexture Lock/Unlock inline methods).
 
 // Single-source gate for the sampler2DArray terrain normal path.
 // Used by shader prefix injection AND all bind paths — must agree for the
@@ -259,11 +209,7 @@ gosRenderer* getGosRenderer() {
 // the gosRenderer / gosTexture class bodies are in scope.
 uint32_t gos_GetGLTextureId(uint32_t gosHandle);
 
-struct gosTextureInfo {
-    int width_;
-    int height_;
-    gos_TextureFormat format_;
-};
+// SPLIT-1 slice 2: gosTextureInfo moved to gameos_graphics_internal.h.
 
 ////////////////////////////////////////////////////////////////////////////////
 class gosBuffer {
@@ -1049,206 +995,9 @@ void gosMesh::drawIndexed(HGOSBUFFER ib, HGOSBUFFER vb, HGOSVERTEXDECLARATION vd
 
 
 
-class gosTexture {
-    public:
-        gosTexture(gos_TextureFormat fmt, const char* fname, DWORD hints, BYTE* pdata, DWORD size, bool from_memory)
-        {
-
-	        //if(fmt == gos_Texture_Detect || /*fmt == gos_Texture_Keyed ||*/ fmt == gos_Texture_Bump || fmt == gos_Texture_Normal)
-            //     PAUSE((""));
-
-            format_ = fmt;
-            if(fname) {
-                filename_ = new char[strlen(fname)+1];
-                strcpy(filename_, fname);
-            } else {
-                filename_ = 0;
-            }
-            texname_ = NULL;
-
-            hints_ = hints;
-
-            plocked_area_ = NULL;
-
-            size_ = 0;
-            pcompdata_ = NULL;
-            if(size) {
-                size_ = size;
-                pcompdata_ = new BYTE[size];
-                memcpy(pcompdata_, pdata, size);
-            }
-
-            is_locked_ = false;
-            is_from_memory_ = from_memory;
-        }
-
-        gosTexture(gos_TextureFormat fmt, DWORD hints, DWORD w, DWORD h, const char* texname)
-        {
-	        //if(fmt == gos_Texture_Detect /*|| fmt == gos_Texture_Keyed*/ || fmt == gos_Texture_Bump || fmt == gos_Texture_Normal)
-            //     PAUSE((""));
-
-            format_ = fmt;
-            if(texname) {
-                texname_ = new char[strlen(texname)+1];
-                strcpy(texname_, texname);
-            } else {
-                texname_ = 0;
-            }
-            filename_ = NULL;
-            hints_ = hints;
-
-            plocked_area_ = NULL;
-
-            size_ = 0;
-            pcompdata_ = NULL;
-            tex_.w = w;
-            tex_.h = h;
-
-            is_locked_ = false;
-            is_from_memory_ = true;
-        }
-
-        // TEXMGR-COMPRESSED-UPLOAD-1: wrap a pre-built (already GL-uploaded)
-        // Texture so the handle integrates with textureList_/bind/destroy
-        // exactly like the other gosTexture flavors. No createHardwareTexture()
-        // call — the GL object is supplied ready. Used by
-        // gos_NewCompressedTexture2D for BC7 .ktx2 sidecar uploads.
-        gosTexture(const Texture& prebuilt, gos_TextureFormat fmt, const char* name)
-        {
-            format_ = fmt;
-            if(name) {
-                texname_ = new char[strlen(name)+1];
-                strcpy(texname_, name);
-            } else {
-                texname_ = 0;
-            }
-            filename_ = NULL;
-            hints_ = 0;
-            plocked_area_ = NULL;
-            size_ = 0;
-            pcompdata_ = NULL;
-            tex_ = prebuilt;
-            is_locked_ = false;
-            is_from_memory_ = true;
-        }
-
-        bool createHardwareTexture();
-
-        ~gosTexture() {
-
-            //SPEW(("Destroying texture: %s\n", filename_));
-
-            gosASSERT(is_locked_ == false);
-
-            if(pcompdata_)
-                delete[] pcompdata_;
-            if(filename_)
-                delete[] filename_;
-            if(texname_)
-                delete[] texname_;
-
-            destroyTexture(&tex_);
-        }
-
-        uint32_t getTextureId() const { return tex_.id; }
-        TexType getTextureType() const { return tex_.type_; }
-
-        BYTE* Lock(int mipl_level, bool is_read_only, int* pitch) {
-            gosASSERT(is_locked_ == false);
-            is_locked_ = true;
-            // TODO:
-            gosASSERT(pitch);
-            *pitch = tex_.w;
-
-            gosASSERT(!plocked_area_);
-#if 0 
-            glBindTexture(GL_TEXTURE_2D, tex_.id);
-            GLint pack_row_length;
-            GLint pack_alignment;
-            glGetIntegerv(GL_PACK_ROW_LENGTH, &pack_row_length);
-            glGetIntegerv(GL_PACK_ALIGNMENT, &pack_alignment);
-            glBindTexture(GL_TEXTURE_2D, 0);
-#endif
-            // always return rgba8 formatted data
-            lock_type_read_only_ = is_read_only;
-            const uint32_t ts = tex_.w*tex_.h * getTexFormatPixelSize(TF_RGBA8);
-            plocked_area_ = new BYTE[ts];
-            // Zero before readback: getTextureData early-returns WITHOUT writing
-            // for block-compressed (BC7/TF_NONE) textures, which would otherwise
-            // leave this buffer full of heap garbage that the paint-scheme
-            // classifier then re-uploads. (A paint texture can land on BC7 when
-            // its paintInstance hashes low.)
-            memset(plocked_area_, 0, ts);
-            // glGetTexImage readback is sensitive to inherited GL_PACK_* state and
-            // a left-bound GL_PIXEL_PACK_BUFFER; guard save/resets/restores it so
-            // the mech-paint recolour reads the real texels on NVIDIA.
-            GlPixelStoreGuard pixelStoreGuard;
-            getTextureData(tex_, 0, plocked_area_, TF_RGBA8);
-            for(int y=0;y<tex_.h;++y) {
-                for(int x=0;x<tex_.w;++x) {
-                    DWORD rgba = ((DWORD*)plocked_area_)[tex_.w*y + x];
-                    DWORD r = rgba&0xff;
-                    DWORD g = (rgba&0xff00)>>8;
-                    DWORD b = (rgba&0xff0000)>>16;
-                    DWORD a = (rgba&0xff000000)>>24;
-                    DWORD bgra = (a<<24) | (r<<16) | (g<<8) | b;
-                    ((DWORD*)plocked_area_)[tex_.w*y + x] = bgra;
-                }
-            }
-            return plocked_area_;
-        }
-
-        void Unlock() {
-            gosASSERT(is_locked_ == true);
-        
-            if(!lock_type_read_only_) {
-                for(int y=0;y<tex_.h;++y) {
-                    for(int x=0;x<tex_.w;++x) {
-                        DWORD bgra = ((DWORD*)plocked_area_)[tex_.w*y + x];
-                        DWORD b = bgra&0xff;
-                        DWORD g = (bgra&0xff00)>>8;
-                        DWORD r = (bgra&0xff0000)>>16;
-                        DWORD a = (bgra&0xff000000)>>24;
-                        DWORD argb = (a<<24) | (b<<16) | (g<<8) | r;
-                        ((DWORD*)plocked_area_)[tex_.w*y + x] = argb;
-                    }
-                }
-                // Same hazard as Lock's readback, upload side: glTexSubImage2D
-                // reads from a left-bound GL_PIXEL_UNPACK_BUFFER (see applyPBO)
-                // instead of client memory, and honours inherited GL_UNPACK_*.
-                // Guard neutralises both so the recoloured texels actually land.
-                GlPixelStoreGuard pixelStoreGuard;
-                updateTexture(tex_, plocked_area_, TF_RGBA8);
-            }
-
-            delete[] plocked_area_;
-            plocked_area_ = NULL;
-
-            is_locked_ = false;
-        }
-
-        void getTextureInfo(gosTextureInfo* texinfo) const {
-            gosASSERT(texinfo);
-            texinfo->width_ = tex_.w;
-            texinfo->height_ = tex_.h;
-            texinfo->format_ = format_;
-        }
-
-    private:
-        BYTE* pcompdata_;
-        BYTE* plocked_area_;
-        DWORD size_;
-        Texture tex_;
-
-        gos_TextureFormat format_;
-        char* filename_;
-        char* texname_;
-        DWORD hints_;
-
-        bool is_locked_;
-        bool lock_type_read_only_;
-        bool is_from_memory_; // not loaded from file
-};
+// GAMEOS-GRAPHICS-SPLIT-1 slice 2: gosTexture class definition moved to
+// gameos_graphics_internal.h (included here; also provides gosFont from slice 1).
+#include "gameos_graphics_internal.h"
 
 struct gosTextAttribs {
     HGOSFONT3D FontHandle;
@@ -1262,152 +1011,9 @@ struct gosTextAttribs {
     bool DisableEmbeddedCodes;
 };
 
-static void makeKindaSolid(Image& img) {
-    // have to do this, otherwise texutre with zero alpha could be drawn with alpha blend enabled, evel though logically aplha blend should not be enabled!
-    // (happens when drawing terrain, see TerrainQuad::draw() case when no detail and no owerlay bu t isCement is true)
-    DWORD* pixels = (DWORD*)img.getPixels();
-    for(int y=0;y<img.getHeight(); ++y) {
-        for(int x=0;x<img.getWidth(); ++x) {
-            DWORD pix = pixels[y*img.getWidth() + x];
-            pixels[y*img.getWidth() + x] = pix | 0xff000000;
-        }
-    }
-}
-
-static bool doesLookLikeAlpha(const Image& img) {
-    gosASSERT(img.getFormat() == FORMAT_RGBA8);
-
-    DWORD* pixels = (DWORD*)img.getPixels();
-    for(int y=0;y<img.getHeight(); ++y) {
-        for(int x=0;x<img.getWidth(); ++x) {
-            DWORD pix = pixels[y*img.getWidth() + x];
-            if((0xFF000000 & pix) != 0xFF000000)
-                return true;
-        }
-    }
-    return false;
-}
-
-static gos_TextureFormat convertIfNecessary(Image& img, gos_TextureFormat gos_format) {
-
-    const bool has_alpha_channel = FORMAT_RGBA8 == img.getFormat();
-
-    if(gos_format == gos_Texture_Detect) {
-        bool has_alpha = has_alpha_channel ? doesLookLikeAlpha(img) : false;
-        gos_format = has_alpha ? gos_Texture_Alpha : gos_Texture_Solid;
-    }
-
-    if(gos_format == gos_Texture_Solid && has_alpha_channel)
-        makeKindaSolid(img);
-
-    return gos_format;
-}
-
-bool gosTexture::createHardwareTexture() {
-
-    // Opt-in to mipmaps via gosHint_MipmapFilter0. MC2's original convention
-    // was "absence of DisableMipmap means mipmaps on," but in this port many
-    // HUD/GUI/tacmap loads pass hints=0 without DisableMipmap and must stay
-    // non-mipmapped for pixel-perfect sampling. We use MipmapFilter0 as a
-    // positive opt-in instead -- no existing code sets this bit, so only
-    // explicitly-updated load sites enable mipmaps. DisableMipmap wins if
-    // both are set (defensive).
-    const bool wantMipmaps = (hints_ & gosHint_MipmapFilter0) != 0
-                          && (hints_ & gosHint_DisableMipmap) == 0;
-
-    if(!is_from_memory_) {
-
-        gosASSERT(filename_);
-
-        Image img;
-        if(!img.loadFromFile(filename_)) {
-            SPEW(("DBG", "failed to load texture from file: %s\n", filename_));
-            return false;
-        }
-
-        // check for only those formats, because lock.unlock may incorrectly work with different channes size (e.g. 16 or 32bit or floats)
-        FORMAT img_fmt = img.getFormat();
-        if(img_fmt != FORMAT_RGB8 && img_fmt != FORMAT_RGBA8) {
-            STOP(("Unsupported texture format when loading %s\n", filename_));
-        }
-
-        TexFormat tf = img_fmt == FORMAT_RGB8 ? TF_RGB8 : TF_RGBA8;
-
-        format_ = convertIfNecessary(img, format_);
-
-        tex_ = create2DTexture(img.getWidth(), img.getHeight(), tf, img.getPixels(), wantMipmaps);
-        return tex_.isValid();
-
-    } else if(pcompdata_ && size_ > 0) {
-
-        // The texture cache stores raw file bytes; pick the decoder by
-        // signature instead of assuming TGA.  data/defs UI Editor pages
-        // reference .png art that flows through this from-memory path.
-        const bool looksLikePNG = size_ >= 8 &&
-            pcompdata_[0] == 0x89 && pcompdata_[1] == 'P' &&
-            pcompdata_[2] == 'N'  && pcompdata_[3] == 'G';
-
-        Image img;
-        bool decoded = looksLikePNG
-            ? img.loadPNG(pcompdata_, size_)
-            : img.loadTGA(pcompdata_, size_);
-        if(!decoded) {
-            SPEW(("DBG", "failed to load texture from data, filename: %s, texname: %s\n", filename_? filename_ : "NO FILENAME", texname_?texname_:"NO TEXNAME"));
-            return false;
-        }
-
-        FORMAT img_fmt = img.getFormat();
-
-        if(img_fmt != FORMAT_RGB8 && img_fmt != FORMAT_RGBA8) {
-            STOP(("Unsupported texture format when loading %s\n", filename_));
-        }
-
-        TexFormat tf = img_fmt == FORMAT_RGB8 ? TF_RGB8 : TF_RGBA8;
-
-        format_ = convertIfNecessary(img, format_);
-
-        tex_ = create2DTexture(img.getWidth(), img.getHeight(), tf, img.getPixels(), wantMipmaps);
-        return tex_.isValid();
-    } else {
-        gosASSERT(tex_.w >0 && tex_.h > 0);
-
-        TexFormat tf = TF_RGBA8; // TODO: check format_ and do appropriate stuff
-        DWORD* pdata = new DWORD[tex_.w*tex_.h];
-        for(int i=0;i<tex_.w*tex_.h;++i)
-            pdata[i] = 0xFF00FFFF;
-
-        // OVERLAY-MAGENTA-TEXTURE-RECON-1 (Source A): this texture object has w/h but
-        // NO source path and NO compressed data -> filled solid magenta. Emit WHICH
-        // texture resolved to nothing (the highest-value magenta probe). Gated
-        // MC2_OVERLAY_MAGENTA_TRACE + MC2_DIAG_TAGS=OVERLAY_MAGENTA; read via
-        // get_diagnostic_events("OVERLAY_MAGENTA"). No behavior change.
-        {
-            static const bool s_magentaTrace = (std::getenv("MC2_OVERLAY_MAGENTA_TRACE") != nullptr);
-            if (s_magentaTrace && mc2_diag::tagEnabled("OVERLAY_MAGENTA")) {
-                char _mg_fn[256]; char _mg_tn[256];
-                const char* _mg_sfn = filename_ ? filename_ : "";
-                const char* _mg_stn = texname_  ? texname_  : "";
-                size_t _mg_k;
-                for (_mg_k=0; _mg_k<sizeof(_mg_fn)-1 && _mg_sfn[_mg_k]; ++_mg_k)
-                    _mg_fn[_mg_k] = (_mg_sfn[_mg_k]=='\\') ? '/' : _mg_sfn[_mg_k];
-                _mg_fn[_mg_k] = '\0';
-                for (_mg_k=0; _mg_k<sizeof(_mg_tn)-1 && _mg_stn[_mg_k]; ++_mg_k)
-                    _mg_tn[_mg_k] = (_mg_stn[_mg_k]=='\\') ? '/' : _mg_stn[_mg_k];
-                _mg_tn[_mg_k] = '\0';
-                char _mg_buf[600];
-                snprintf(_mg_buf, sizeof(_mg_buf),
-                         "{\"site\":\"fallback_fill\",\"filename\":\"%s\",\"texname\":\"%s\",\"w\":%d,\"h\":%d}",
-                         _mg_fn, _mg_tn, (int)tex_.w, (int)tex_.h);
-                mc2_diag::writeEvent("OVERLAY_MAGENTA", 1, 0, _mg_buf);
-            }
-        }
-        tex_ = create2DTexture(tex_.w, tex_.h, tf, (const uint8_t*)pdata, wantMipmaps);
-        delete[] pdata;
-        return tex_.isValid();
-    }
-
-}
-
+// GAMEOS-GRAPHICS-SPLIT-1 slice 2: makeKindaSolid/doesLookLikeAlpha/
+// convertIfNecessary + gosTexture::createHardwareTexture moved to
+// gameos_graphics_texture.cpp.
 static gosTexture* lookupBatchTextureOrWarn(const std::vector<gosTexture*>& textureList,
                                             DWORD textureId,
                                             const char* batchName) {
@@ -1522,8 +1128,7 @@ void overlayTexTraceSummary() {
 
 ////////////////////////////////////////////////////////////////////////////////
 // GAMEOS-GRAPHICS-SPLIT-1 slice 1: gosFont class definition + implementation
-// moved to gameos_graphics_internal.h / gameos_graphics_font.cpp.
-#include "gameos_graphics_internal.h"
+// moved to gameos_graphics_internal.h (included above) / gameos_graphics_font.cpp.
 
 
 enum HudDrawKind { kHudQuadBatch, kHudLineBatch, kHudTriBatch, kHudTextQuadBatch };
