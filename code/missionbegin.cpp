@@ -32,7 +32,9 @@ MissionBegin.cpp			: Implementation of the MissionBegin component.
 #include"chatwindow.h"
 #include"logisticsmechicon.h"
 #include"../GameOS/gameos/gos_profiler.h"
+#include"../GameOS/gameos/gos_dev_shell.h"   // DEV-SHELL-1: ui_reload command registration
 #include <cstdlib>
+#include <string>
 #include"platform_str.h"   // S_stricmp (MC2_BOOT_TO_SCREEN parse, LINUX_BUILD-safe)
 
 #include"prefs.h"
@@ -50,8 +52,13 @@ void closeABL (void);
 bool	MissionBegin::FirstTimePurchase = true;
 bool	MissionBegin::FirstTimeMechLab = true;
 
+// DEV-SHELL-1 ui_reload: the front-end instance the shell command targets.
+// Set on construction, cleared on destruction — a plain lifetime mirror.
+static MissionBegin* s_devShellMissionBegin = nullptr;
+
 MissionBegin::MissionBegin()
 {
+	s_devShellMissionBegin = this;
 	memset( screens, 0, sizeof( screens));
 	memset( singlePlayerScreens, 0, sizeof(singlePlayerScreens));
 	memset( multiplayerScreens, 0, sizeof( multiplayerScreens));
@@ -70,6 +77,8 @@ MissionBegin::MissionBegin()
 
 MissionBegin::~MissionBegin()
 {
+	if ( s_devShellMissionBegin == this )
+		s_devShellMissionBegin = nullptr;
 	for ( int i = 0; i < 5; i++ )
 	{
 		for ( int j = 0; j < 3; j++ )
@@ -98,6 +107,102 @@ MissionBegin::~MissionBegin()
 		delete mainMenu;
 		mainMenu = NULL;
 	}
+}
+
+// DEV-SHELL-1 ui_reload implementation. Re-reads the active screen's loose
+// .fit from data/art/ and re-inits the screen object in place. Safe because
+// LogisticsScreen::init() calls clear() first (delete[] + recount). Textures
+// come back from the txmmgr filename cache — .fit layout edits (positions,
+// rects, text, button defs) reload; changed .tga pixels need a restart
+// (texture-cache refresh is a separate slice).
+bool MissionBegin::reloadCurrentScreenLayout( std::string& infoOut, std::string& errOut )
+{
+	char path[256];
+	FitIniFile file;
+
+	if ( bSplash )
+	{
+		if ( !mainMenu ) { errOut = "main menu not constructed"; return false; }
+		strcpy( path, artPath );
+		strcat( path, "mcl_mm.fit" );
+		if ( NO_ERR != file.open( path ) ) { errOut = std::string("open failed: ") + path; return false; }
+		mainMenu->init( file );
+		file.close();
+		mainMenu->setDrawBackground( true );
+		infoOut = "{\"screen\":\"main_menu\",\"fit\":\"mcl_mm.fit\"}";
+		return true;
+	}
+
+	if ( curScreenX < 0 || curScreenY < 0 )
+	{
+		errOut = "no active front-end screen (in mission?)";
+		return false;
+	}
+	if ( bMultiplayer )
+	{
+		errOut = "multiplayer screens not supported by ui_reload v0";
+		return false;
+	}
+	// skipLogistics reroutes substitute grid cells (e.g. screens[3][1] becomes
+	// MissionSelection) — the static_cast per cell below would then be wrong.
+	if ( screens[curScreenX][curScreenY] != singlePlayerScreens[curScreenX][curScreenY] )
+	{
+		errOut = "active cell is substituted (skipLogistics reroute); reload unsupported";
+		return false;
+	}
+
+	const long id = 10 * curScreenX + curScreenY;
+	const char* fitName = nullptr;
+	const char* screenName = nullptr;
+	switch ( id )
+	{
+		case 1:  fitName = "mcl_cm_layout.fit";    screenName = "campaign_select";    break;
+		case 11: fitName = "mcl_mn.fit";           screenName = "mission_briefing";   break;
+		case 21: fitName = "mcl_mb_layout.fit";    screenName = "mech_bay";           break;
+		case 31: fitName = "mcl_pr_layout.fit";    screenName = "pilot_ready_launch"; break;
+		case 20: fitName = "mcl_m$.fit";           screenName = "mech_purchase";      break;
+		case 22: fitName = "mcl_mc.fit";           screenName = "mech_lab_loadout";   break;
+		case 41: fitName = "mcl_loadingscreen.fit"; screenName = "load";              break;
+		default: errOut = "unknown screen id " + std::to_string( id ); return false;
+	}
+
+	strcpy( path, artPath );
+	strcat( path, fitName );
+	if ( NO_ERR != file.open( path ) ) { errOut = std::string("open failed: ") + path; return false; }
+
+	// init overloads are per-derived-class and NOT virtual — dispatch by grid
+	// cell (cell types are fixed at construction, guarded above).
+	LogisticsScreen* scr = screens[curScreenX][curScreenY];
+	switch ( id )
+	{
+		case 1:  static_cast<MissionSelectionScreen*>(scr)->init( &file ); break;
+		case 11: static_cast<MissionBriefingScreen*>(scr)->init( &file );  break;
+		case 21: static_cast<MechBayScreen*>(scr)->init( &file );          break;
+		case 31: static_cast<PilotReadyScreen*>(scr)->init( &file );       break;
+		case 20: static_cast<MechPurchaseScreen*>(scr)->init( file );      break;
+		case 22: static_cast<MechLabScreen*>(scr)->init( file );           break;
+		case 41: static_cast<LoadScreenWrapper*>(scr)->init( file );       break;
+	}
+	file.close();
+
+	// Re-enter the screen so per-visit population (icons, lists) rebuilds
+	// against the fresh widget layout.
+	scr->begin();
+
+	infoOut = std::string("{\"screen\":\"") + screenName + "\",\"fit\":\"" + fitName + "\"}";
+	return true;
+}
+
+// gos_dev_shell extension handler (plain fn ptr, main-thread at poll point).
+static bool devShellUiReload( const char* /*paramsJson*/,
+                              std::string& dataJsonOut, std::string& errorOut )
+{
+	if ( !s_devShellMissionBegin )
+	{
+		errorOut = "front-end not active";
+		return false;
+	}
+	return s_devShellMissionBegin->reloadCurrentScreenLayout( dataJsonOut, errorOut );
 }
 
 bool MissionBegin::startAnimation (long bId, bool isButton, float scrollTime, long nFlashes)
@@ -557,6 +662,9 @@ void MissionBegin::begin()
 
 void MissionBegin::init()
 {
+	// DEV-SHELL-1: register the ui_reload shell command (inert when
+	// MC2_DEV_SHELL is unset; re-registration on re-init just replaces).
+	gos_dev_shell::registerCommand( "ui_reload", devShellUiReload );
 
 	begin();
 }

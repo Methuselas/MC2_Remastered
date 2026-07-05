@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
 
 #include "utils/shader_builder.h"
@@ -24,6 +25,19 @@
 #include "RenderCore/RenderPassContract.h"
 
 namespace gos_dev_shell {
+
+// Registered extension commands (game/editor layer). Populated at static-init
+// or startup time regardless of the gate; only consulted when the shell polls.
+static std::map<std::string, CommandHandler>& extCommands()
+{
+    static std::map<std::string, CommandHandler> s_map;
+    return s_map;
+}
+
+void registerCommand(const char* name, CommandHandler fn)
+{
+    if (name && fn) extCommands()[name] = fn;
+}
 
 #ifndef _WIN32
 // Non-Windows builds: inert stubs (winsock-only v0; revisit at the
@@ -421,6 +435,13 @@ std::string dispatch(const std::string& req, uint32_t frame, bool* quitOut)
     if (type == "set_gate")        return cmdSetGate(req);
     if (type == "quit") { *quitOut = true; return makeReply(true, "", "{\"quitting\":true}"); }
     if (type.empty())              return makeReply(false, "malformed request: no type", "");
+    // Extension commands registered by upper layers (registerCommand).
+    auto it = extCommands().find(type);
+    if (it != extCommands().end()) {
+        std::string dataJson, err;
+        const bool ok = it->second(req.c_str(), dataJson, err);
+        return makeReply(ok, err, dataJson);
+    }
     return makeReply(false, "unknown command: " + type, "");
 }
 
