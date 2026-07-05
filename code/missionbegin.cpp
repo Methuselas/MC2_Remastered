@@ -32,6 +32,7 @@ MissionBegin.cpp			: Implementation of the MissionBegin component.
 #include"chatwindow.h"
 #include"logisticsmechicon.h"
 #include"../GameOS/gameos/gos_profiler.h"
+#include"../GuiRuntime/GuiRuntime.h"   // MENU-STALE-CLEAR-2: ImGui-layer dim rect
 #include <cstdlib>
 #include"platform_str.h"   // S_stricmp (MC2_BOOT_TO_SCREEN parse, LINUX_BUILD-safe)
 
@@ -1606,6 +1607,17 @@ void MissionBegin::render()
 				// opaque would put this screen ON TOP of the movie and menu
 				// background instead of behind them.
 				pCurScreen->render();
+				// MENU-STALE-CLEAR-2: OG dimmed the logistics screen behind the
+				// in-logistics menu with a fullscreen rect; the defs menu page
+				// has no backdrop, so the screen's ImGui page bled through
+				// wherever the menu art didn't cover (bottom third — any panel).
+				// Submit the dim IN THE IMGUI LAYER between the screen page
+				// (submitted above) and the menu page (submitted below).
+				{
+					float dw = 0.f, dh = 0.f;
+					if ( GuiRuntime::GetDisplaySize( dw, dh ) && dw > 0.f )
+						GuiRuntime::DrawUiRect( 0.f, 0.f, dw, dh, 0xE6000000, true );
+				}
 			}
 			else
 			{
@@ -1616,6 +1628,16 @@ void MissionBegin::render()
 				// pattern as Mechlopedia::render).
 				GUI_RECT rect = { 0, 0, Environment.screenWidth, Environment.screenHeight };
 				drawRect( rect, 0xff000000 );
+				// MENU-STALE-CLEAR-2: the GameOS clear killed the top-2/3 ghost
+				// but ImGui-layer remnants (any panel's defs page submitted
+				// earlier this frame) survived in the bottom third. Submit an
+				// opaque ImGui-layer backdrop BEFORE the menu page so the menu
+				// composites over black, not over the previous screen.
+				{
+					float dw = 0.f, dh = 0.f;
+					if ( GuiRuntime::GetDisplaySize( dw, dh ) && dw > 0.f )
+						GuiRuntime::DrawUiRect( 0.f, 0.f, dw, dh, 0xff000000, true );
+				}
 			}
 		}
 		mainMenu->render();
