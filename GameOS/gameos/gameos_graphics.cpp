@@ -9652,8 +9652,11 @@ namespace {
         glGenTextures(1, &s_camPreviewColorTex);
         glBindTexture(GL_TEXTURE_2D, s_camPreviewColorTex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        // PREVIEW-SUPERSAMPLE-1: LINEAR, not NEAREST — the panel crop is a small
+        // sub-rect scaled up to the real-resolution ImGui panel; NEAREST is what
+        // made the preview look chunky even before supersampling.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_camPreviewColorTex, 0);
 
         glGenRenderbuffers(1, &s_camPreviewDepthRbo);
@@ -9674,10 +9677,30 @@ namespace {
 // canvas) and prepare it for a fresh mech render. Must be paired with
 // gos_EndCameraPreviewRender(). See PREVIEW-FBO-FIXED-800x600-1 above for why
 // this is fixed-size rather than drawable-size.
+// PREVIEW-SUPERSAMPLE-1: raster scale for the preview FBO. The legacy math
+// stays in its 800x600 virtual canvas — the ortho projection maps 0..800/0..600
+// to NDC regardless of viewport size, so an NxN-scaled FBO + viewport simply
+// rasterizes the same geometry at N-times the resolution (free supersampling;
+// the ImGui composite crops in normalized UV space, unaffected). Default 4x
+// (3200x2400 RGBA8 ~= 30 MB, one instance); MC2_PREVIEW_FBO_SCALE overrides 1-8.
+static int camPreviewScale()
+{
+    static int s_scale = -1;
+    if (s_scale < 0) {
+        s_scale = 4;
+        if (const char* v = getenv("MC2_PREVIEW_FBO_SCALE")) {
+            const int n = atoi(v);
+            if (n >= 1 && n <= 8) s_scale = n;
+        }
+    }
+    return s_scale;
+}
+
 void __stdcall gos_BeginCameraPreviewRender()
 {
     if (!g_gos_renderer) return;
-    ensureCamPreviewFbo(800, 600);
+    const int sc = camPreviewScale();
+    ensureCamPreviewFbo(800 * sc, 600 * sc);
 
     static bool s_once = false;
     if (!s_once) {
@@ -9692,7 +9715,7 @@ void __stdcall gos_BeginCameraPreviewRender()
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, s_camPreviewFbo);
-    glViewport(0, 0, 800, 600);
+    glViewport(0, 0, 800 * sc, 600 * sc);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthMask(GL_TRUE);
     // 3D-viewer background: black, matching the surrounding panel.

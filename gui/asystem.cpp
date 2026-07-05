@@ -91,7 +91,20 @@ static void renderObjectViaGuiBridge(const gos_VERTEX* location, unsigned long t
 {
 	const unsigned int argb = location[0].argb;
 	if ((argb & 0xff000000) == 0)
+	{
+		// MECH-ICON-BLANK-1 diagnostic: alpha-0 skips are invisible by design,
+		// but a PERMANENTLY alpha-0 mech icon is the blank-icon bug signature.
+		if (getenv("MC2_LOG_MECH_ICON") && textureHandle && mcTextureManager)
+		{
+			const char* nm = mcTextureManager->getTextureName(textureHandle);
+			if (nm && strstr(nm, "mechicon"))
+			{
+				printf("[mechicon-draw] bridge SKIP alpha=0 handle=%lu\n", textureHandle);
+				fflush(stdout);
+			}
+		}
 		return; // fully transparent (e.g. fade animation at alpha 0)
+	}
 
 	const float x = location[0].x * s_guiBridgeSx;
 	const float y = location[0].y * s_guiBridgeSy;
@@ -106,6 +119,21 @@ static void renderObjectViaGuiBridge(const gos_VERTEX* location, unsigned long t
 		const unsigned long gosID = mcTextureManager->get_gosTextureHandle(textureHandle);
 		if (gosID && gosID != 0xffffffff)
 			glTexture = gos_GetGLTextureName(gosID);
+	}
+
+	// MECH-ICON-BLANK-1 diagnostic: trace every bridge draw of the mech-icon
+	// atlas (texture handle 59 observed via [MECHICON] loadTexture log lines —
+	// name lookup keeps this robust across runs).
+	if (getenv("MC2_LOG_MECH_ICON") && textureHandle && mcTextureManager)
+	{
+		const char* nm = mcTextureManager->getTextureName(textureHandle);
+		if (nm && strstr(nm, "mechicon"))
+		{
+			printf("[mechicon-draw] bridge handle=%lu glTex=%u rect=(%.0f,%.0f %.0fx%.0f) argb=%08X uv=(%.3f,%.3f)-(%.3f,%.3f)\n",
+				textureHandle, glTexture, x, y, w, h, argb,
+				location[0].u, location[0].v, location[2].u, location[2].v);
+			fflush(stdout);
+		}
 	}
 
 	if (glTexture)

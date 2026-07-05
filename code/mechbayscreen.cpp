@@ -320,12 +320,20 @@ void MechBayScreen::render(int xOffset, int yOffset)
 
 	LogisticsScreen::render(xOffset, yOffset);
 
+	// MECH-ICON-BLANK-1: full GUI bridge, not just the text bridge. With the
+	// data/defs replacement page active, legacy gos_DrawQuads output is buried
+	// under the ImGui page — the deployment-slot icon/pilot/connector QUADS
+	// were drawn but invisible while the bridged TEXT (names) showed. Routing
+	// the whole icon widget tree through the gui bridge draws it on the ImGui
+	// HUD layer at display scale, same as the names.
+	aObject::beginGuiBridge( tbSx, tbSy );
 	aObject::beginTextBridge( tbSx, tbSy );
 	for (int i = 0; i < ICON_COUNT; i++ )
 	{
 		pIcons[i].render( xOffset, yOffset );
 	}
 	aObject::endTextBridge();
+	aObject::endGuiBridge();
 
 	if ( MPlayer && ChatWindow::instance() )
 		ChatWindow::instance()->render(xOffset, yOffset);
