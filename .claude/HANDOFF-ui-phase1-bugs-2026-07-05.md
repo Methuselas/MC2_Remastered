@@ -29,6 +29,12 @@ preview FBO (drawOldWay force), 4x supersample, bay/pilot icon bridge (beginGuiB
 - **3840x1080 user field test round 2**: in-game WORKS (user-confirmed). Double cursor in mechlopedia FIXED (post-ImGui cursor re-issue missed the canvas remap; UserInput::renderForImGuiOverlay now applies it — pending user confirm). Load-screen transition flash (art at pixel-800 left + LOADING mid-right for ~1 frame, self-corrects) = queue #4 resolution-transition window class, deferred to that slice.
 - Verify recipe additions: `run_smoke.py --exe <deploy>/mc2.exe --mission mc2_01` + `MC2_SCREENSHOT_AT_FRAME/PATH` for in-mission frames; desktop `CopyFromScreen` via powershell for live-window ground truth.
 
+## GAMEOS-GRAPHICS-SPLIT-1 (executed ON UI-PHASE1, not nifty — nifty held by foreign WIP, 245 dirty files dated 07-03)
+
+- Slice 1 gosFont `77ad8417` + slice 2 gosTexture `b93a197a` SHIPPED: main TU 11376→10718 lines; new `gameos_graphics_internal.h` (gosFont+gosTexture+gosTextureInfo+GlPixelStoreGuard, VERBATIM) + `gameos_graphics_font.cpp` + `gameos_graphics_texture.cpp`. gosRenderer+gVAO stay in main TU; renderer access via shims (gosRendererAddFontBmpTexture/gosRendererDeleteTexture). Both slices verified: encyclopedia diff ~0.3% (mech rotation only) + single-mission smoke PASS.
+- Remaining plan slices (nifty docs/splits/gameos-graphics-split-1-plan.md): 3 overlay-batch (~400L, gosRenderer members — prefer keeping methods), 4 light-matrix SSBO (~85L), 5 gos_* param accessors (~340L, needs extern s_hud_scale*/g_water*).
+- ⚠When nifty frees up: either cherry-pick these two commits there or re-run the extraction; doing it fresh on nifty from ITS copy is safer than cherry-pick (files diverged).
+
 ## NIFTY side (worktree .claude/worktrees/nifty-mendeleev)
 - DEV-SHELL complete (docs/dev-shell.md = playbook; ping/reload_shaders/screenshot/ui_reload/texture_refresh/framegraph). GAMEOS-SPLIT plan at docs/splits/gameos-graphics-split-1-plan.md — execute slice 1 (gosFont) when worktree free.
 
