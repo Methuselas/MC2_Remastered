@@ -161,3 +161,12 @@ void gos_HudInverseMousePoint(float& x, float& y) {
     y = ay + (y - ay) / scale;
 }
 
+
+
+// LOAD-TRANSITION-DISPLAY-TRUTH-1: tiny accessor so GuiRuntime (which does
+// not include gameos.hpp) can read the synchronously-updated drawable size.
+void __stdcall gos_GetEnvironmentDrawableSize(int* w, int* h)
+{
+    if (w) *w = Environment.drawableWidth;
+    if (h) *h = Environment.drawableHeight;
+}

@@ -46,6 +46,7 @@
 extern void __stdcall gos_InvalidateRenderStateCache();
 extern void __stdcall gos_PrepareForPostImGuiRender();
 extern bool __stdcall gos_ComputeUiCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh);   // CANVAS-FLANK-CLEAR-1
+extern void __stdcall gos_GetEnvironmentDrawableSize(int* w, int* h);   // LOAD-TRANSITION-DISPLAY-TRUTH-1
 
 // TERRAIN-DECAL-SLICE-0C — live cliff mesh-decal tuning panel.
 // Forward-declared plain API (defined in mclib/cliff_decal_tuning.cpp; resolved at
@@ -316,6 +317,25 @@ bool GuiRuntime::GetDisplaySize(float& w, float& h)
 {
     w = 0.0f;
     h = 0.0f;
+    // LOAD-TRANSITION-DISPLAY-TRUTH-1 (queue #4 loading-flash class): prefer
+    // Environment.drawableWidth/Height — the values gos updates SYNCHRONOUSLY
+    // on every resolution/window change (gos_SetScreenMode handleEvents,
+    // FREE-RESIZE-1 SIZE_CHANGED). io.DisplaySize is fed FROM these via
+    // NotifyResize but lags during the load-time resolution-transition window
+    // (the async load pump renders between the change request and the next
+    // ImGui NewFrame), which drew load art / text with two different scales
+    // for a frame. One source of truth ends that class. ImGui DisplaySize
+    // stays as the fallback for early-boot frames where drawable is not yet
+    // populated.
+    {
+        int dw = 0, dh = 0;
+        gos_GetEnvironmentDrawableSize(&dw, &dh);
+        if (dw > 0 && dh > 0) {
+            w = (float)dw;
+            h = (float)dh;
+            return true;
+        }
+    }
     if (!g_imguiInitialized || !ImGui::GetCurrentContext())
         return false;
     const ImGuiIO& io = ImGui::GetIO();
