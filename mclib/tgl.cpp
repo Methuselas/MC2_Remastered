@@ -149,6 +149,7 @@ extern bool hasGuardBand;
 extern bool useFog;
 extern DWORD BaseVertexColor;
 bool drawOldWay = false;
+extern int g_mechPreviewRenderDepth;   // ENCYCLO-3D-1 diagnostic (gos_mech_killswitch.h)
 extern bool useShadows;
 bool useLocalShadows = false;
 
@@ -3217,17 +3218,49 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 				else
 					gos_SetRenderState( gos_State_Texture, 0 );
 	
+				// ENCYCLO-3D-1 diagnostic: dump a handful of transformed preview
+				// verts (screen-space x/y + z) — separates "drawn offscreen"
+				// from "z-rejected" from "degenerate". Throttled hard.
+				if ( getenv("MC2_LOG_PREVIEW") && g_mechPreviewRenderDepth > 0 )
+				{
+					static int s_vlog = 0;
+					if ( (s_vlog++ % 500) < 3 )
+					{
+						if ( FILE* f = fopen("preview_debug.log","a") )
+						{
+							fprintf(f,"[PREVIEW] drawOldWay vtx (%.1f,%.1f,%.4f) (%.1f,%.1f,%.4f) (%.1f,%.1f,%.4f) argb=%08X\n",
+								gVertex[0].x,gVertex[0].y,gVertex[0].z,
+								gVertex[1].x,gVertex[1].y,gVertex[1].z,
+								gVertex[2].x,gVertex[2].y,gVertex[2].z,
+								gVertex[0].argb);
+							fclose(f);
+						}
+					}
+				}
 				if ((gVertex[0].z >= 0.0f) &&
 					(gVertex[0].z < 1.0f) &&
-					(gVertex[1].z >= 0.0f) &&  
-					(gVertex[1].z < 1.0f) && 
-					(gVertex[2].z >= 0.0f) &&  
+					(gVertex[1].z >= 0.0f) &&
+					(gVertex[1].z < 1.0f) &&
+					(gVertex[2].z >= 0.0f) &&
 					(gVertex[2].z < 1.0f))
 				{
 					//-----------------------------------------------------------------------------
 					// Reject Any triangle which has vertices off screeen in software for now.
 					// Do real cliping in geometry layer for software and hardware that needs it!
 					gos_DrawTriangles(gVertex, 3);
+				}
+				else if ( getenv("MC2_LOG_PREVIEW") && g_mechPreviewRenderDepth > 0 )
+				{
+					static int s_zrej = 0;
+					if ( (s_zrej++ % 500) == 0 )
+					{
+						if ( FILE* f = fopen("preview_debug.log","a") )
+						{
+							fprintf(f,"[PREVIEW] drawOldWay Z-REJECT z=(%.4f,%.4f,%.4f)\n",
+								gVertex[0].z,gVertex[1].z,gVertex[2].z);
+							fclose(f);
+						}
+					}
 				}
 			}
 			else

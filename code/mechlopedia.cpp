@@ -529,6 +529,16 @@ void Mechlopedia::MechScreen::select( aTextListItem* pItem )
 		name += " Prime";
 
 		LogisticsVariant* pChassis  = LogisticsData::instance->getVariant( name );
+		// ENCYCLO-3D-1 diagnostic: is the select→variant→camera chain intact?
+		if ( getenv("MC2_LOG_PREVIEW") )
+		{
+			if ( FILE* f = fopen("preview_debug.log","a") )
+			{
+				fprintf(f,"[ENCYCLO] select mech text='%s' lookup='%s' variant=%p\n",
+					pText, (const char*)name, (void*)pChassis);
+				fclose(f);
+			}
+		}
 		setMech( pChassis, 1 );
 	}
 	else

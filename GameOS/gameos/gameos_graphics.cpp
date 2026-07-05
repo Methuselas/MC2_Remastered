@@ -8578,6 +8578,23 @@ void __stdcall gos_SetScreenMode( DWORD Width, DWORD Height, DWORD bitDepth/*=16
     // Memory: hud_scene_resolution_separation.
     // EDITOR: gated off (gos_SetHudResClampEnabled(false)) — the editor has no
     // legacy 2D HUD (ImGui) and must render at native res so pick/drag align.
+    // WINDOWED-8006-1 (issue #49): MC2_WINDOWED wins over every later
+    // fullscreen request too — prefs.applyPrefs() re-issues SetScreenMode
+    // with GotoFullScreen from options.cfg, which was overriding the boot
+    // override and bouncing the launcher's Windowed toggle back to
+    // fullscreen.
+    {
+        static int s_forceWindowed = -1;
+        if (s_forceWindowed < 0) {
+            const char* wv = getenv("MC2_WINDOWED");
+            s_forceWindowed = (wv && wv[0] && wv[0] != '0') ? 1 : 0;
+        }
+        if (s_forceWindowed) {
+            GotoFullScreen = false;
+            GotoWindowMode = true;
+        }
+    }
+
     // WINDOWED-8006-1 (issue #49): clamped path keeps the PHYSICAL window at
     // its current (boot/options.cfg) size — phys 0,0 = keep — while the game's
     // logical canvas goes to 800x600. Unclamped (editor) resizes for real.
