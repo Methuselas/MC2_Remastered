@@ -15,9 +15,13 @@
 // --- data/defs UI bridge ---------------------------------------------------
 // While active, aObject::render draws through GuiRuntime (ImGui HUD layer)
 // instead of gos_DrawQuads, scaled from Environment space to display space.
+extern bool __stdcall gos_ComputeUiCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh);
+
 static bool  s_guiBridgeActive = false;
 static float s_guiBridgeSx = 1.0f;
 static float s_guiBridgeSy = 1.0f;
+static float s_guiBridgeOx = 0.0f;   // UI-LAYER-CONTRACT-2: canvas pad origin
+static float s_guiBridgeOy = 0.0f;
 
 static bool  s_textBridgeActive = false;
 static float s_textBridgeSx = 1.0f;
@@ -26,9 +30,44 @@ static float s_textBridgeFontScale = 1.0f;
 
 void aObject::beginGuiBridge(float scaleX, float scaleY)
 {
+	beginGuiBridge(scaleX, scaleY, 0.0f, 0.0f);
+}
+
+void aObject::beginGuiBridge(float scaleX, float scaleY, float offX, float offY)
+{
 	s_guiBridgeActive = true;
 	s_guiBridgeSx = scaleX > 0.0f ? scaleX : 1.0f;
 	s_guiBridgeSy = scaleY > 0.0f ? scaleY : 1.0f;
+	s_guiBridgeOx = offX;
+	s_guiBridgeOy = offY;
+}
+
+// UI-LAYER-CONTRACT-2: canvas-aware bridge begin. Display size + the 16:9
+// UI canvas box give the exact transform the defs pages use (UiDefs
+// PageScale), so bridged legacy widgets stay aligned with page content at
+// every aspect. Falls back to full-stretch when no canvas is active.
+void aObject::beginGuiBridgeCanvas()
+{
+	float dw = 0.f, dh = 0.f;
+	float sx = 1.f, sy = 1.f, ox = 0.f, oy = 0.f;
+	if ( GuiRuntime::GetDisplaySize( dw, dh ) &&
+		 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
+	{
+		int bx = 0, by = 0, bw = 0, bh = 0;
+		if ( gos_ComputeUiCanvasBox( (int)dw, (int)dh, &bx, &by, &bw, &bh ) )
+		{
+			sx = (float)bw / (float)Environment.screenWidth;
+			sy = (float)bh / (float)Environment.screenHeight;
+			ox = (float)bx;
+			oy = (float)by;
+		}
+		else
+		{
+			sx = dw / (float)Environment.screenWidth;
+			sy = dh / (float)Environment.screenHeight;
+		}
+	}
+	beginGuiBridge( sx, sy, ox, oy );
 }
 
 void aObject::endGuiBridge()
@@ -36,6 +75,8 @@ void aObject::endGuiBridge()
 	s_guiBridgeActive = false;
 	s_guiBridgeSx = 1.0f;
 	s_guiBridgeSy = 1.0f;
+	s_guiBridgeOx = 0.0f;
+	s_guiBridgeOy = 0.0f;
 }
 
 void aObject::beginTextBridge(float scaleX, float scaleY, float fontScale)
@@ -62,8 +103,10 @@ bool aObject::renderTextBridged( aFont& font, const char* text,
 
 	const float sx = s_textBridgeActive ? s_textBridgeSx : s_guiBridgeSx;
 	const float sy = s_textBridgeActive ? s_textBridgeSy : s_guiBridgeSy;
-	const float x = x0 * sx;
-	const float y = y0 * sy;
+	const float bx = s_textBridgeActive ? 0.0f : s_guiBridgeOx;
+	const float by = s_textBridgeActive ? 0.0f : s_guiBridgeOy;
+	const float x = x0 * sx + bx;
+	const float y = y0 * sy + by;
 	float w = ( x1 - x0 ) * sx;
 	float h = ( y1 - y0 ) * sy;
 
@@ -106,8 +149,8 @@ static void renderObjectViaGuiBridge(const gos_VERTEX* location, unsigned long t
 		return; // fully transparent (e.g. fade animation at alpha 0)
 	}
 
-	const float x = location[0].x * s_guiBridgeSx;
-	const float y = location[0].y * s_guiBridgeSy;
+	const float x = location[0].x * s_guiBridgeSx + s_guiBridgeOx;
+	const float y = location[0].y * s_guiBridgeSy + s_guiBridgeOy;
 	const float w = (location[2].x - location[0].x) * s_guiBridgeSx;
 	const float h = (location[2].y - location[0].y) * s_guiBridgeSy;
 	if (w <= 0.0f || h <= 0.0f)

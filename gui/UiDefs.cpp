@@ -574,6 +574,7 @@ struct UiElement {
     int legacyId = 0;
     int helpId = 0;             // helpDescLegacyId; hovered element sets ::helpTextID
     int legacyButtonIndex = -1;
+    std::string legacySection;   // UI-LAYER-CONTRACT-2: e.g. "Static4" / "Rect0" / "Text2" / "Button3"
     std::string texturePath;
     int textureNode = 0;
     bool textureNodeAssigned = false;
@@ -865,6 +866,11 @@ static UiElement makeElement(const Block& b)
     if (e.legacyId == 0)
         parseInt(field(b.fields, "controlValue", "0"), e.legacyId);
     e.legacyButtonIndex = parseLegacyButtonIndex(b.fields);
+    // UI-LAYER-CONTRACT-2: remember which legacy control this element mirrors
+    // so LogisticsScreen can suppress the legacy twin (coverage query).
+    e.legacySection = field(b.fields, "legacySection");
+    if (e.legacySection.empty())
+        e.legacySection = field(b.fields, "sourceControlType");
     e.texturePath = field(b.fields, "texture");
     e.textKey = !field(b.fields, "textKey").empty() ? field(b.fields, "textKey") : field(b.fields, "proposedTextKey");
     e.text = resolvedText(b.fields);
@@ -1843,6 +1849,43 @@ bool UiDefs::GameOSPage::setElementTextureNode(const std::string& key, long text
             e.textureWidth = e.textureHeight = 0;     // query logical size lazily
         }
         return true;
+    }
+    return false;
+}
+
+// UI-LAYER-CONTRACT-2: does this page carry an element mirroring the given
+// legacy control section ("Static4" / "Rect0" / "Text2" / "Button3")? Used by
+// LogisticsScreen's inverted bridging: legacy widgets WITHOUT page coverage
+// render through the gui bridge; covered ones stand down (page owns them).
+bool UiDefs::GameOSPage::coversLegacySection(const char* section) const
+{
+    if (!isLoaded() || !section || !section[0]) return false;
+    for (const UiElement& e : impl->elements)
+        if (e.legacySection == section)
+            return true;
+    return false;
+}
+
+// UI-LAYER-CONTRACT-2: kind+index coverage. Legacy section names are NOT
+// uniform across screens ("Text13" in some fits, "MechBayTextEntry13" in
+// others), so match by kind substring + trailing integer instead of exact
+// string. kind is "Rect" / "Static" / "Text" / "Button".
+bool UiDefs::GameOSPage::coversLegacyControl(const char* kind, int index) const
+{
+    if (!isLoaded() || !kind || !kind[0]) return false;
+    for (const UiElement& e : impl->elements) {
+        const std::string& sec = e.legacySection;
+        if (sec.empty() || sec.find(kind) == std::string::npos)
+            continue;
+        // trailing integer
+        size_t end = sec.size();
+        size_t beg = end;
+        while (beg > 0 && isdigit((unsigned char)sec[beg-1])) --beg;
+        if (beg == end) continue;   // no numeric suffix
+        int idx = 0;
+        for (size_t i = beg; i < end; ++i) idx = idx*10 + (sec[i]-'0');
+        if (idx == index)
+            return true;
     }
     return false;
 }

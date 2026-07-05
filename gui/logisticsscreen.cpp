@@ -441,6 +441,62 @@ bool LogisticsScreen::allAnimObjectsDone() const
 	return true;
 }
 
+
+// UI-LAYER-CONTRACT-2: inverted bridging for defs-page screens.
+// 1) blackClearLegacyLayer: opaque black quad in the LEGACY (GameOS HUD)
+//    layer so stray/stale legacy draws can never ghost through beneath the
+//    ImGui page. Front-end only -- in mission (HUD scale active) the screen
+//    behind a dialog/options page must stay visible.
+// 2) renderUncoveredLegacyWidgets: every legacy widget WITHOUT a mirroring
+//    defs-page element (coversLegacySection) renders through the canvas-aware
+//    gui bridge -- visible by default, page coverage is the opt-out. Kills the
+//    invisible-widget whack-a-mole: a control the page forgot still shows,
+//    correctly scaled, instead of silently vanishing.
+static void blackClearLegacyLayer()
+{
+	if ( gos_GetHudScaleActive() )
+		return;   // in mission: never blank the world behind dialog pages
+	GUI_RECT full = { 0, 0, Environment.screenWidth, Environment.screenHeight };
+	drawRect( full, 0xff000000 );
+}
+
+void LogisticsScreen::renderUncoveredLegacyWidgets( int xOffset, int yOffset )
+{
+	if ( !defsUiPage || !defsUiPage->isLoaded() || defsUiPage->isLegacyPassthrough() )
+		return;
+
+	aObject::beginGuiBridgeCanvas();
+	for ( int i = 0; i < rectCount; i++ )
+	{
+		if ( defsUiPage->coversLegacyControl( "Rect", i ) ) continue;
+		rects[i].move( xOffset, yOffset );
+		rects[i].render();
+		rects[i].move( -xOffset, -yOffset );
+	}
+	for ( int i = 0; i < staticCount; i++ )
+	{
+		if ( defsUiPage->coversLegacyControl( "Static", i ) ) continue;
+		statics[i].move( xOffset, yOffset );
+		statics[i].render();
+		statics[i].move( -xOffset, -yOffset );
+	}
+	for ( int i = 0; i < buttonCount; i++ )
+	{
+		if ( defsUiPage->coversLegacyControl( "Button", i ) ) continue;
+		buttons[i].move( xOffset, yOffset );
+		buttons[i].render();
+		buttons[i].move( -xOffset, -yOffset );
+	}
+	for ( int i = 0; i < textCount; i++ )
+	{
+		if ( defsUiPage->coversLegacyControl( "Text", i ) ) continue;
+		textObjects[i].move( xOffset, yOffset );
+		textObjects[i].render();
+		textObjects[i].move( -xOffset, -yOffset );
+	}
+	aObject::endGuiBridge();
+}
+
 //-------------------------------------------------------------------------------------------------
 void LogisticsScreen::render()
 {
@@ -484,6 +540,10 @@ void LogisticsScreen::render()
 		// Static GuiAnimation snapshots stand down when the screen owns live
 		// legacy animObjects; the aObject GUI bridge below renders the real
 		// objects with their actual keyframe playback (fades, slides).
+		// UI-LAYER-CONTRACT-2: black-clear the legacy layer beneath the page.
+		if ( !defsUiPage->isLegacyPassthrough() )
+			blackClearLegacyLayer();
+
 		defsUiPage->setSuppressAnimationElements( animObjectsCount > 0 && !defsUiPage->isLegacyPassthrough() );
 		// Sub-pages mounted inside a parent screen (e.g. options tabs inside
 		// OptionsScreenWrapper, mounted at a non-zero offset within the
@@ -491,21 +551,16 @@ void LogisticsScreen::render()
 		// parent's global position is folded into the scale transform here.
 		defsUiPage->render(globalX(), globalY());
 
+		// UI-LAYER-CONTRACT-2: legacy widgets the page does NOT cover render
+		// bridged on top (visible by default; page coverage = opt-out).
+		renderUncoveredLegacyWidgets( 0, 0 );
+
 		if ( animObjectsCount > 0 )
 		{
 			// animObject coordinates live in legacy Environment space; the
 			// ImGui HUD layer draws in display space.
-			float dw = 0.f;
-			float dh = 0.f;
-			float sx = 1.f;
-			float sy = 1.f;
-			if ( GuiRuntime::GetDisplaySize( dw, dh ) &&
-				 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
-			{
-				sx = dw / (float)Environment.screenWidth;
-				sy = dh / (float)Environment.screenHeight;
-			}
-			aObject::beginGuiBridge( sx, sy );
+			// UI-LAYER-CONTRACT-2: canvas-aware bridge (matches the page transform).
+			aObject::beginGuiBridgeCanvas();
 			for ( int i = 0; i < animObjectsCount; i++ )
 				animObjects[i].render();
 			aObject::endGuiBridge();
@@ -698,22 +753,19 @@ void LogisticsScreen::render( int xOffset, int yOffset )
 			}
 		}
 
+		// UI-LAYER-CONTRACT-2: black-clear + uncovered-widget pass (see render()).
+		if ( !defsUiPage->isLegacyPassthrough() )
+			blackClearLegacyLayer();
+
 		defsUiPage->setSuppressAnimationElements( animObjectsCount > 0 && !defsUiPage->isLegacyPassthrough() );
 		defsUiPage->render(globalX() + xOffset, globalY() + yOffset);
 
+		renderUncoveredLegacyWidgets( xOffset, yOffset );
+
 		if ( animObjectsCount > 0 )
 		{
-			float dw = 0.f;
-			float dh = 0.f;
-			float sx = 1.f;
-			float sy = 1.f;
-			if ( GuiRuntime::GetDisplaySize( dw, dh ) &&
-				 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
-			{
-				sx = dw / (float)Environment.screenWidth;
-				sy = dh / (float)Environment.screenHeight;
-			}
-			aObject::beginGuiBridge( sx, sy );
+			// UI-LAYER-CONTRACT-2: canvas-aware bridge (matches the page transform).
+			aObject::beginGuiBridgeCanvas();
 			for ( int i = 0; i < animObjectsCount; i++ )
 			{
 				// Same move/render/restore the legacy offset path uses; the

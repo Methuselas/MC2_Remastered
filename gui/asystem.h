@@ -180,6 +180,13 @@ public:
 	// real keyframe playback) on top of data/defs UI pages, which composite
 	// AFTER all GameOS draws and would otherwise hide them.
 	static void			beginGuiBridge(float scaleX, float scaleY);
+	// UI-LAYER-CONTRACT-2: bridge with a display-pixel origin offset (the
+	// 16:9 canvas pads). Plain beginGuiBridge keeps offset (0,0).
+	static void			beginGuiBridge(float scaleX, float scaleY, float offX, float offY);
+	// Computes the canvas-aware transform (display size + 16:9 canvas box)
+	// and begins the bridge with it -- ALL legacy->ImGui bridge sites should
+	// use this so bridged widgets land on the same canvas as the defs page.
+	static void			beginGuiBridgeCanvas();
 	static void			endGuiBridge();
 
 	// Text-only bridge: while active, aText::render draws its label through the

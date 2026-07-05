@@ -71,6 +71,10 @@ public:
     // On-screen rect of an element (using the current page scale) so game code can
     // overlay dynamic content (e.g. mission-briefing objective markers) aligned to it.
     bool getElementScreenRect(const std::string& key, float& x, float& y, float& w, float& h);
+    // UI-LAYER-CONTRACT-2: page mirrors this legacy control section?
+    bool coversLegacySection(const char* section) const;
+    // kind ("Rect"/"Static"/"Text"/"Button") + index, prefix-agnostic.
+    bool coversLegacyControl(const char* kind, int index) const;
 
     // File-backed image with an explicit texel sub-rect (uvX..uvW) and a
     // destination rect, for runtime-sized art like the encyclopedia weapon icon.

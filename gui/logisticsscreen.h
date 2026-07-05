@@ -98,6 +98,8 @@ class LogisticsScreen : public aObject
 	bool setDefsListItemColors(const std::string& key, const std::vector<unsigned int>& colors);
 	// Screen-rect of a defs element + an ImGui-layer rect draw, for overlaying dynamic
 	// content (mission-briefing objective markers) on top of a defs image, aligned to it.
+	// UI-LAYER-CONTRACT-2: bridge-render legacy widgets the defs page does not mirror.
+	void renderUncoveredLegacyWidgets( int xOffset, int yOffset );
 	bool getDefsElementScreenRect(const std::string& key, float& x, float& y, float& w, float& h);
 	void drawDefsRect(float x, float y, float w, float h, unsigned int color, bool filled);
 
