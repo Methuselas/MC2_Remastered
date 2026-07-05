@@ -1662,6 +1662,21 @@ std::string UiDefs::replacementPathForLegacyFit(const char* legacyFitPath)
     if (stem.empty())
         return std::string();
 
+    // RESULTS-LEGACY-FALLBACK-1: the mission-results defs page
+    // (mcui_mr_layout: salvage / pilot review / promotion) is UNFINISHED
+    // modder content — the game-side screens were explicitly not done in the
+    // ImGui-port handoff, and the generated page breaks the AAR while pure
+    // legacy renders it correctly. Keep the AAR on the legacy path until the
+    // page is actually authored. MC2_UI_DEFS_RESULTS=1 opts the page back in
+    // for iterating on it.
+    if (stem == "mcui_mr_layout") {
+        static const bool s_resultsDefs = (std::getenv("MC2_UI_DEFS_RESULTS") != nullptr);
+        if (!s_resultsDefs) {
+            uiDefsTrace("legacy FIT %s -> LEGACY (results page opt-out)", legacyFitPath ? legacyFitPath : "<null>");
+            return std::string();
+        }
+    }
+
     const std::filesystem::path root = defsRoot() / "ui" / "packages" / "default";
     const std::filesystem::path gamePath = root / "game" / (stem + ".fit");
     if (fileExistsPath(gamePath)) {
