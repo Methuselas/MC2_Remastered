@@ -1568,6 +1568,7 @@ struct HudDrawCall {
     DWORD                    fontTexId;       // kHudTextQuadBatch only
     DWORD                    foregroundColor; // kHudTextQuadBatch only
     bool                     scaleExempt = false; // skip s_hud_scale shrink (cursor, modal dialogs)
+    bool                     canvasExempt = false; // skip 16:9 HUD-canvas remap (cursor, world-anchored overlays, dialogs)
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -5043,6 +5044,14 @@ static bool   s_hud_scale_active = false;  // gated: only shrink during mission
 // dialogs straddling the gate tore at the seam.
 static bool   s_hud_scale_exempt = false;
 
+// UI-ASPECT-ANCHOR-1: per-call canvas exemption. Default (-1) FOLLOWS the
+// shrink-exempt bracket -- the existing exempt sites are the cursor, modal
+// dialogs and world-anchored overlays (selection brackets / health bars /
+// sensor rings), all of which must stay in full-surface space. A site that is
+// shrink-exempt but WANTS the canvas remap (force-group bar: hit-tests via
+// getMouseHudX) overrides with 0 around its draws; 1 forces exemption.
+static int    s_hud_canvas_exempt_mode = -1;
+
 // UI-ASPECT-ANCHOR-1 canvas flags (defined up here, same reason as s_hud_scale:
 // flushHUDBatch references them directly). See gos_SetUiCanvasActive below.
 static bool s_uiCanvasAssert  = false;  // set by front-end each frame
@@ -6062,6 +6071,8 @@ void gosRenderer::drawQuads(gos_VERTEX* vertices, int count) {
         call.fontTexId = 0;
         call.foregroundColor = 0;
         call.scaleExempt = s_hud_scale_exempt;
+        call.canvasExempt = (s_hud_canvas_exempt_mode < 0)
+            ? s_hud_scale_exempt : (s_hud_canvas_exempt_mode != 0);
         hudBatch_.push_back(std::move(call));
         return;
     }
@@ -6125,6 +6136,8 @@ void gosRenderer::drawLines(gos_VERTEX* vertices, int count) {
         call.fontTexId = 0;
         call.foregroundColor = 0;
         call.scaleExempt = s_hud_scale_exempt;
+        call.canvasExempt = (s_hud_canvas_exempt_mode < 0)
+            ? s_hud_scale_exempt : (s_hud_canvas_exempt_mode != 0);
         hudBatch_.push_back(std::move(call));
         return;
     }
@@ -6201,6 +6214,8 @@ void gosRenderer::drawTris(gos_VERTEX* vertices, int count) {
         call.fontTexId = 0;
         call.foregroundColor = 0;
         call.scaleExempt = s_hud_scale_exempt;
+        call.canvasExempt = (s_hud_canvas_exempt_mode < 0)
+            ? s_hud_scale_exempt : (s_hud_canvas_exempt_mode != 0);
         hudBatch_.push_back(std::move(call));
         return;
     }
@@ -7653,6 +7668,8 @@ void gosRenderer::drawText(const char* text) {
             call.fontTexId = tex_id;
             call.foregroundColor = ta.Foreground;
             call.scaleExempt = s_hud_scale_exempt;
+        call.canvasExempt = (s_hud_canvas_exempt_mode < 0)
+            ? s_hud_scale_exempt : (s_hud_canvas_exempt_mode != 0);
             hudBatch_.push_back(std::move(call));
         } else if (hudFlushed_) {
             SPEW(("GRAPHICS", "[HUD] Late drawText discarded (after flushHUDBatch)\n"));
@@ -7900,8 +7917,8 @@ void gosRenderer::flushHUDBatch()
             const float lx = (float)width_  * ((float)bx / dw);
             const float ly = (float)height_ * ((float)by / dh);
             for (HudDrawCall& call : hudBatch_) {
-                if (hudCanvas && call.scaleExempt)
-                    continue;   // mission cursor + modals stay full-space
+                if (hudCanvas && call.canvasExempt)
+                    continue;   // cursor, world-anchored overlays, modals stay full-space
                 for (gos_VERTEX& v : call.vertices) {
                     v.x = v.x * fx + lx;
                     v.y = v.y * fy + ly;
@@ -10464,6 +10481,8 @@ bool gos_GetTerrainDrawEnabled() {
 // Killswitch: MC2_UI_ASPECT_ANCHOR=0 restores full-stretch everywhere.
 void __stdcall gos_SetUiCanvasActive(bool on) { s_uiCanvasAssert = on; }
 void __stdcall gos_SetHudCanvasActive(bool on) { s_hudCanvasActive = on; }
+void __stdcall gos_SetHudCanvasExemptMode(int mode) { s_hud_canvas_exempt_mode = mode; }
+int  __stdcall gos_GetHudCanvasExemptMode() { return s_hud_canvas_exempt_mode; }
 
 static bool uiAspectAnchorEnabled()
 {

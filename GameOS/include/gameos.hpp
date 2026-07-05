@@ -2494,6 +2494,12 @@ bool __stdcall gos_ComputeUiCanvasBox(int w, int h, int* ox, int* oy, int* obw, 
 // (menu) pages instead assert gos_SetUiCanvasActive and get this for free
 // via UiDefs PageScale.
 void __stdcall gos_SetHudCanvasActive(bool on);
+// Per-call canvas exemption bracket: -1 (default) = follow the shrink-exempt
+// bracket (cursor / modal dialogs / world-anchored overlays stay full-surface);
+// 0 = force canvas remap (force-group bar: shrink-exempt but hits via
+// getMouseHudX); 1 = force exemption. Save/restore around draws.
+void __stdcall gos_SetHudCanvasExemptMode(int mode);
+int  __stdcall gos_GetHudCanvasExemptMode();
 bool __stdcall gos_ComputeHudCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh);
 
 // Shadow mode — render terrain depth to shadow FBO

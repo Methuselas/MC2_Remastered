@@ -518,17 +518,29 @@ void LogisticsScreen::render()
 		{
 			fadeTime += frameLength;
 			long color = interpolateColor( 0,fadeOutMaxColor, fadeTime/fadeOutTime );
-			GuiRuntime::DrawUiRect( 0.f, 0.f,
-				(float)Environment.screenWidth, (float)Environment.screenHeight,
-				(unsigned int)color, true );
+			{
+				// FADE-RECT-DISPLAY-1: DrawUiRect takes DISPLAY pixels; Environment
+				// is the 800x600 logical canvas, so this fade only dimmed the
+				// top-left 800x600 corner of a real-res display (transient corner
+				// dim during fade-in). Cover the whole display, flanks included.
+				float fdw = (float)Environment.screenWidth, fdh = (float)Environment.screenHeight;
+				GuiRuntime::GetDisplaySize( fdw, fdh );
+				GuiRuntime::DrawUiRect( 0.f, 0.f, fdw, fdh, (unsigned int)color, true );
+			}
 		}
 		else if ( fadeInTime && fadeInTime > fadeTime )
 		{
 			fadeTime += frameLength;
 			long color = interpolateColor( fadeOutMaxColor, 0, fadeTime/fadeInTime );
-			GuiRuntime::DrawUiRect( 0.f, 0.f,
-				(float)Environment.screenWidth, (float)Environment.screenHeight,
-				(unsigned int)color, true );
+			{
+				// FADE-RECT-DISPLAY-1: DrawUiRect takes DISPLAY pixels; Environment
+				// is the 800x600 logical canvas, so this fade only dimmed the
+				// top-left 800x600 corner of a real-res display (transient corner
+				// dim during fade-in). Cover the whole display, flanks included.
+				float fdw = (float)Environment.screenWidth, fdh = (float)Environment.screenHeight;
+				GuiRuntime::GetDisplaySize( fdw, fdh );
+				GuiRuntime::DrawUiRect( 0.f, 0.f, fdw, fdh, (unsigned int)color, true );
+			}
 		}
 		return;
 	}
@@ -719,17 +731,29 @@ void LogisticsScreen::render( int xOffset, int yOffset )
 		{
 			fadeTime += frameLength;
 			long color = interpolateColor( 0,0xff000000, fadeTime/fadeOutTime );
-			GuiRuntime::DrawUiRect( 0.f, 0.f,
-				(float)Environment.screenWidth, (float)Environment.screenHeight,
-				(unsigned int)color, true );
+			{
+				// FADE-RECT-DISPLAY-1: DrawUiRect takes DISPLAY pixels; Environment
+				// is the 800x600 logical canvas, so this fade only dimmed the
+				// top-left 800x600 corner of a real-res display (transient corner
+				// dim during fade-in). Cover the whole display, flanks included.
+				float fdw = (float)Environment.screenWidth, fdh = (float)Environment.screenHeight;
+				GuiRuntime::GetDisplaySize( fdw, fdh );
+				GuiRuntime::DrawUiRect( 0.f, 0.f, fdw, fdh, (unsigned int)color, true );
+			}
 		}
 		else if ( fadeInTime && fadeInTime > fadeTime )
 		{
 			fadeTime += frameLength;
 			long color = interpolateColor( 0xff000000, 0, fadeTime/fadeInTime );
-			GuiRuntime::DrawUiRect( 0.f, 0.f,
-				(float)Environment.screenWidth, (float)Environment.screenHeight,
-				(unsigned int)color, true );
+			{
+				// FADE-RECT-DISPLAY-1: DrawUiRect takes DISPLAY pixels; Environment
+				// is the 800x600 logical canvas, so this fade only dimmed the
+				// top-left 800x600 corner of a real-res display (transient corner
+				// dim during fade-in). Cover the whole display, flanks included.
+				float fdw = (float)Environment.screenWidth, fdh = (float)Environment.screenHeight;
+				GuiRuntime::GetDisplaySize( fdw, fdh );
+				GuiRuntime::DrawUiRect( 0.f, 0.f, fdw, fdh, (unsigned int)color, true );
+			}
 		}
 		return;
 	}
