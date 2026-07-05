@@ -35,6 +35,15 @@ preview FBO (drawOldWay force), 4x supersample, bay/pilot icon bridge (beginGuiB
 - Remaining plan slices (nifty docs/splits/gameos-graphics-split-1-plan.md): 3 overlay-batch (~400L, gosRenderer members — prefer keeping methods), 4 light-matrix SSBO (~85L), 5 gos_* param accessors (~340L, needs extern s_hud_scale*/g_water*).
 - ⚠When nifty frees up: either cherry-pick these two commits there or re-run the extraction; doing it fresh on nifty from ITS copy is safer than cherry-pick (files diverged).
 
+## 2026-07-05 EVE session (split 3-5 + layer contract + #4 + #5)
+
+- **SPLIT slices 4+5 `ab3d396d`**: light-SSBO cluster -> gameos_graphics_light_ssbo.cpp; HUD/canvas params+state -> gameos_graphics_params.cpp (globals extern via internal header). Slice 3 SKIPPED (overlay batch = nested gosRenderer members, no free surface; plan concurs). Main TU 11376->10219.
+- **LAYER-CONTRACT-2 `4f992d69`**: blackClearLegacyLayer (front-end only, gated on !HudScaleActive) + inverted opt-out bridging via renderUncoveredLegacyWidgets + coversLegacyControl(kind,index) (section names heterogeneous: 'Text13' vs 'MechBayTextEntry13') + beginGuiBridgeCanvas (bridge grew ox/oy pads). Bay verified incl help-text single-draw.
+- **#4 `60aa71aa`+`463f1995`**: GetDisplaySize now prefers Environment.drawable (one truth; io.DisplaySize lags in load transitions) AND ProgressTimer blit RETIRED default (MC2_LEGACY_LOAD_BANNER=1 restores) — was drawing the floating blue banner over mission start AND behind pilot-ready during save ops. User confirm needed.
+- **#5 AAR ROOT-CAUSED+FIXED `463f1995`**: mcui_mr_layout.fit localHeight=1326 (converter took extent from ONE offscreen promotion slide-in element; all real content 0..600) -> PageScale squashed AAR to top of screen. Fixed to 600 in all 3 package copies + deployed install copy. Salvage agent-verified full-screen. ⚠Promotion screen capture timing needs tune (fires at 30 frames = mid-fade/black); user eyes on promotion + list-row text.
+- **Options->Gameplay paint preview**: canvas-transform composite (was full-stretch wrong size at widescreen — user report).
+- **RESULTS-CAPTURE-1**: MC2_SHOT_RESULTS=1 + MC2_DEV_SHELL=1 -> event-driven dev_shell_out/results_salvage.tga / results_promote.tga via gos_dev_shell::scheduleScreenshot. Full AAR repro: soak cheats (BOOT_TO_BAY=campaign AUTOWIN AUTO_PURCHASE KILL_ENEMY PILOT_PROMOTE) reach salvage ~30s. NEVER blind-timed screenshots.
+
 ## NIFTY side (worktree .claude/worktrees/nifty-mendeleev)
 - DEV-SHELL complete (docs/dev-shell.md = playbook; ping/reload_shaders/screenshot/ui_reload/texture_refresh/framegraph). GAMEOS-SPLIT plan at docs/splits/gameos-graphics-split-1-plan.md — execute slice 1 (gosFont) when worktree free.
 
