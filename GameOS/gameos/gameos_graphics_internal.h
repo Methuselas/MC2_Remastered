@@ -324,6 +324,21 @@ class gosFont {
         DWORD tex_id_;
         uint32_t ref_count_;
 };
+// ── SPLIT-1 slice 5: HUD-scale / UI-canvas shared state ─────────────────────
+// Defined in gameos_graphics_params.cpp; referenced by the main TU
+// (flushHUDBatch remaps, HUD record sites) and by the params accessors.
+extern float s_hud_scale;
+extern bool  s_hud_scale_active;
+extern bool  s_hud_scale_exempt;
+extern int   s_hud_canvas_exempt_mode;
+extern bool  s_uiCanvasAssert;
+extern bool  s_uiCanvasLatch;
+extern bool  s_hudCanvasActive;
+
+// Logical canvas size shims (defined in gameos_graphics.cpp; 0 = no renderer).
+int gosRendererLogicalWidth();
+int gosRendererLogicalHeight();
+
 
 // ── Renderer shims (defined in gameos_graphics.cpp) ─────────────────────────
 // The gosRenderer class definition stays private to the main TU; extraction
