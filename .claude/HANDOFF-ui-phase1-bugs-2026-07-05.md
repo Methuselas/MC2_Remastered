@@ -54,7 +54,9 @@ preview FBO (drawOldWay force), 4x supersample, bay/pilot icon bridge (beginGuiB
 - Canvas-aware bridges everywhere: `aObject::getCanvasTransform` = THE transform helper; all tbSx full-stretch sites migrated (bay/pilotready/mechlab/purchase/mp*/salvage/briefing); textBridge grew pad offsets. 16:9 identity bay-verified.
 - Mouse sweep: formation line = only raw-mouse chrome, correct by design (world-space + canvas-exempt).
 - tgl.cpp:165 deferral RESOLVED (flip motivation moot — previews fixed via FBO composite); tgl.cpp:3078 hardware-shape emission port still deliberately deferred (needs PBR-field-aware port, documented in place).
-- REMAINING for modder: PNG/magenta transparency, Viewer, UI-Editor->GOS hookup, authoring the pinned pages (results/loadscreen).
+- **PNG-MAGENTA-KEY-1 `94e2817f`**: PNG transparency solved engine-side (magenta->transparent at decode, PNG-only, stock untouched; MC2_PNG_MAGENTA_KEY=0 kill). Live-proven: full-magenta atlas -> elements vanish, zero magenta drawn.
+- **★docs/ui-imgui-port-guide.md** = the modder's complete hook-in map (migration contract, canvas model, HUD seam, dev loop, editor/viewer hookups, fonts). Point him here first.
+- REMAINING for modder (all documented in the guide): Viewer polish, UI-Editor->GOS hookup, authoring the pinned pages (results/loadscreen).
 
 ## NIFTY side (worktree .claude/worktrees/nifty-mendeleev)
 - DEV-SHELL complete (docs/dev-shell.md = playbook; ping/reload_shaders/screenshot/ui_reload/texture_refresh/framegraph). GAMEOS-SPLIT plan at docs/splits/gameos-graphics-split-1-plan.md — execute slice 1 (gosFont) when worktree free.
