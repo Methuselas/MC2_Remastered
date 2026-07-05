@@ -285,13 +285,14 @@ Headless Vulkan probe / backend-skeleton exercise gates. All read via bare `gete
 
 ## Road PBR fail-soft (ROAD-PBR-FAILSOFT-1)
 
-- `MC2_ROAD_PBR=0` — force legacy tgl road tiles even when the asphalt/gravel
-  TGAs are present. Default ON: the overlay bake asks
-  `gos_TerrainRoadMaterialReady(matId)` per material and only bakes the PBR
-  matId when its albedo actually loaded (`data/textures/asphalt_albedo.tga` /
-  `gravel_albedo.tga`). Installs WITHOUT the hand-placed TGAs render the
-  original 64Overlays road tiles (previously: matId baked anyway -> shader
-  sampled texture 0 -> black/invisible roads).
+- `MC2_ROAD_PBR=1` — opt IN to the high-res PBR asphalt/gravel road
+  materials (also requires `data/textures/asphalt_albedo.tga` /
+  `gravel_albedo.tga` to be present; the bake checks
+  `gos_TerrainRoadMaterialReady(matId)` per material). Default **OFF**
+  (USER RULING 2026-07-05: PBR asphalt look rejected) — every install
+  renders the original legacy 64Overlays road tiles. History: the PBR
+  slice originally baked the matId unconditionally, so installs without
+  the hand-placed TGAs sampled texture 0 -> black/invisible roads.
 
 ## Terrain fast-path drop log
 
