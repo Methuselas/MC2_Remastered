@@ -452,6 +452,25 @@ static void process_events( void ) {
                 float w = (float)event.window.data1;
                 float h = (float)event.window.data2;
                 glViewport(0, 0, (GLsizei)w, (GLsizei)h);
+                // FREE-RESIZE-1: refresh the physical drawable size — every
+                // per-frame consumer (postprocess FBO resize in draw_screen,
+                // UI canvas box, mouse normalize, camera aspect) keys off
+                // Environment.drawableWidth/Height, so updating them + the
+                // ImGui display size is the whole live-resize story. The
+                // logical 800x600 canvas (Environment.screenWidth) stays
+                // untouched by design.
+                {
+                    extern SDL_Window* g_sdl_window;
+                    if (g_sdl_window) {
+                        SDL_GL_GetDrawableSize(g_sdl_window,
+                            &Environment.drawableWidth, &Environment.drawableHeight);
+#ifdef MC2_IMGUI
+                        GuiRuntime::NotifyResize(
+                            Environment.drawableWidth, Environment.drawableHeight,
+                            Environment.screenWidth, Environment.screenHeight);
+#endif
+                    }
+                }
                 graphics::refresh_mouse_grab();
                 SPEW(("INPUT", "resize event: w: %f h:%f\n", w, h));
                 break;

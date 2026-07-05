@@ -265,6 +265,18 @@ Headless Vulkan probe / backend-skeleton exercise gates. All read via bare `gete
   (gos_HudInverseMousePoint inverts canvas + shrink). ImGui HUD port seam:
   gos_ComputeHudCanvasBox (see gameos.hpp note).
 
+## Free window resize (FREE-RESIZE-1) + native camera aspect
+
+- `MC2_WINDOW_RESIZABLE=0` — kill the resizable window. Default **ON** with
+  `MC2_WINDOWED`: the SDL window is user-resizable; SIZE_CHANGED refreshes
+  `Environment.drawableWidth/Height` + ImGui display size, and every consumer
+  (postprocess FBOs, UI canvas box, mouse normalize, camera aspect) re-derives
+  from drawable per frame — drag to any size and shape, everything adapts.
+- `MC2_CAMERA_ASPECT_NATIVE=0` — restore the legacy stretched 4:3 frustum.
+  Default **ON**: the in-mission perspective projection uses the drawable
+  aspect (true proportions at any window shape); panel previews keep their
+  fixed 4:3 FBO ratio via the preview-scope guard.
+
 ## Terrain fast-path drop log
 
 - `MC2_FASTPATH_DROP_LOG=1` — log terrain fast-path -> legacy setupTextures transitions (transition-only, `[FASTPATH_DROP]`). Default **OFF**.
