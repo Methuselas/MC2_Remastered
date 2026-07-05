@@ -1075,6 +1075,10 @@ static UiElement makeElement(const Block& b)
 struct PageScale {
     float sx = 1.0f;
     float sy = 1.0f;
+    // UI-ASPECT-ANCHOR-1: display-pixel origin of the 16:9 UI canvas
+    // (pillarbox/letterbox pads); 0,0 when the canvas fills the display.
+    float ox = 0.0f;
+    float oy = 0.0f;
 };
 
 static PageScale currentPageScale(int localWidth, int localHeight)
@@ -1090,6 +1094,21 @@ static PageScale currentPageScale(int localWidth, int localHeight)
         // feeds DisplaySize from in the first place.
         dw = static_cast<float>(Environment.screenWidth);
         dh = static_cast<float>(Environment.screenHeight);
+    }
+    // UI-ASPECT-ANCHOR-1: scale into the centered 16:9 UI canvas instead of
+    // stretching to the full display (matches the legacy layer's canvas
+    // transform in flushHUDBatch). Identity at exactly 16:9; inactive frames
+    // (mission) and MC2_UI_ASPECT_ANCHOR=0 keep the full-stretch behavior.
+    {
+        int bx = 0, by = 0, bw = 0, bh = 0;
+        if (gos_ComputeUiCanvasBox(static_cast<int>(dw), static_cast<int>(dh),
+                                   &bx, &by, &bw, &bh))
+        {
+            s.ox = static_cast<float>(bx);
+            s.oy = static_cast<float>(by);
+            dw = static_cast<float>(bw);
+            dh = static_cast<float>(bh);
+        }
     }
     if (localWidth > 0 && dw > 0.0f)
         s.sx = dw / static_cast<float>(localWidth);
@@ -1123,8 +1142,8 @@ struct FRect {
 static FRect scaledRect(const Rect& r, int xOffset, int yOffset, const PageScale& s)
 {
     FRect out;
-    out.x = static_cast<float>(r.x + xOffset) * s.sx;
-    out.y = static_cast<float>(r.y + yOffset) * s.sy;
+    out.x = static_cast<float>(r.x + xOffset) * s.sx + s.ox;
+    out.y = static_cast<float>(r.y + yOffset) * s.sy + s.oy;
     out.w = static_cast<float>(r.w) * s.sx;
     out.h = static_cast<float>(r.h) * s.sy;
     return out;

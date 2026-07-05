@@ -5043,6 +5043,11 @@ static bool   s_hud_scale_active = false;  // gated: only shrink during mission
 // dialogs straddling the gate tore at the seam.
 static bool   s_hud_scale_exempt = false;
 
+// UI-ASPECT-ANCHOR-1 canvas flags (defined up here, same reason as s_hud_scale:
+// flushHUDBatch references them directly). See gos_SetUiCanvasActive below.
+static bool s_uiCanvasAssert = false;   // set by front-end each frame
+static bool s_uiCanvasLatch  = false;   // last completed frame's assert
+
 
 void gosRenderer::init() {
     ZoneScopedN("gosRenderer::init");
@@ -7864,6 +7869,32 @@ void gosRenderer::flushHUDBatch()
         }
     }
 
+    // UI-ASPECT-ANCHOR-1: map the logical-space UI verts onto the 16:9 canvas.
+    // The full-window stretch maps logical [0,width_] -> [0,drawableW]; the
+    // canvas wants [bx, bx+bw] instead, so in LOGICAL space that is a scale of
+    // bw/drawableW about origin plus a logical offset of width_*bx/drawableW
+    // (same vertex-space technique as the s_hud_scale block above). Applies to
+    // every call INCLUDING scaleExempt (cursor must follow the canvas mouse
+    // mapping); active only on frames the front-end asserted (menus).
+    {
+        int bx = 0, by = 0, bw = 0, bh = 0;
+        if (gos_ComputeUiCanvasBox(Environment.drawableWidth, Environment.drawableHeight,
+                                   &bx, &by, &bw, &bh))
+        {
+            const float dw = (float)Environment.drawableWidth;
+            const float dh = (float)Environment.drawableHeight;
+            const float fx = (float)bw / dw;
+            const float fy = (float)bh / dh;
+            const float lx = (float)width_  * ((float)bx / dw);
+            const float ly = (float)height_ * ((float)by / dh);
+            for (HudDrawCall& call : hudBatch_)
+                for (gos_VERTEX& v : call.vertices) {
+                    v.x = v.x * fx + lx;
+                    v.y = v.y * fy + ly;
+                }
+        }
+    }
+
     // pp->endScene() binds FB 0 and sets the full-screen viewport for us,
     // but leaves VAO 0 bound — rebind our VAO so glVertexAttribPointer works.
     glBindVertexArray(gVAO);
@@ -7929,6 +7960,11 @@ void gosRenderer::flushHUDBatch()
     // the next frame's non-exempt HUD recording. Callers (cursor sprite, modal
     // dialogs) set it true around their own draws; this is the single reset.
     s_hud_scale_exempt = false;
+
+    // UI-ASPECT-ANCHOR-1: latch this frame's canvas assert for early-next-frame
+    // consumers (mouse normalize runs before any render code), then re-arm.
+    s_uiCanvasLatch  = s_uiCanvasAssert;
+    s_uiCanvasAssert = false;
 
     render_contract::endPassScope(render_contract::PassIdentity::UI,
                                   "gosRenderer_flushHUDBatch");
@@ -10399,6 +10435,38 @@ void gos_SetTerrainDrawEnabled(bool e) {
 }
 bool gos_GetTerrainDrawEnabled() {
     return g_gos_renderer ? g_gos_renderer->getTerrainDrawEnabled() : true;
+}
+
+// ── UI-ASPECT-ANCHOR-1: 16:9 UI canvas ──────────────────────────────────────
+// The legacy 800x600 UI historically stretched to the FULL window, distorting
+// at non-16:9 aspects. The approved model: the UI lives on a 16:9 canvas (the
+// accepted 1080p look). Wider displays center it with black flanks; narrower
+// displays scale it down (letterbox). Front-end screens assert the canvas per
+// frame (gos_SetUiCanvasActive from MainMenu/MissionBegin render); the flag
+// auto-latches at flushHUDBatch so early-frame consumers (mouse normalize)
+// use last frame's state, and MISSION frames — which never assert — fall back
+// to the legacy full-surface behavior untouched (world pick unaffected).
+// Killswitch: MC2_UI_ASPECT_ANCHOR=0 restores full-stretch everywhere.
+void __stdcall gos_SetUiCanvasActive(bool on) { s_uiCanvasAssert = on; }
+
+bool __stdcall gos_ComputeUiCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh)
+{
+    static const bool s_enabled =
+        []{ const char* e = getenv("MC2_UI_ASPECT_ANCHOR"); return !(e && e[0] == '0'); }();
+    const bool active = s_enabled && (s_uiCanvasAssert || s_uiCanvasLatch);
+    int cw = w, ch = h;
+    if (active && w > 0 && h > 0)
+    {
+        // 16:9 canvas fitted inside the display, centered.
+        cw = (h * 16) / 9;
+        ch = h;
+        if (cw > w) { cw = w; ch = (w * 9) / 16; }
+    }
+    if (ox)  *ox  = (w - cw) / 2;
+    if (oy)  *oy  = (h - ch) / 2;
+    if (obw) *obw = cw;
+    if (obh) *obh = ch;
+    return active && (cw != w || ch != h);
 }
 
 // HUD scale — clamped to [0.5, 1.0]. 1.0 disables the transform entirely.

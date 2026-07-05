@@ -2468,6 +2468,14 @@ bool  gos_GetHudScaleExempt();
 // the HUD element. No-op when scale == 1.0. Safe to call every frame.
 void  gos_HudInverseMousePoint(float& x, float& y);
 
+// UI-ASPECT-ANCHOR-1: 16:9 UI canvas. Front-end screens (MainMenu /
+// MissionBegin render) assert per frame; auto-latched at flushHUDBatch.
+// gos_ComputeUiCanvasBox mirrors gos_Compute43Box: fills the centered 16:9
+// canvas rect within a w x h surface, returns true only when active AND the
+// canvas differs from the full surface. Killswitch MC2_UI_ASPECT_ANCHOR=0.
+void __stdcall gos_SetUiCanvasActive(bool on);
+bool __stdcall gos_ComputeUiCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh);
+
 // Shadow mode — render terrain depth to shadow FBO
 void gos_SetShadowMode(bool enable);
 

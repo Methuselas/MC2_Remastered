@@ -248,6 +248,17 @@ Headless Vulkan probe / backend-skeleton exercise gates. All read via bare `gete
 - `texture_refresh` command — `--name <substring>` re-reads the loose source file from disk for every txmmgr node whose path contains the substring (case-insensitive), replaces the system-RAM copy (same read/LZ path as loadTexture), and destroys the resident GL texture so the next use re-uploads fresh pixels. Node indices stay stable. Reply `{refreshed, skipped_no_file}`; FST-only textures are skipped — drop a loose copy (loose overrides FST) and refresh again. Caveat: a `.ktx2` BC7 sidecar next to the `.tga` still wins at re-upload (`MC2_TEXMGR_COMPRESSED_UPLOAD`).
 - `MC2_DEV_SHELL_PORT=<n>` — port override.
 
+## UI aspect anchor (UI-ASPECT-ANCHOR-1)
+
+- `MC2_UI_ASPECT_ANCHOR=0` — killswitch for the 16:9 UI canvas. Default **ON**
+  (ui-phase1 branch): front-end frames (MainMenu/MissionBegin render assert
+  `gos_SetUiCanvasActive`, auto-cleared at flushHUDBatch) draw the whole UI —
+  legacy HUD-batch layer AND defs/ImGui pages — into a centered 16:9 canvas.
+  Wider displays: black flanks. Narrower: letterbox, scaled down. Exactly 16:9:
+  identity. Mouse normalize (`gos_GetMouseInfo`) is canvas-relative on those
+  frames only; mission frames never assert, so world pick is untouched. `=0`
+  restores full-window stretch everywhere.
+
 ## Terrain fast-path drop log
 
 - `MC2_FASTPATH_DROP_LOG=1` — log terrain fast-path -> legacy setupTextures transitions (transition-only, `[FASTPATH_DROP]`). Default **OFF**.

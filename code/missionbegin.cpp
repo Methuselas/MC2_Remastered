@@ -1685,6 +1685,9 @@ const char* MissionBegin::update()
 
 void MissionBegin::render()
 {
+	// UI-ASPECT-ANCHOR-1: front-end frame — draw the UI on the 16:9 canvas
+	// (re-asserted every frame; auto-cleared at flushHUDBatch).
+	gos_SetUiCanvasActive( true );
 
 	long xOffset = 0;
 	long yOffset = 0;
