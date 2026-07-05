@@ -45,6 +45,7 @@
 // invisible. See gameos_graphics.cpp invalidation contract.
 extern void __stdcall gos_InvalidateRenderStateCache();
 extern void __stdcall gos_PrepareForPostImGuiRender();
+extern bool __stdcall gos_ComputeUiCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh);   // CANVAS-FLANK-CLEAR-1
 
 // TERRAIN-DECAL-SLICE-0C — live cliff mesh-decal tuning panel.
 // Forward-declared plain API (defined in mclib/cliff_decal_tuning.cpp; resolved at
@@ -807,6 +808,33 @@ void GuiRuntime::Render() {
     EditorInspector::drawImGui();
     GraphicsOptionsWindow::draw();
     DrawCliffDecalPanel();
+
+    // CANVAS-FLANK-CLEAR-1 (UI-LAYER-CONTRACT slice): when the front-end 16:9
+    // canvas is active and smaller than the display, paint the flank pads
+    // opaque black in the foreground layer — appended here they sit on top of
+    // everything drawn this frame (legacy HUD composites before ImGui; page
+    // content never legitimately draws in the pads), so no layer can bleed
+    // metal/backdrop into the flanks. Post-ImGui callbacks (cursor) still
+    // draw above. Guarantees the "black flanks" contract at any layer's
+    // expense instead of per-screen whack-a-mole.
+    {
+        int bx = 0, by = 0, bw = 0, bh = 0;
+        float dw = 0.0f, dh = 0.0f;
+        if (GetDisplaySize(dw, dh) &&
+            gos_ComputeUiCanvasBox((int)dw, (int)dh, &bx, &by, &bw, &bh))
+        {
+            ImDrawList* fg = ImGui::GetForegroundDrawList();
+            const ImU32 black = IM_COL32(0, 0, 0, 255);
+            if (bx > 0) {
+                fg->AddRectFilled(ImVec2(0, 0), ImVec2((float)bx, dh), black);
+                fg->AddRectFilled(ImVec2((float)(bx + bw), 0), ImVec2(dw, dh), black);
+            }
+            if (by > 0) {
+                fg->AddRectFilled(ImVec2(0, 0), ImVec2(dw, (float)by), black);
+                fg->AddRectFilled(ImVec2(0, (float)(by + bh)), ImVec2(dw, dh), black);
+            }
+        }
+    }
 
     // Force scale=1 at Render() time too -- some paths between NewFrame and
     // Render can reset it (SDL window event processing, etc.).
