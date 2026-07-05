@@ -1048,17 +1048,31 @@ void OptionsGamePlay::render()
 	// pattern as the other mech-preview cameras (no known defs placement rect
 	// for this options-gameplay paint preview).
 	{
-		float dw = 0.f, dh = 0.f, sx = 1.f, sy = 1.f;
+		// UI-ASPECT-ANCHOR-1: composite onto the 16:9 UI canvas (scale + pad
+		// origin), not the full-stretch ratio — full-stretch drew the paint
+		// preview at the wrong size/position on wide displays (user report).
+		float dw = 0.f, dh = 0.f, sx = 1.f, sy = 1.f, ox = 0.f, oy = 0.f;
 		if ( GuiRuntime::GetDisplaySize( dw, dh ) &&
 			 Environment.screenWidth > 0 && Environment.screenHeight > 0 )
 		{
-			sx = dw / (float)Environment.screenWidth;
-			sy = dh / (float)Environment.screenHeight;
+			int bx = 0, by = 0, bw = 0, bh = 0;
+			if ( gos_ComputeUiCanvasBox( (int)dw, (int)dh, &bx, &by, &bw, &bh ) )
+			{
+				sx = (float)bw / (float)Environment.screenWidth;
+				sy = (float)bh / (float)Environment.screenHeight;
+				ox = (float)bx;
+				oy = (float)by;
+			}
+			else
+			{
+				sx = dw / (float)Environment.screenWidth;
+				sy = dh / (float)Environment.screenHeight;
+			}
 		}
 		camera.setPreviewOffscreen( true );
 		camera.render();
 		camera.drawPreviewToPanel(
-			camera.bounds[0] * sx, camera.bounds[1] * sy,
+			camera.bounds[0] * sx + ox, camera.bounds[1] * sy + oy,
 			(camera.bounds[2] - camera.bounds[0]) * sx,
 			(camera.bounds[3] - camera.bounds[1]) * sy );
 	}
