@@ -45,7 +45,12 @@ def cmd_png(a):
         img = img.resize((a.thumb, h), Image.LANCZOS)
     dst = out_path(a.image, a.out, ".png")
     img.save(dst)
+    img.close()
     print(f"{dst} {img.width}x{img.height}")
+    if not a.keep and a.image.lower().endswith(".tga") \
+            and os.path.abspath(dst) != os.path.abspath(a.image):
+        os.remove(a.image)
+        print(f"removed {a.image}")
 
 
 def cmd_crop(a):
@@ -88,6 +93,8 @@ def main():
     p.add_argument("image")
     p.add_argument("-o", "--out")
     p.add_argument("--thumb", type=int, default=0, help="max width; 0 = full size")
+    p.add_argument("--keep", action="store_true",
+                   help="keep the source .tga (default: delete after convert)")
     p.set_defaults(fn=cmd_png)
 
     p = sub.add_parser("crop", help="crop region -> PNG")
