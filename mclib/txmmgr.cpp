@@ -4423,6 +4423,30 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	}
 	gosASSERT(textureFileOpenResult == NO_ERR);
 
+	// ENCYCLO-3D-2 diagnostic: for TGL preview textures, record where the
+	// bytes actually came from at load time (loose disk vs fastfile), the
+	// open result, and a few header bytes — separates "loaded garbage/zeros"
+	// from "loaded real pixels but never uploaded".
+	if ( getenv("MC2_LOG_PREVIEW") && strstr(textureFullPathName, "tgl") )
+	{
+		if ( FILE* f = fopen("preview_debug.log","a") )
+		{
+			unsigned char hdr[18] = {0};
+			long fsz = (textureFileOpenResult == NO_ERR) ? textureFile.fileSize() : -1;
+			if ( textureFileOpenResult == NO_ERR && fsz >= (long)sizeof(hdr) )
+			{
+				textureFile.read(hdr, sizeof(hdr));
+				textureFile.seek(0);
+			}
+			fprintf(f,"[PREVIEW-LOAD] open=%ld size=%ld disk=%d name=%s tgaType=%u dims=%ux%u bpp=%u\n",
+				textureFileOpenResult, fsz,
+				(int)((textureFileOpenResult == NO_ERR) ? textureFile.isLoadedFromDisk() : -1),
+				textureFullPathName,
+				hdr[2], hdr[12] | (hdr[13]<<8), hdr[14] | (hdr[15]<<8), hdr[16]);
+			fclose(f);
+		}
+	}
+
 	if (textureFile.isLoadedFromDisk())
 	{
 		// Disk TGAs are 4x-upscaled gameplay textures (logical = physical/4). But some

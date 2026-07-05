@@ -3218,6 +3218,36 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 				else
 					gos_SetRenderState( gos_State_Texture, 0 );
 	
+				// ENCYCLO-3D-2 diagnostic: identify WHICH texture the preview
+				// samples — node index, live GOS handle, and manager-side name.
+				// Black previews + healthy verts means the answer is here:
+				// handle 0 / 0xffffffff = untextured, valid handle with no
+				// pixel data = cold source (smart-load deferred mount).
+				if ( getenv("MC2_LOG_PREVIEW") && g_mechPreviewRenderDepth > 0
+					&& theShape->listOfTextures )
+				{
+					static DWORD s_seenNodes[64];
+					static int   s_seenCount = 0;
+					DWORD nodeIdx = theShape->listOfTextures[triType.localTextureHandle].mcTextureNodeIndex;
+					bool seen = false;
+					for ( int si = 0; si < s_seenCount; si++ )
+						if ( s_seenNodes[si] == nodeIdx ) { seen = true; break; }
+					if ( !seen && s_seenCount < 64 )
+					{
+						s_seenNodes[s_seenCount++] = nodeIdx;
+						if ( FILE* f = fopen("preview_debug.log","a") )
+						{
+							const char* nm = mcTextureManager ? mcTextureManager->getTextureName(nodeIdx) : NULL;
+							fprintf(f,"[PREVIEW-TEX] local=%ld node=%lu gosHandle=%lu alpha=%d name=%s\n",
+								(long)triType.localTextureHandle,
+								(unsigned long)nodeIdx,
+								(unsigned long)theShape->listOfTextures[triType.localTextureHandle].gosTextureHandle,
+								(int)theShape->listOfTextures[triType.localTextureHandle].textureAlpha,
+								nm ? nm : "(null)");
+							fclose(f);
+						}
+					}
+				}
 				// ENCYCLO-3D-1 diagnostic: dump a handful of transformed preview
 				// verts (screen-space x/y + z) — separates "drawn offscreen"
 				// from "z-rejected" from "degenerate". Throttled hard.

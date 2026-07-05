@@ -445,10 +445,28 @@ void LogisticsData::initVariants()
 		}
 		
 		float scale;
-		if ( NO_ERR != variantFile.readFloat( i, 11, scale ))
+		long scaleReadResult = variantFile.readFloat( i, 11, scale );
+		// ENCYCLO-3D-2: an EMPTY "Mechlopedia Scale" cell reads back as
+		// NO_ERR + 0.0 (stock Buildings.csv leaves it blank for every mech),
+		// so the != NO_ERR fallback never fired and every chassis carried
+		// scale 0 -> SimpleCamera framed a zero-scaled mech -> black preview.
+		// Blank/zero means "default", same as the buildings branch's `&& scale`.
+		if ( NO_ERR != scaleReadResult || scale <= 0.0f )
 			scale = 1.0;
 
 		variantFile.readString( i, 1, variantFileName, 256 );
+
+		// ENCYCLO-3D-2 diagnostic: what does the buildings.csv scale column
+		// actually yield per mech row? (fresh-boot chassis scale observed 0.0)
+		if ( getenv("MC2_LOG_PREVIEW") )
+		{
+			if ( FILE* f = fopen("preview_debug.log","a") )
+			{
+				fprintf(f,"[ENCYCLO] initVariants row=%ld mech=%s readResult=%ld scale=%.3f\n",
+					i, variantFileName, scaleReadResult, scale);
+				fclose(f);
+			}
+		}
 
 		variantFile.readLong( i, 5, fitID );
 

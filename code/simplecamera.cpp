@@ -361,20 +361,28 @@ void SimpleCamera::render(long xOffset, long yOffset)
 				// the FBO's dead-center, to tell "mesh rasterized nothing" (all
 				// samples == clear color 0,0,0,255) apart from "mesh drew but the
 				// composite/UV step is wrong" (some samples differ from clear).
-				int cx = (int)((bounds[0] + bounds[2]) * 0.5f);
-				int cy = 600 - (int)((bounds[1] + bounds[3]) * 0.5f);   // GL bottom-up
+				// SCAN THE FULL PHYSICAL VIEWPORT. The preview FBO is supersampled
+				// (e.g. 3200x2400 for logical 800x600); the old fixed 800x600 read
+				// only covered the top-left sixteenth, so a correctly-drawn mech at
+				// logical (~379,206) => physical (~1516,824) scored nonBgCount=0 —
+				// a false "rasterized nothing".
+				GLint svp[4] = {}; glGetIntegerv(GL_VIEWPORT, svp);
+				const int pw = svp[2] > 0 ? svp[2] : 800;
+				const int ph = svp[3] > 0 ? svp[3] : 600;
+				int cx = (int)((bounds[0] + bounds[2]) * 0.5f * pw / 800.0f);
+				int cy = ph - (int)((bounds[1] + bounds[3]) * 0.5f * ph / 600.0f);   // GL bottom-up
 				GLubyte centerPx[4] = {}, cornerPx[4] = {};
 				glReadPixels(cx, cy, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, centerPx);
 				glReadPixels(10, 10, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, cornerPx);
-				// Whole-FBO scan: sample every 20th pixel (40x30 grid) and find any
-				// non-clear-color pixel anywhere, to tell "mesh drew somewhere else"
-				// apart from "mesh drew literally nothing".
 				int nonBgCount = 0, minX=9999, minY=9999, maxX=-1, maxY=-1;
-				static GLubyte* s_scanBuf = new GLubyte[800*600*4];
-				glReadPixels(0, 0, 800, 600, GL_RGBA, GL_UNSIGNED_BYTE, s_scanBuf);
-				for (int y = 0; y < 600; y += 4) {
-					for (int x = 0; x < 800; x += 4) {
-						GLubyte* p = s_scanBuf + (y*800 + x)*4;
+				static GLubyte* s_scanBuf = nullptr;
+				static int s_scanCap = 0;
+				if (pw*ph*4 > s_scanCap) { delete[] s_scanBuf; s_scanBuf = new GLubyte[pw*ph*4]; s_scanCap = pw*ph*4; }
+				glReadPixels(0, 0, pw, ph, GL_RGBA, GL_UNSIGNED_BYTE, s_scanBuf);
+				const int step = pw >= 1600 ? 16 : 4;
+				for (int y = 0; y < ph; y += step) {
+					for (int x = 0; x < pw; x += step) {
+						GLubyte* p = s_scanBuf + (y*pw + x)*4;
 						if (p[0] != 0 || p[1] != 0 || p[2] != 0) {
 							nonBgCount++;
 							if (x < minX) minX = x; if (x > maxX) maxX = x;

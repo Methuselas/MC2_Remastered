@@ -1592,6 +1592,12 @@ struct UiDefs::GameOSPage::Impl {
     int localWidth = 800;
     int localHeight = 600;
     bool renderScaleTraced = false;
+    // ENCYCLO-3D-2: page-local -> screen transform needs the same offsets
+    // render() was last called with; getElementScreenRect used (0,0) and
+    // returned page-local coords, so the mech-preview composite landed at the
+    // wrong screen position (e.g. mechlopedia's (285,58) page offset lost).
+    int lastRenderXOffset = 0;
+    int lastRenderYOffset = 0;
     bool suppressAnimationElements = false;
     bool legacyPassthrough = false;
     std::vector<UiElement> elements;
@@ -1829,7 +1835,8 @@ bool UiDefs::GameOSPage::getElementScreenRect(const std::string& key, float& x, 
         if (e.key != key)
             continue;
         const PageScale s = currentPageScale(impl->localWidth, impl->localHeight);
-        const FRect r = scaledRect(e.rect, 0, 0, s);
+        // Use the same offsets render() draws with so this is a true SCREEN rect.
+        const FRect r = scaledRect(e.rect, impl->lastRenderXOffset, impl->lastRenderYOffset, s);
         x = r.x; y = r.y; w = r.w; h = r.h;
         return true;
     }
@@ -2168,6 +2175,8 @@ void UiDefs::GameOSPage::render(int xOffset, int yOffset)
         return;
 
     const float frameDelta = getFrameDelta();
+    impl->lastRenderXOffset = xOffset;
+    impl->lastRenderYOffset = yOffset;
     const PageScale s = currentPageScale(impl->localWidth, impl->localHeight);
 
     // One-shot per page (MC2_UI_DEFS_TRACE=1): proves THIS scaled render

@@ -795,6 +795,17 @@ void Mechlopedia::MechScreen::setMech( LogisticsVariant* pChassis, bool bShowJum
 	// from the same SimpleCamera). THEIRS did not touch this call at all; no
 	// actual collision, kept as-is.
 	camera.setScale( pChassis->getChassis()->getScale() );
+	// ENCYCLO-3D-2 diagnostic: is the chassis scale real here on fresh boot?
+	if ( getenv("MC2_LOG_PREVIEW") )
+	{
+		if ( FILE* f = fopen("preview_debug.log","a") )
+		{
+			fprintf(f,"[ENCYCLO] setMech '%s' chassisScale=%.3f file=%s\n",
+				name, pChassis->getChassis()->getScale(),
+				(const char*)pChassis->getFileName());
+			fclose(f);
+		}
+	}
 
 	statsListBox.removeAllItems( true );
 
