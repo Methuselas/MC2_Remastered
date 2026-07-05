@@ -147,6 +147,11 @@ void MechPurchaseScreen::update()
 	sprintf( tmp, "%ld ", amount);
 	textObjects[1].setText( tmp );
 	textObjects[1].setColor( color );
+	// CBILLS-MIRROR-1: the defs page suppresses the legacy readout — mirror the
+	// live amount into the defs text element (same pattern as mechbayscreen's
+	// cbills_text). Without this the panel showed the static fit label
+	// ("C-Bills") instead of the number.
+	setDefsElementText( "game.mcl_mdollar.text.cbills", tmp );
 
 	int oldSell = inventoryListBox.GetSelectedItem();
 	inventoryListBox.update();

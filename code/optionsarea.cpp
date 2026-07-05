@@ -420,17 +420,31 @@ void OptionsGraphics::init(long xOffset, long yOffset)
     gosASSERT(!resolutionModes && !resolutionModesStr);
     resolutionModes = new ResModes[num_modes];
     resolutionModesStr = new char*[num_modes];
-    numResolutionModes = num_modes;
 
     const int displayIndex = gos_GetWindowDisplayIndex();
 
-	for ( int i = 0; i < num_modes; i++ ) {
-        gos_GetDisplayModeByIndex(displayIndex, i, &resolutionModes[i].xRes, &resolutionModes[i].yRes, &resolutionModes[i].bitDepth);
-
-        resolutionModesStr[i] = new char[256];
-        S_snprintf(resolutionModesStr[i], 256, "%dx%dx%d", resolutionModes[i].xRes, resolutionModes[i].yRes, resolutionModes[i].bitDepth);
-        resolutionList.AddItem( resolutionModesStr[i], 0xffffffff );
+    // RES-LIST-DEDUPE-1: SDL enumerates one mode per refresh-rate/pixel-format,
+    // so every WxH showed up ~4x in the combo. Keep the first occurrence of
+    // each WxHxbpp (SDL lists highest refresh first); numResolutionModes ends
+    // up as the UNIQUE count and stays in sync with the combo indices.
+    int unique = 0;
+    for ( int i = 0; i < num_modes; i++ ) {
+        ResModes m;
+        gos_GetDisplayModeByIndex(displayIndex, i, &m.xRes, &m.yRes, &m.bitDepth);
+        bool dup = false;
+        for ( int j = 0; j < unique; j++ ) {
+            if ( resolutionModes[j].xRes == m.xRes &&
+                 resolutionModes[j].yRes == m.yRes &&
+                 resolutionModes[j].bitDepth == m.bitDepth ) { dup = true; break; }
+        }
+        if ( dup ) continue;
+        resolutionModes[unique] = m;
+        resolutionModesStr[unique] = new char[256];
+        S_snprintf(resolutionModesStr[unique], 256, "%dx%dx%d", m.xRes, m.yRes, m.bitDepth);
+        resolutionList.AddItem( resolutionModesStr[unique], 0xffffffff );
+        ++unique;
     }
+    numResolutionModes = unique;
 
     /*
 	for ( int i = IDS_RESOLUTION0; i < IDS_RESOLUTION9 + 1; i++ )

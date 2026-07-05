@@ -1761,12 +1761,20 @@ class gosRenderer {
             return renderStates_[RenderState];
         }
 
-        void setScreenMode(DWORD width, DWORD height, DWORD bit_depth, bool GotoFullScreen, bool anti_alias) {
+        void setScreenMode(DWORD width, DWORD height, DWORD bit_depth, bool GotoFullScreen, bool anti_alias,
+                           DWORD physWidth = 0, DWORD physHeight = 0) {
             reqWidth = width;
             reqHeight = height;
             reqBitDepth = bit_depth;
             reqAntiAlias = anti_alias;
             reqGotoFullscreen = GotoFullScreen;
+            // WINDOWED-8006-1 (issue #49): under the HUD-RES clamp the LOGICAL
+            // canvas is 800x600 but the PHYSICAL window must not shrink to it —
+            // that trapped windowed mode at an 800x600 window. physWidth==0 =
+            // "keep the current OS window size" (the boot size from options.cfg);
+            // nonzero = explicit physical resize.
+            reqPhysWidth  = physWidth;
+            reqPhysHeight = physHeight;
             pendingRequest = true;
         }
 
@@ -2310,6 +2318,8 @@ class gosRenderer {
         MaterialDB_t materialDB_;
 
         DWORD reqWidth;
+        DWORD reqPhysWidth = 0;   // WINDOWED-8006-1: physical window size (logical may be clamped)
+        DWORD reqPhysHeight = 0;
         DWORD reqHeight;
         DWORD reqBitDepth;
         DWORD reqAntiAlias;
@@ -5943,9 +5953,17 @@ void gosRenderer::handleEvents()
                 0, 0, 1.0f, 0.0f,
                 0, 0, 0.0f, 1.0f);
 
+        // WINDOWED-8006-1: only resize the OS window on an EXPLICIT physical
+        // request. reqPhysWidth==0 (the HUD-RES-clamped path) keeps the boot
+        // window size — logical canvas lives in width_/height_/projection_.
+        bool windowOk = true;
+        if (reqPhysWidth > 0 && reqPhysHeight > 0)
         {
-        ZoneScopedN("gosRenderer::handleEvents resizeWindow");
-        if(graphics::resize_window(win_h_, width_, height_))
+            ZoneScopedN("gosRenderer::handleEvents resizeWindow");
+            windowOk = graphics::resize_window(win_h_, (int)reqPhysWidth, (int)reqPhysHeight);
+        }
+        {
+        if(windowOk)
 		{
             { ZoneScopedN("gosRenderer::handleEvents fullscreen"); graphics::set_window_fullscreen(win_h_, reqGotoFullscreen); }
 
@@ -8560,13 +8578,22 @@ void __stdcall gos_SetScreenMode( DWORD Width, DWORD Height, DWORD bitDepth/*=16
     // Memory: hud_scene_resolution_separation.
     // EDITOR: gated off (gos_SetHudResClampEnabled(false)) — the editor has no
     // legacy 2D HUD (ImGui) and must render at native res so pick/drag align.
+    // WINDOWED-8006-1 (issue #49): clamped path keeps the PHYSICAL window at
+    // its current (boot/options.cfg) size — phys 0,0 = keep — while the game's
+    // logical canvas goes to 800x600. Unclamped (editor) resizes for real.
+    DWORD physW = 0, physH = 0;
     if (g_hudResClampEnabled)
     {
         Width  = 800;
         Height = 600;
     }
+    else
+    {
+        physW = Width;
+        physH = Height;
+    }
 
-    g_gos_renderer->setScreenMode(Width, Height, bitDepth, GotoFullScreen, AntiAlias);
+    g_gos_renderer->setScreenMode(Width, Height, bitDepth, GotoFullScreen, AntiAlias, physW, physH);
 }
 
 // [FORCE-43 v1] Centered 4:3 pillarbox rect. Single source of truth shared by

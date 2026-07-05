@@ -1607,8 +1607,18 @@ void MissionBegin::render()
 				// background instead of behind them.
 				pCurScreen->render();
 			}
+			else
+			{
+				// MENU-STALE-CLEAR-1: with the defs menu page active the legacy
+				// menu background no longer repaints the backbuffer, so backing
+				// out of a logistics screen left its last frame visible beneath
+				// the ImGui menu. Paint the GameOS layer black first (same
+				// pattern as Mechlopedia::render).
+				GUI_RECT rect = { 0, 0, Environment.screenWidth, Environment.screenHeight };
+				drawRect( rect, 0xff000000 );
+			}
 		}
-		mainMenu->render();		
+		mainMenu->render();
 		return;
 	}
 
