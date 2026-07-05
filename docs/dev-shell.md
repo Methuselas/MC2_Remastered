@@ -29,6 +29,7 @@ py -3 <repo>\tools\dev_shell\watch.py A:\Games\mc2-opengl\<deploy-lane>
 | `screenshot --name X [--source backbuffer]` | TGA to `<deploy>/dev_shell_out/`. `backbuffer` for menus/front-end (they never touch sceneFBO), default `scene` for missions |
 | `last_screenshot` | confirm the capture landed |
 | `ui_reload` | re-read the ACTIVE front-end screen's `.fit` from `data/art/` and rebuild it in place |
+| `texture_refresh --name SUBSTR` | re-read edited loose `.tga`s whose path contains SUBSTR from disk and re-upload (reply: `refreshed` + `skipped_no_file`; FST-only textures skip — drop a loose copy to override) |
 | `framegraph [--collect true]` | pass graph JSON: contract passes, derived edges, per-pass GL state + draw counts + GPU ms. `--collect true` first, wait a second, call again |
 | `get_gate/set_gate --name MC2_X [--value V]` | env peek/poke (honest: init-read gates need restart) |
 | `quit` | clean exit |
@@ -44,7 +45,7 @@ py -3 <repo>\tools\dev_shell\watch.py A:\Games\mc2-opengl\<deploy-lane>
 |---|---|---|
 | Shaders (`shaders/**`) | YES | watcher or `reload_shaders`; errors come back in the reply |
 | Front-end layout `.fit` (`data/art/mcl_*.fit`) | YES | loose file overrides FST; watcher or `ui_reload` |
-| UI `.tga` pixels | NO (yet) | txmmgr caches by filename; needs restart. Texture-refresh command is a queued slice |
+| UI `.tga` pixels | YES | `texture_refresh --name <substr>` re-reads the loose file and re-uploads; node ids stay stable. FST-only textures: place a loose copy first (loose overrides FST on next refresh-load) |
 | Gates read per-frame | YES | `set_gate` |
 | Gates read once at init | NO | restart (the reply tells you) |
 

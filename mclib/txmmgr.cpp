@@ -4491,6 +4491,103 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 }
 
 //----------------------------------------------------------------------
+// DEV-SHELL texture_refresh (see txmmgr.h). Mirrors the loadTexture disk
+// read/compress path byte-for-byte so the refreshed cache entry is exactly
+// what a fresh loadTexture of the same file would have produced; the node's
+// key/hints/uvScale/logical dims are untouched (same-format, same-size
+// replacement). GL work happens at the next get_gosTextureHandle() cache-in,
+// so this is safe anywhere on the main thread.
+long MC_TextureManager::refreshTexturesByName (const char *substring, long &skippedNoFile)
+{
+	skippedNoFile = 0;
+	if (!substring || !*substring)
+		return 0;
+
+	// case-insensitive substring match (nodeNames are stored lowercase, but
+	// don't rely on it)
+	auto containsNoCase = [](const char *hay, const char *needle) -> bool {
+		const size_t nlen = strlen(needle);
+		for (const char *p = hay; *p; ++p)
+		{
+			size_t k = 0;
+			while (k < nlen && p[k] && tolower((unsigned char)p[k]) == tolower((unsigned char)needle[k]))
+				++k;
+			if (k == nlen) return true;
+		}
+		return false;
+	};
+
+	long refreshed = 0;
+	for (long i = 0; i < MC_MAXTEXTURES; i++)
+	{
+		MC_TextureNode &node = masterTextureNodes[i];
+		if (!node.nodeName || node.gosTextureHandle == 0xffffffff)
+			continue;
+		if (!containsNoCase(node.nodeName, substring))
+			continue;
+
+		File textureFile;
+		if (textureFile.open(node.nodeName) != NO_ERR || !textureFile.isLoadedFromDisk())
+		{
+			// FST-only (or unopenable): no loose file to refresh from.
+			skippedNoFile++;
+			continue;
+		}
+
+		const long txmSize = textureFile.fileSize();
+		if (txmSize <= 0 || txmSize > MAX_LZ_BUFFER_SIZE)
+		{
+			skippedNoFile++;
+			textureFile.close();
+			continue;
+		}
+
+		if (!lzBuffer1)
+		{
+			lzBuffer1 = (MemoryPtr)textureCacheHeap->Malloc(MAX_LZ_BUFFER_SIZE);
+			gosASSERT(lzBuffer1 != NULL);
+			lzBuffer2 = (MemoryPtr)textureCacheHeap->Malloc(MAX_LZ_BUFFER_SIZE);
+			gosASSERT(lzBuffer2 != NULL);
+		}
+
+		textureFile.read(lzBuffer1, txmSize);
+		textureFile.close();
+
+		const bool storeRawFileData = (txmSize >= MC_TEXCACHE_RAW_THRESHOLD);
+		const DWORD cacheBytes = storeRawFileData
+			? (DWORD)txmSize
+			: LZCompress(lzBuffer2, lzBuffer1, txmSize);
+
+		DWORD *fresh = (DWORD *)textureCacheHeap->Malloc(cacheBytes);
+		if (!fresh)
+		{
+			skippedNoFile++;
+			continue;	// leave the old copy live rather than corrupt the node
+		}
+		memcpy(fresh, storeRawFileData ? lzBuffer1 : lzBuffer2, cacheBytes);
+
+		if (node.textureData)
+			textureCacheHeap->Free(node.textureData);
+		node.textureData = fresh;
+		node.lzCompSize = cacheBytes;
+		node.width = (storeRawFileData ? MC_TEXCACHE_FILE_RAW : MC_TEXCACHE_FILE_LZ) + txmSize;
+
+		// Force re-upload: destroy the resident gos texture (same cache-out
+		// dance as flushCache) so the next get_gosTextureHandle() re-creates
+		// it from the fresh bytes.
+		if (node.gosTextureHandle != CACHED_OUT_HANDLE && node.gosTextureHandle != 0)
+		{
+			gos_DestroyTexture(node.gosTextureHandle);
+			if (currentUsedTextures > 0)
+				currentUsedTextures--;
+		}
+		node.gosTextureHandle = CACHED_OUT_HANDLE;
+		refreshed++;
+	}
+	return refreshed;
+}
+
+//----------------------------------------------------------------------
 DWORD MC_TextureManager::textureFromMemoryRaw (DWORD *data, gos_TextureFormat key, DWORD hints, DWORD width, DWORD bitDepth)
 {
 	ZoneScopedN("MC_TextureManager::textureFromMemoryRaw");
