@@ -5045,8 +5045,9 @@ static bool   s_hud_scale_exempt = false;
 
 // UI-ASPECT-ANCHOR-1 canvas flags (defined up here, same reason as s_hud_scale:
 // flushHUDBatch references them directly). See gos_SetUiCanvasActive below.
-static bool s_uiCanvasAssert = false;   // set by front-end each frame
-static bool s_uiCanvasLatch  = false;   // last completed frame's assert
+static bool s_uiCanvasAssert  = false;  // set by front-end each frame
+static bool s_uiCanvasLatch   = false;  // last completed frame's assert
+static bool s_hudCanvasActive = false;  // sticky: mission HUD canvas (mission.cpp)
 
 
 void gosRenderer::init() {
@@ -7876,10 +7877,21 @@ void gosRenderer::flushHUDBatch()
     // (same vertex-space technique as the s_hud_scale block above). Applies to
     // every call INCLUDING scaleExempt (cursor must follow the canvas mouse
     // mapping); active only on frames the front-end asserted (menus).
+    // Two modes:
+    //   front-end (s_uiCanvasAssert): remap EVERY call including scaleExempt —
+    //     the cursor must follow the canvas-relative mouse mapping.
+    //   mission (s_hudCanvasActive): remap HUD chrome only, SKIP scaleExempt —
+    //     the mission cursor tracks the full screen (world pick spans the whole
+    //     drawable) and modal dialogs keep their legacy full-stretch space.
+    //     Hit-tests for remapped chrome go through gos_HudInverseMousePoint
+    //     (getMouseHudX/Y), which inverts this transform.
     {
         int bx = 0, by = 0, bw = 0, bh = 0;
-        if (gos_ComputeUiCanvasBox(Environment.drawableWidth, Environment.drawableHeight,
-                                   &bx, &by, &bw, &bh))
+        const bool menuCanvas = gos_ComputeUiCanvasBox(
+            Environment.drawableWidth, Environment.drawableHeight, &bx, &by, &bw, &bh);
+        const bool hudCanvas = !menuCanvas && gos_ComputeHudCanvasBox(
+            Environment.drawableWidth, Environment.drawableHeight, &bx, &by, &bw, &bh);
+        if (menuCanvas || hudCanvas)
         {
             const float dw = (float)Environment.drawableWidth;
             const float dh = (float)Environment.drawableHeight;
@@ -7887,11 +7899,14 @@ void gosRenderer::flushHUDBatch()
             const float fy = (float)bh / dh;
             const float lx = (float)width_  * ((float)bx / dw);
             const float ly = (float)height_ * ((float)by / dh);
-            for (HudDrawCall& call : hudBatch_)
+            for (HudDrawCall& call : hudBatch_) {
+                if (hudCanvas && call.scaleExempt)
+                    continue;   // mission cursor + modals stay full-space
                 for (gos_VERTEX& v : call.vertices) {
                     v.x = v.x * fx + lx;
                     v.y = v.y * fy + ly;
                 }
+            }
         }
     }
 
@@ -10448,16 +10463,22 @@ bool gos_GetTerrainDrawEnabled() {
 // to the legacy full-surface behavior untouched (world pick unaffected).
 // Killswitch: MC2_UI_ASPECT_ANCHOR=0 restores full-stretch everywhere.
 void __stdcall gos_SetUiCanvasActive(bool on) { s_uiCanvasAssert = on; }
+void __stdcall gos_SetHudCanvasActive(bool on) { s_hudCanvasActive = on; }
 
-bool __stdcall gos_ComputeUiCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh)
+static bool uiAspectAnchorEnabled()
 {
     static const bool s_enabled =
         []{ const char* e = getenv("MC2_UI_ASPECT_ANCHOR"); return !(e && e[0] == '0'); }();
-    const bool active = s_enabled && (s_uiCanvasAssert || s_uiCanvasLatch);
+    return s_enabled;
+}
+
+// Pure rect math: centered 16:9 canvas inside w x h. Returns true when the
+// canvas differs from the full surface.
+static bool computeUiCanvas16x9(int w, int h, int* ox, int* oy, int* obw, int* obh)
+{
     int cw = w, ch = h;
-    if (active && w > 0 && h > 0)
+    if (w > 0 && h > 0)
     {
-        // 16:9 canvas fitted inside the display, centered.
         cw = (h * 16) / 9;
         ch = h;
         if (cw > w) { cw = w; ch = (w * 9) / 16; }
@@ -10466,7 +10487,40 @@ bool __stdcall gos_ComputeUiCanvasBox(int w, int h, int* ox, int* oy, int* obw, 
     if (oy)  *oy  = (h - ch) / 2;
     if (obw) *obw = cw;
     if (obh) *obh = ch;
-    return active && (cw != w || ch != h);
+    return (cw != w || ch != h);
+}
+
+bool __stdcall gos_ComputeUiCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh)
+{
+    const bool active = uiAspectAnchorEnabled() && (s_uiCanvasAssert || s_uiCanvasLatch);
+    if (!active)
+    {
+        if (ox)  *ox  = 0;
+        if (oy)  *oy  = 0;
+        if (obw) *obw = w;
+        if (obh) *obh = h;
+        return false;
+    }
+    return computeUiCanvas16x9(w, h, ox, oy, obw, obh);
+}
+
+// In-mission variant: active while the mission HUD asserts (mission.cpp sets
+// gos_SetHudCanvasActive alongside gos_SetHudScaleActive). Kept separate from
+// gos_ComputeUiCanvasBox on purpose — the mouse normalize must NOT go
+// canvas-relative in mission (world pick spans the full drawable); mission HUD
+// hit-tests go through gos_HudInverseMousePoint instead.
+bool __stdcall gos_ComputeHudCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh)
+{
+    const bool active = uiAspectAnchorEnabled() && s_hudCanvasActive;
+    if (!active)
+    {
+        if (ox)  *ox  = 0;
+        if (oy)  *oy  = 0;
+        if (obw) *obw = w;
+        if (obh) *obh = h;
+        return false;
+    }
+    return computeUiCanvas16x9(w, h, ox, oy, obw, obh);
 }
 
 // HUD scale — clamped to [0.5, 1.0]. 1.0 disables the transform entirely.
@@ -10489,6 +10543,25 @@ void gos_SetHudScaleExempt(bool on) { s_hud_scale_exempt = on; }
 bool gos_GetHudScaleExempt()        { return s_hud_scale_exempt; }
 
 void gos_HudInverseMousePoint(float& x, float& y) {
+    // UI-ASPECT-ANCHOR-1: invert the mission HUD-canvas remap FIRST (draw order
+    // is shrink -> canvas, so the inverse is canvas -> shrink). Maps the
+    // full-logical mouse point back into the pre-canvas authored space the
+    // band/anchor math below expects. Must stay in sync with the canvas block
+    // in gosRenderer::flushHUDBatch().
+    if (g_gos_renderer) {
+        int bx = 0, by = 0, bw = 0, bh = 0;
+        if (gos_ComputeHudCanvasBox(Environment.drawableWidth, Environment.drawableHeight,
+                                    &bx, &by, &bw, &bh)) {
+            const float dw = (float)Environment.drawableWidth;
+            const float dh = (float)Environment.drawableHeight;
+            const float fx = (float)bw / dw;
+            const float fy = (float)bh / dh;
+            const float lx = (float)g_gos_renderer->getWidth()  * ((float)bx / dw);
+            const float ly = (float)g_gos_renderer->getHeight() * ((float)by / dh);
+            if (fx > 0.0f) x = (x - lx) / fx;
+            if (fy > 0.0f) y = (y - ly) / fy;
+        }
+    }
     // Inverse of the single-anchor bottom-center HUD transform. Must stay in
     // sync with gosRenderer::flushHUDBatch() above.
     const float scale = s_hud_scale;

@@ -2476,6 +2476,26 @@ void  gos_HudInverseMousePoint(float& x, float& y);
 void __stdcall gos_SetUiCanvasActive(bool on);
 bool __stdcall gos_ComputeUiCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh);
 
+// UI-ASPECT-ANCHOR-1, in-mission HUD variant. mission.cpp asserts
+// gos_SetHudCanvasActive(true/false) alongside gos_SetHudScaleActive at
+// mission start/end. While active, flushHUDBatch remaps all NON-scaleExempt
+// HUD draw calls into the centered 16:9 canvas (wider displays show extra
+// terrain in the flanks); the cursor sprite + modal dialogs (scaleExempt)
+// and the world-pick mouse stay full-surface. Hit-tests for remapped HUD
+// chrome must use userInput->getMouseHudX/Y (gos_HudInverseMousePoint
+// inverts canvas + shrink), NOT raw getMouseX/Y.
+//
+// NOTE for the ImGui HUD port: when converting an in-mission HUD panel to
+// ImGui, query gos_ComputeHudCanvasBox(Environment.drawableWidth,
+// Environment.drawableHeight, ...) and lay the panel out inside that box in
+// display pixels (scale authored 800x600 coords by bw/800, bh/600 and add
+// bx, by) -- that is the exact rect the legacy HUD chrome is remapped into,
+// so mixed legacy+ImGui HUD stays aligned during the migration. Front-end
+// (menu) pages instead assert gos_SetUiCanvasActive and get this for free
+// via UiDefs PageScale.
+void __stdcall gos_SetHudCanvasActive(bool on);
+bool __stdcall gos_ComputeHudCanvasBox(int w, int h, int* ox, int* oy, int* obw, int* obh);
+
 // Shadow mode — render terrain depth to shadow FBO
 void gos_SetShadowMode(bool enable);
 

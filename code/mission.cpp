@@ -4604,6 +4604,7 @@ void Mission::start (void)
 	if (missionInterface)
 		MissionInterfaceManager::armHoverTarget();
 	gos_SetHudScaleActive(true);  // enable HUD shrink only during mission
+	gos_SetHudCanvasActive(true); // UI-ASPECT-ANCHOR-1: HUD chrome on the 16:9 canvas
 	for (long i = 0; i < NumGameObjectsToDisplay; i++)
 		DEBUGWINS_setGameObject(-1, ObjectManager->getByWatchID(parts[GameObjectWindowList[i]].objectWID));
 }
@@ -4771,6 +4772,7 @@ void Mission::destroy (bool initLogistics)
 	mc2verify::MissionSummary(missionFileName);
 
 	gos_SetHudScaleActive(false);  // back to 100% for menus/logistics
+	gos_SetHudCanvasActive(false); // UI-ASPECT-ANCHOR-1: canvas off with the shrink
 
 	// C2: release async readback ring buffer at mission teardown.
 	gpu_cull::readback_shutdown();

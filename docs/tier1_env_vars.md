@@ -258,6 +258,12 @@ Headless Vulkan probe / backend-skeleton exercise gates. All read via bare `gete
   identity. Mouse normalize (`gos_GetMouseInfo`) is canvas-relative on those
   frames only; mission frames never assert, so world pick is untouched. `=0`
   restores full-window stretch everywhere.
+  In-mission: `gos_SetHudCanvasActive` (mission.cpp, beside the HUD-shrink
+  toggle) remaps non-scaleExempt HUD chrome into the same canvas — wider
+  displays show extra terrain in the flanks; cursor, modal dialogs and world
+  pick stay full-surface. HUD hit-tests go through getMouseHudX/Y
+  (gos_HudInverseMousePoint inverts canvas + shrink). ImGui HUD port seam:
+  gos_ComputeHudCanvasBox (see gameos.hpp note).
 
 ## Terrain fast-path drop log
 
