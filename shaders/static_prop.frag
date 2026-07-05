@@ -371,15 +371,14 @@ void main() {
         // Keep their lighting variation, but cap the darkest side at ~50%.
         litRgb = max(litRgb, vec3(0.5));
     }
-    // TERRAIN-DECAL-FILL-1: raise the cliff-decal's shadow-side floor so faces
-    // pointing away from the sun (N·L ~ 0, litRgb ~ 0) read as dark rock, not a
-    // black void. Flag-gated (only MarbleCliff decal instances carry bit 3) and
-    // uniform defaults matter: unset instances / u_terrainDecalFill==0.0 are a
-    // no-op (max(x,0)==x), so all other props stay byte-identical. The lit side
-    // already exceeds the modest floor, so it is unaffected (no blow-out).
-    if ((v_flags & kFlagDecalFill) != 0u && u_terrainDecalFill > 0.0) {
-        litRgb = max(litRgb, vec3(u_terrainDecalFill));
-    }
+    // TERRAIN-DECAL-FILL-1 (v2): raise the cliff-decal's shadow-side brightness.
+    // NOTE: the old max(litRgb, fill) was a visual no-op -- the baked per-vertex
+    // light v_argb.rgb is scaled to a bright band and never drops below the
+    // slider's operative range on visible faces, so max() returned litRgb every
+    // time. Fixed below (post-texture): an ADDITIVE ambient weighted by how
+    // UNlit the fragment is, applied to the final color so the slider always
+    // moves shadow-side pixels while the lit side (shadowW~0) is untouched.
+    // Applied after the tex_color multiply -- see the c.rgb block below.
 
     // TERRAIN-DECAL-COLORBLEND-1: mix the cliff-decal albedo toward the terrain
     // colormap sampled at this fragment's world-XY (same atlas-UV reconstruction
@@ -398,6 +397,15 @@ void main() {
 #endif
 
     vec4 c = tex_color * vec4(litRgb, v_argb.a);
+    // TERRAIN-DECAL-FILL-1 (v2): additive shadow-side ambient (see note above).
+    // shadowW ~ 1 where the baked light is dark, ~0 where bright -> only the
+    // shadow side lifts. Scaled by tex_color so the fill stays rock-colored.
+    // Flag-gated + fill>0 gated -> non-decal props / default stay byte-identical.
+    if ((v_flags & kFlagDecalFill) != 0u && u_terrainDecalFill > 0.0) {
+        float litMax = max(litRgb.r, max(litRgb.g, litRgb.b));
+        float shadowW = 1.0 - clamp(litMax, 0.0, 1.0);
+        c.rgb += u_terrainDecalFill * tex_color.rgb * shadowW;
+    }
     c.rgb += v_highlight.rgb * v_highlight.a;
 
 #if defined(MC2_USE_VIEW_UNIFORMS)
