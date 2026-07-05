@@ -10,6 +10,32 @@
 #include <cstdlib>
 #include <vector>
 
+// PNG-MAGENTA-KEY-1: MC2 art uses BOTH real alpha and magenta (0xFF00FF)
+// colour-keying for transparency. The modder's PNG conversions carry the
+// legacy magenta regions baked into opaque pixels, which drew as solid
+// magenta boxes. For PNG sources ONLY (stock ships zero PNGs, so stock is
+// untouched by construction), map exact-magenta pixels to transparent
+// black at decode: transparent so they key out, black so bilinear
+// filtering halos dark instead of pink. Runs BEFORE convertIfNecessary, so
+// gos_Texture_Detect sees the new alpha and classifies Alpha; an explicit
+// gos_Texture_Solid caller still wins (makeKindaSolid re-opaques after).
+// Killswitch: MC2_PNG_MAGENTA_KEY=0.
+static void keyMagentaToAlphaPNG(Image& img) {
+    static const bool s_on = []() {
+        const char* v = std::getenv("MC2_PNG_MAGENTA_KEY");
+        return !(v && v[0] == '0');
+    }();
+    if (!s_on || img.getFormat() != FORMAT_RGBA8)
+        return;
+    DWORD* pixels = (DWORD*)img.getPixels();
+    const int n = img.getWidth() * img.getHeight();
+    for (int i = 0; i < n; ++i) {
+        // RGBA8 in memory: R at byte 0 -> little-endian DWORD 0xAABBGGRR.
+        if ((pixels[i] & 0x00FFFFFFu) == 0x00FF00FFu)
+            pixels[i] = 0x00000000u;
+    }
+}
+
 static void makeKindaSolid(Image& img) {
     // have to do this, otherwise texutre with zero alpha could be drawn with alpha blend enabled, evel though logically aplha blend should not be enabled!
     // (happens when drawing terrain, see TerrainQuad::draw() case when no detail and no owerlay bu t isCement is true)
@@ -73,6 +99,13 @@ bool gosTexture::createHardwareTexture() {
             return false;
         }
 
+        // PNG-MAGENTA-KEY-1 (file path): key magenta only for .png sources.
+        {
+            const size_t fl = strlen(filename_);
+            if (fl >= 4 && _stricmp(filename_ + fl - 4, ".png") == 0)
+                keyMagentaToAlphaPNG(img);
+        }
+
         // check for only those formats, because lock.unlock may incorrectly work with different channes size (e.g. 16 or 32bit or floats)
         FORMAT img_fmt = img.getFormat();
         if(img_fmt != FORMAT_RGB8 && img_fmt != FORMAT_RGBA8) {
@@ -103,6 +136,11 @@ bool gosTexture::createHardwareTexture() {
             SPEW(("DBG", "failed to load texture from data, filename: %s, texname: %s\n", filename_? filename_ : "NO FILENAME", texname_?texname_:"NO TEXNAME"));
             return false;
         }
+
+        // PNG-MAGENTA-KEY-1 (from-memory path): same rule, keyed off the PNG
+        // signature sniff above.
+        if (looksLikePNG)
+            keyMagentaToAlphaPNG(img);
 
         FORMAT img_fmt = img.getFormat();
 
