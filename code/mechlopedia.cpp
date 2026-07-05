@@ -11,6 +11,7 @@ Mechlopedia.cpp			: Implementation of the Mechlopedia component.
 #include"inifile.h"
 #include"mclib.h"
 #include"logisticsdata.h"
+#include"mission.h"   // ENCYCLO-LAZYLOAD-1: initTGLForLogistics
 #include"../resource.h"
 #include"prefs.h"
 #include"cmponent.h"
@@ -118,6 +119,15 @@ int Mechlopedia::init()
 	}
 
 	return true;
+}
+
+
+// ENCYCLO-UNDEFINED-FILTER-1: data rows without a resolved display name come
+// through as "undefined" (missing string ids / placeholder variants); hide
+// them from every encyclopedia list.
+static bool mc2IsUndefinedName( const char* n )
+{
+	return !n || !n[0] || S_stricmp( n, "undefined" ) == 0;
 }
 
 int			Mechlopedia::handleMessage( unsigned long, unsigned long who)
@@ -274,6 +284,16 @@ void Mechlopedia::syncEntityList()
 
 void Mechlopedia::begin()
 {
+	// ENCYCLO-LAZYLOAD-1: on a fresh boot the smart-load path defers the
+	// mech/variant scan and TGL pool init until a campaign/mission needs
+	// them — entering the Encyclopedia straight from the main menu then had
+	// NO variants (empty lists) and no shape pools (pObject=null, blank 3D
+	// preview; confirmed via [PREVIEW] log). Both calls are guarded/
+	// idempotent: LogisticsData::init() early-returns after first run,
+	// initTGLForLogistics is what every MissionBegin::begin already calls.
+	LogisticsData::instance->init();
+	Mission::initTGLForLogistics();
+
 	beginFadeIn( 2.0f );
 	status = RUNNING;
 
@@ -387,6 +407,7 @@ void Mechlopedia::MechScreen::begin()
 			MechlopediaListItem* pEntry = new MechlopediaListItem();
 			char name[256];
 			cLoadString( pVehicles[i]->getNameID(), name, 255 );
+			if ( mc2IsUndefinedName( name ) ) continue;
 			EString text = name;
 			text.MakeUpper();
 			pEntry->setText( text );
@@ -408,6 +429,7 @@ void Mechlopedia::MechScreen::begin()
 		}
 		for (int i = 0; i < copterCount; i++ )
 		{
+			if ( mc2IsUndefinedName( pCopters[i]->getName() ) ) continue;
 			MechlopediaListItem* pEntry = new MechlopediaListItem();
 			EString text = pCopters[i]->getName();
 			text.MakeUpper();
@@ -460,6 +482,12 @@ void Mechlopedia::MechScreen::begin()
 		groupListBox->removeAllItems( true );
 		for (int i = 0; i < count; i++ )
 		{
+			{
+				// getChassisName() is a string ID here — resolve before filtering.
+				char chassisName[256] = {0};
+				cLoadString( pChassis[i]->getChassisName(), chassisName, 255 );
+				if ( mc2IsUndefinedName( chassisName ) ) continue;
+			}
 			MechlopediaListItem* pEntry = new MechlopediaListItem();
 			pEntry->setText( pChassis[i]->getChassisName() );
 			pEntry->resize( groupListBox->width() - groupListBox->getScrollBarWidth() - 18,
@@ -955,6 +983,7 @@ void Mechlopedia::WeaponScreen::begin()
 
 	for ( int i = 0; i < count; i++ )
 	{
+		if ( mc2IsUndefinedName( comps[i]->getName() ) ) continue;
 		MechlopediaListItem* pItem = new MechlopediaListItem();
 		EString text = comps[i]->getName();
 		text.MakeUpper();
