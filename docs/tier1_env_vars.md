@@ -254,6 +254,34 @@ Headless Vulkan probe / backend-skeleton exercise gates. All read via bare `gete
 - `MC2_BOOT_TO_MISSION=<mission FileName>` (e.g. `mc2_03`) — jump to that mission's logistics stage.
 - `MC2_BOOT_TO_SCREEN=purchase|bay|loadout|launch` — which logistics grid cell to land on (default bay).
 - Verified combo for GUI iteration: `MC2_DEV_SHELL=1 MC2_NO_LAUNCHER=1 MC2_BOOT_TO_BAY=campaign MC2_BOOT_TO_MISSION=mc2_03 MC2_BOOT_TO_SCREEN=bay` then `mc2_cmd.py screenshot --source backbuffer`.
+## UI aspect anchor (UI-ASPECT-ANCHOR-1)
+
+- `MC2_UI_ASPECT_ANCHOR=0` — killswitch for the 16:9 UI canvas. Default **ON**
+  (ui-phase1 branch): front-end frames (MainMenu/MissionBegin render assert
+  `gos_SetUiCanvasActive`, auto-cleared at flushHUDBatch) draw the whole UI —
+  legacy HUD-batch layer AND defs/ImGui pages — into a centered 16:9 canvas.
+  Wider displays: black flanks. Narrower: letterbox, scaled down. Exactly 16:9:
+  identity. Mouse normalize (`gos_GetMouseInfo`) is canvas-relative on those
+  frames only; mission frames never assert, so world pick is untouched. `=0`
+  restores full-window stretch everywhere.
+  In-mission: `gos_SetHudCanvasActive` (mission.cpp, beside the HUD-shrink
+  toggle) remaps non-scaleExempt HUD chrome into the same canvas — wider
+  displays show extra terrain in the flanks; cursor, modal dialogs and world
+  pick stay full-surface. HUD hit-tests go through getMouseHudX/Y
+  (gos_HudInverseMousePoint inverts canvas + shrink). ImGui HUD port seam:
+  gos_ComputeHudCanvasBox (see gameos.hpp note).
+
+## Free window resize (FREE-RESIZE-1) + native camera aspect
+
+- `MC2_WINDOW_RESIZABLE=0` — kill the resizable window. Default **ON** with
+  `MC2_WINDOWED`: the SDL window is user-resizable; SIZE_CHANGED refreshes
+  `Environment.drawableWidth/Height` + ImGui display size, and every consumer
+  (postprocess FBOs, UI canvas box, mouse normalize, camera aspect) re-derives
+  from drawable per frame — drag to any size and shape, everything adapts.
+- `MC2_CAMERA_ASPECT_NATIVE=0` — restore the legacy stretched 4:3 frustum.
+  Default **ON**: the in-mission perspective projection uses the drawable
+  aspect (true proportions at any window shape); panel previews keep their
+  fixed 4:3 FBO ratio via the preview-scope guard.
 
 ## Terrain fast-path drop log
 

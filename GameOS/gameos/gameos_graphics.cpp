@@ -6,6 +6,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <climits>
+#include <cctype>
+#include <filesystem>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "gameos.hpp"
 #include "font3d.hpp"
@@ -20,6 +28,10 @@
 
 #include "utils/shader_builder.h"
 #include "utils/gl_utils.h"
+
+#ifdef MC2_IMGUI
+#include "../../GuiRuntime/GuiRuntime.h"
+#endif
 #include "utils/Image.h"
 #include "utils/vec.h"
 #include "utils/string_utils.h"
@@ -157,58 +169,8 @@ static_assert(kTerrainMatNormalUnits[4] < 16,
 // binding state that glGetTexImage / glTexSubImage3D are sensitive to.
 // Construct once, destructor restores. Use in any function that calls
 // glGetTexImage or bulk texture upload to avoid clobbering surrounding state.
-struct GlPixelStoreGuard {
-    GLint packBuffer = 0, unpackBuffer = 0;
-    GLint packAlign = 0, unpackAlign = 0;
-    GLint packRowLen = 0, unpackRowLen = 0;
-    GLint packSkipRows = 0, packSkipPixels = 0;
-    GLint unpackSkipRows = 0, unpackSkipPixels = 0;
-    GLint activeTex = 0;
-    GLint binding2D = 0, binding2DArray = 0;
-
-    GlPixelStoreGuard() {
-        glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,   &packBuffer);
-        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
-        glGetIntegerv(GL_PACK_ALIGNMENT,    &packAlign);
-        glGetIntegerv(GL_UNPACK_ALIGNMENT,  &unpackAlign);
-        glGetIntegerv(GL_PACK_ROW_LENGTH,   &packRowLen);
-        glGetIntegerv(GL_UNPACK_ROW_LENGTH, &unpackRowLen);
-        glGetIntegerv(GL_PACK_SKIP_ROWS,    &packSkipRows);
-        glGetIntegerv(GL_PACK_SKIP_PIXELS,  &packSkipPixels);
-        glGetIntegerv(GL_UNPACK_SKIP_ROWS,  &unpackSkipRows);
-        glGetIntegerv(GL_UNPACK_SKIP_PIXELS,&unpackSkipPixels);
-        glGetIntegerv(GL_ACTIVE_TEXTURE,    &activeTex);
-        glGetIntegerv(GL_TEXTURE_BINDING_2D,       &binding2D);
-        glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &binding2DArray);
-
-        glBindBuffer(GL_PIXEL_PACK_BUFFER,   0);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-        glPixelStorei(GL_PACK_ALIGNMENT,    1);
-        glPixelStorei(GL_PACK_ROW_LENGTH,   0);
-        glPixelStorei(GL_PACK_SKIP_ROWS,    0);
-        glPixelStorei(GL_PACK_SKIP_PIXELS,  0);
-        glPixelStorei(GL_UNPACK_ALIGNMENT,  1);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-        glPixelStorei(GL_UNPACK_SKIP_ROWS,  0);
-        glPixelStorei(GL_UNPACK_SKIP_PIXELS,0);
-    }
-
-    ~GlPixelStoreGuard() {
-        glBindBuffer(GL_PIXEL_PACK_BUFFER,   (GLuint)packBuffer);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, (GLuint)unpackBuffer);
-        glPixelStorei(GL_PACK_ALIGNMENT,    packAlign);
-        glPixelStorei(GL_PACK_ROW_LENGTH,   packRowLen);
-        glPixelStorei(GL_PACK_SKIP_ROWS,    packSkipRows);
-        glPixelStorei(GL_PACK_SKIP_PIXELS,  packSkipPixels);
-        glPixelStorei(GL_UNPACK_ALIGNMENT,  unpackAlign);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, unpackRowLen);
-        glPixelStorei(GL_UNPACK_SKIP_ROWS,  unpackSkipRows);
-        glPixelStorei(GL_UNPACK_SKIP_PIXELS,unpackSkipPixels);
-        glBindTexture(GL_TEXTURE_2D,       (GLuint)binding2D);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)binding2DArray);
-        glActiveTexture((GLenum)activeTex);
-    }
-};
+// GAMEOS-GRAPHICS-SPLIT-1 slice 2: GlPixelStoreGuard moved to
+// gameos_graphics_internal.h (used by gosTexture Lock/Unlock inline methods).
 
 // Single-source gate for the sampler2DArray terrain normal path.
 // Used by shader prefix injection AND all bind paths — must agree for the
@@ -247,11 +209,7 @@ gosRenderer* getGosRenderer() {
 // the gosRenderer / gosTexture class bodies are in scope.
 uint32_t gos_GetGLTextureId(uint32_t gosHandle);
 
-struct gosTextureInfo {
-    int width_;
-    int height_;
-    gos_TextureFormat format_;
-};
+// SPLIT-1 slice 2: gosTextureInfo moved to gameos_graphics_internal.h.
 
 ////////////////////////////////////////////////////////////////////////////////
 class gosBuffer {
@@ -676,10 +634,7 @@ static bool gosHudRingResidency() {
 // OFF (default) => the existing LIGHTSSBO-ORPHAN-1 path runs completely
 // UNCHANGED (byte-identical GL stream + output) — this is the kill switch.
 // Cached once on first query (single predicted-false branch when unset).
-static bool gosLightGrowOnceEnabled() {
-    static const bool s_on = (std::getenv("MC2_GPUBUF_LIGHT_GROWONCE") != nullptr);
-    return s_on;
-}
+// SPLIT-1 slice 4: gosLightGrowOnceEnabled moved to gameos_graphics_light_ssbo.cpp.
 
 class gosMesh {
     public:
@@ -1037,206 +992,9 @@ void gosMesh::drawIndexed(HGOSBUFFER ib, HGOSBUFFER vb, HGOSVERTEXDECLARATION vd
 
 
 
-class gosTexture {
-    public:
-        gosTexture(gos_TextureFormat fmt, const char* fname, DWORD hints, BYTE* pdata, DWORD size, bool from_memory)
-        {
-
-	        //if(fmt == gos_Texture_Detect || /*fmt == gos_Texture_Keyed ||*/ fmt == gos_Texture_Bump || fmt == gos_Texture_Normal)
-            //     PAUSE((""));
-
-            format_ = fmt;
-            if(fname) {
-                filename_ = new char[strlen(fname)+1];
-                strcpy(filename_, fname);
-            } else {
-                filename_ = 0;
-            }
-            texname_ = NULL;
-
-            hints_ = hints;
-
-            plocked_area_ = NULL;
-
-            size_ = 0;
-            pcompdata_ = NULL;
-            if(size) {
-                size_ = size;
-                pcompdata_ = new BYTE[size];
-                memcpy(pcompdata_, pdata, size);
-            }
-
-            is_locked_ = false;
-            is_from_memory_ = from_memory;
-        }
-
-        gosTexture(gos_TextureFormat fmt, DWORD hints, DWORD w, DWORD h, const char* texname)
-        {
-	        //if(fmt == gos_Texture_Detect /*|| fmt == gos_Texture_Keyed*/ || fmt == gos_Texture_Bump || fmt == gos_Texture_Normal)
-            //     PAUSE((""));
-
-            format_ = fmt;
-            if(texname) {
-                texname_ = new char[strlen(texname)+1];
-                strcpy(texname_, texname);
-            } else {
-                texname_ = 0;
-            }
-            filename_ = NULL;
-            hints_ = hints;
-
-            plocked_area_ = NULL;
-
-            size_ = 0;
-            pcompdata_ = NULL;
-            tex_.w = w;
-            tex_.h = h;
-
-            is_locked_ = false;
-            is_from_memory_ = true;
-        }
-
-        // TEXMGR-COMPRESSED-UPLOAD-1: wrap a pre-built (already GL-uploaded)
-        // Texture so the handle integrates with textureList_/bind/destroy
-        // exactly like the other gosTexture flavors. No createHardwareTexture()
-        // call — the GL object is supplied ready. Used by
-        // gos_NewCompressedTexture2D for BC7 .ktx2 sidecar uploads.
-        gosTexture(const Texture& prebuilt, gos_TextureFormat fmt, const char* name)
-        {
-            format_ = fmt;
-            if(name) {
-                texname_ = new char[strlen(name)+1];
-                strcpy(texname_, name);
-            } else {
-                texname_ = 0;
-            }
-            filename_ = NULL;
-            hints_ = 0;
-            plocked_area_ = NULL;
-            size_ = 0;
-            pcompdata_ = NULL;
-            tex_ = prebuilt;
-            is_locked_ = false;
-            is_from_memory_ = true;
-        }
-
-        bool createHardwareTexture();
-
-        ~gosTexture() {
-
-            //SPEW(("Destroying texture: %s\n", filename_));
-
-            gosASSERT(is_locked_ == false);
-
-            if(pcompdata_)
-                delete[] pcompdata_;
-            if(filename_)
-                delete[] filename_;
-            if(texname_)
-                delete[] texname_;
-
-            destroyTexture(&tex_);
-        }
-
-        uint32_t getTextureId() const { return tex_.id; }
-        TexType getTextureType() const { return tex_.type_; }
-
-        BYTE* Lock(int mipl_level, bool is_read_only, int* pitch) {
-            gosASSERT(is_locked_ == false);
-            is_locked_ = true;
-            // TODO:
-            gosASSERT(pitch);
-            *pitch = tex_.w;
-
-            gosASSERT(!plocked_area_);
-#if 0 
-            glBindTexture(GL_TEXTURE_2D, tex_.id);
-            GLint pack_row_length;
-            GLint pack_alignment;
-            glGetIntegerv(GL_PACK_ROW_LENGTH, &pack_row_length);
-            glGetIntegerv(GL_PACK_ALIGNMENT, &pack_alignment);
-            glBindTexture(GL_TEXTURE_2D, 0);
-#endif
-            // always return rgba8 formatted data
-            lock_type_read_only_ = is_read_only;
-            const uint32_t ts = tex_.w*tex_.h * getTexFormatPixelSize(TF_RGBA8);
-            plocked_area_ = new BYTE[ts];
-            // Zero before readback: getTextureData early-returns WITHOUT writing
-            // for block-compressed (BC7/TF_NONE) textures, which would otherwise
-            // leave this buffer full of heap garbage that the paint-scheme
-            // classifier then re-uploads. (A paint texture can land on BC7 when
-            // its paintInstance hashes low.)
-            memset(plocked_area_, 0, ts);
-            // glGetTexImage readback is sensitive to inherited GL_PACK_* state and
-            // a left-bound GL_PIXEL_PACK_BUFFER; guard save/resets/restores it so
-            // the mech-paint recolour reads the real texels on NVIDIA.
-            GlPixelStoreGuard pixelStoreGuard;
-            getTextureData(tex_, 0, plocked_area_, TF_RGBA8);
-            for(int y=0;y<tex_.h;++y) {
-                for(int x=0;x<tex_.w;++x) {
-                    DWORD rgba = ((DWORD*)plocked_area_)[tex_.w*y + x];
-                    DWORD r = rgba&0xff;
-                    DWORD g = (rgba&0xff00)>>8;
-                    DWORD b = (rgba&0xff0000)>>16;
-                    DWORD a = (rgba&0xff000000)>>24;
-                    DWORD bgra = (a<<24) | (r<<16) | (g<<8) | b;
-                    ((DWORD*)plocked_area_)[tex_.w*y + x] = bgra;
-                }
-            }
-            return plocked_area_;
-        }
-
-        void Unlock() {
-            gosASSERT(is_locked_ == true);
-        
-            if(!lock_type_read_only_) {
-                for(int y=0;y<tex_.h;++y) {
-                    for(int x=0;x<tex_.w;++x) {
-                        DWORD bgra = ((DWORD*)plocked_area_)[tex_.w*y + x];
-                        DWORD b = bgra&0xff;
-                        DWORD g = (bgra&0xff00)>>8;
-                        DWORD r = (bgra&0xff0000)>>16;
-                        DWORD a = (bgra&0xff000000)>>24;
-                        DWORD argb = (a<<24) | (b<<16) | (g<<8) | r;
-                        ((DWORD*)plocked_area_)[tex_.w*y + x] = argb;
-                    }
-                }
-                // Same hazard as Lock's readback, upload side: glTexSubImage2D
-                // reads from a left-bound GL_PIXEL_UNPACK_BUFFER (see applyPBO)
-                // instead of client memory, and honours inherited GL_UNPACK_*.
-                // Guard neutralises both so the recoloured texels actually land.
-                GlPixelStoreGuard pixelStoreGuard;
-                updateTexture(tex_, plocked_area_, TF_RGBA8);
-            }
-
-            delete[] plocked_area_;
-            plocked_area_ = NULL;
-
-            is_locked_ = false;
-        }
-
-        void getTextureInfo(gosTextureInfo* texinfo) const {
-            gosASSERT(texinfo);
-            texinfo->width_ = tex_.w;
-            texinfo->height_ = tex_.h;
-            texinfo->format_ = format_;
-        }
-
-    private:
-        BYTE* pcompdata_;
-        BYTE* plocked_area_;
-        DWORD size_;
-        Texture tex_;
-
-        gos_TextureFormat format_;
-        char* filename_;
-        char* texname_;
-        DWORD hints_;
-
-        bool is_locked_;
-        bool lock_type_read_only_;
-        bool is_from_memory_; // not loaded from file
-};
+// GAMEOS-GRAPHICS-SPLIT-1 slice 2: gosTexture class definition moved to
+// gameos_graphics_internal.h (included here; also provides gosFont from slice 1).
+#include "gameos_graphics_internal.h"
 
 struct gosTextAttribs {
     HGOSFONT3D FontHandle;
@@ -1250,144 +1008,9 @@ struct gosTextAttribs {
     bool DisableEmbeddedCodes;
 };
 
-static void makeKindaSolid(Image& img) {
-    // have to do this, otherwise texutre with zero alpha could be drawn with alpha blend enabled, evel though logically aplha blend should not be enabled!
-    // (happens when drawing terrain, see TerrainQuad::draw() case when no detail and no owerlay bu t isCement is true)
-    DWORD* pixels = (DWORD*)img.getPixels();
-    for(int y=0;y<img.getHeight(); ++y) {
-        for(int x=0;x<img.getWidth(); ++x) {
-            DWORD pix = pixels[y*img.getWidth() + x];
-            pixels[y*img.getWidth() + x] = pix | 0xff000000;
-        }
-    }
-}
-
-static bool doesLookLikeAlpha(const Image& img) {
-    gosASSERT(img.getFormat() == FORMAT_RGBA8);
-
-    DWORD* pixels = (DWORD*)img.getPixels();
-    for(int y=0;y<img.getHeight(); ++y) {
-        for(int x=0;x<img.getWidth(); ++x) {
-            DWORD pix = pixels[y*img.getWidth() + x];
-            if((0xFF000000 & pix) != 0xFF000000)
-                return true;
-        }
-    }
-    return false;
-}
-
-static gos_TextureFormat convertIfNecessary(Image& img, gos_TextureFormat gos_format) {
-
-    const bool has_alpha_channel = FORMAT_RGBA8 == img.getFormat();
-
-    if(gos_format == gos_Texture_Detect) {
-        bool has_alpha = has_alpha_channel ? doesLookLikeAlpha(img) : false;
-        gos_format = has_alpha ? gos_Texture_Alpha : gos_Texture_Solid;
-    }
-
-    if(gos_format == gos_Texture_Solid && has_alpha_channel)
-        makeKindaSolid(img);
-
-    return gos_format;
-}
-
-bool gosTexture::createHardwareTexture() {
-
-    // Opt-in to mipmaps via gosHint_MipmapFilter0. MC2's original convention
-    // was "absence of DisableMipmap means mipmaps on," but in this port many
-    // HUD/GUI/tacmap loads pass hints=0 without DisableMipmap and must stay
-    // non-mipmapped for pixel-perfect sampling. We use MipmapFilter0 as a
-    // positive opt-in instead -- no existing code sets this bit, so only
-    // explicitly-updated load sites enable mipmaps. DisableMipmap wins if
-    // both are set (defensive).
-    const bool wantMipmaps = (hints_ & gosHint_MipmapFilter0) != 0
-                          && (hints_ & gosHint_DisableMipmap) == 0;
-
-    if(!is_from_memory_) {
-
-        gosASSERT(filename_);
-
-        Image img;
-        if(!img.loadFromFile(filename_)) {
-            SPEW(("DBG", "failed to load texture from file: %s\n", filename_));
-            return false;
-        }
-
-        // check for only those formats, because lock.unlock may incorrectly work with different channes size (e.g. 16 or 32bit or floats)
-        FORMAT img_fmt = img.getFormat();
-        if(img_fmt != FORMAT_RGB8 && img_fmt != FORMAT_RGBA8) {
-            STOP(("Unsupported texture format when loading %s\n", filename_));
-        }
-
-        TexFormat tf = img_fmt == FORMAT_RGB8 ? TF_RGB8 : TF_RGBA8;
-
-        format_ = convertIfNecessary(img, format_);
-
-        tex_ = create2DTexture(img.getWidth(), img.getHeight(), tf, img.getPixels(), wantMipmaps);
-        return tex_.isValid();
-
-    } else if(pcompdata_ && size_ > 0) {
-
-        // TODO: this is texture from memory, so maybe do not load it from file eh?
-
-        Image img;
-        if(!img.loadTGA(pcompdata_, size_)) {
-            SPEW(("DBG", "failed to load texture from data, filename: %s, texname: %s\n", filename_? filename_ : "NO FILENAME", texname_?texname_:"NO TEXNAME"));
-            return false;
-        }
-
-        FORMAT img_fmt = img.getFormat();
-
-        if(img_fmt != FORMAT_RGB8 && img_fmt != FORMAT_RGBA8) {
-            STOP(("Unsupported texture format when loading %s\n", filename_));
-        }
-
-        TexFormat tf = img_fmt == FORMAT_RGB8 ? TF_RGB8 : TF_RGBA8;
-
-        format_ = convertIfNecessary(img, format_);
-
-        tex_ = create2DTexture(img.getWidth(), img.getHeight(), tf, img.getPixels(), wantMipmaps);
-        return tex_.isValid();
-    } else {
-        gosASSERT(tex_.w >0 && tex_.h > 0);
-
-        TexFormat tf = TF_RGBA8; // TODO: check format_ and do appropriate stuff
-        DWORD* pdata = new DWORD[tex_.w*tex_.h];
-        for(int i=0;i<tex_.w*tex_.h;++i)
-            pdata[i] = 0xFF00FFFF;
-
-        // OVERLAY-MAGENTA-TEXTURE-RECON-1 (Source A): this texture object has w/h but
-        // NO source path and NO compressed data -> filled solid magenta. Emit WHICH
-        // texture resolved to nothing (the highest-value magenta probe). Gated
-        // MC2_OVERLAY_MAGENTA_TRACE + MC2_DIAG_TAGS=OVERLAY_MAGENTA; read via
-        // get_diagnostic_events("OVERLAY_MAGENTA"). No behavior change.
-        {
-            static const bool s_magentaTrace = (std::getenv("MC2_OVERLAY_MAGENTA_TRACE") != nullptr);
-            if (s_magentaTrace && mc2_diag::tagEnabled("OVERLAY_MAGENTA")) {
-                char _mg_fn[256]; char _mg_tn[256];
-                const char* _mg_sfn = filename_ ? filename_ : "";
-                const char* _mg_stn = texname_  ? texname_  : "";
-                size_t _mg_k;
-                for (_mg_k=0; _mg_k<sizeof(_mg_fn)-1 && _mg_sfn[_mg_k]; ++_mg_k)
-                    _mg_fn[_mg_k] = (_mg_sfn[_mg_k]=='\\') ? '/' : _mg_sfn[_mg_k];
-                _mg_fn[_mg_k] = '\0';
-                for (_mg_k=0; _mg_k<sizeof(_mg_tn)-1 && _mg_stn[_mg_k]; ++_mg_k)
-                    _mg_tn[_mg_k] = (_mg_stn[_mg_k]=='\\') ? '/' : _mg_stn[_mg_k];
-                _mg_tn[_mg_k] = '\0';
-                char _mg_buf[600];
-                snprintf(_mg_buf, sizeof(_mg_buf),
-                         "{\"site\":\"fallback_fill\",\"filename\":\"%s\",\"texname\":\"%s\",\"w\":%d,\"h\":%d}",
-                         _mg_fn, _mg_tn, (int)tex_.w, (int)tex_.h);
-                mc2_diag::writeEvent("OVERLAY_MAGENTA", 1, 0, _mg_buf);
-            }
-        }
-        tex_ = create2DTexture(tex_.w, tex_.h, tf, (const uint8_t*)pdata, wantMipmaps);
-        delete[] pdata;
-        return tex_.isValid();
-    }
-
-}
-
+// GAMEOS-GRAPHICS-SPLIT-1 slice 2: makeKindaSolid/doesLookLikeAlpha/
+// convertIfNecessary + gosTexture::createHardwareTexture moved to
+// gameos_graphics_texture.cpp.
 static gosTexture* lookupBatchTextureOrWarn(const std::vector<gosTexture*>& textureList,
                                             DWORD textureId,
                                             const char* batchName) {
@@ -1501,41 +1124,8 @@ void overlayTexTraceSummary() {
 } // anonymous namespace (OMT-1)
 
 ////////////////////////////////////////////////////////////////////////////////
-class gosFont {
-        friend class gosRenderer;
-    public:
-        static gosFont* load(const char* fontFile);
-
-        int getMaxCharWidth() const { return gi_.max_advance_; }
-        int getMaxCharHeight() const { return gi_.font_line_skip_; }
-        int getFontAscent() const { return gi_.font_ascent_; }
-
-        int getCharWidth(int c) const;
-        void getCharUV(int c, uint32_t* u, uint32_t* v) const;
-        int getCharAdvance(int c) const;
-        const gosGlyphMetrics& getGlyphMetrics(int c) const;
-        const gosGlyphInfo& getGlyphInfo() const { return gi_; }
-
-
-        DWORD getTextureId() const { return tex_id_; }
-        const char* getName() const { return font_name_; }
-        const char* getId() const { return font_id_; }
-
-        uint32_t getRefCount() { return ref_count_; }
-        uint32_t addRef() { return ++ref_count_; }
-        uint32_t decRef() { gosASSERT(ref_count_>0); return --ref_count_; }
-
-    private:
-        static uint32_t destroy(gosFont* font);
-        gosFont():font_name_(0), font_id_(0), tex_id_(0), ref_count_(1) {};
-        ~gosFont();
-
-        char* font_name_;
-        char* font_id_;
-        gosGlyphInfo gi_;
-        DWORD tex_id_;
-        uint32_t ref_count_;
-};
+// GAMEOS-GRAPHICS-SPLIT-1 slice 1: gosFont class definition + implementation
+// moved to gameos_graphics_internal.h (included above) / gameos_graphics_font.cpp.
 
 
 enum HudDrawKind { kHudQuadBatch, kHudLineBatch, kHudTriBatch, kHudTextQuadBatch };
@@ -1548,6 +1138,7 @@ struct HudDrawCall {
     DWORD                    fontTexId;       // kHudTextQuadBatch only
     DWORD                    foregroundColor; // kHudTextQuadBatch only
     bool                     scaleExempt = false; // skip s_hud_scale shrink (cursor, modal dialogs)
+    bool                     canvasExempt = false; // skip 16:9 HUD-canvas remap (cursor, world-anchored overlays, dialogs)
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1741,12 +1332,20 @@ class gosRenderer {
             return renderStates_[RenderState];
         }
 
-        void setScreenMode(DWORD width, DWORD height, DWORD bit_depth, bool GotoFullScreen, bool anti_alias) {
+        void setScreenMode(DWORD width, DWORD height, DWORD bit_depth, bool GotoFullScreen, bool anti_alias,
+                           DWORD physWidth = 0, DWORD physHeight = 0) {
             reqWidth = width;
             reqHeight = height;
             reqBitDepth = bit_depth;
             reqAntiAlias = anti_alias;
             reqGotoFullscreen = GotoFullScreen;
+            // WINDOWED-8006-1 (issue #49): under the HUD-RES clamp the LOGICAL
+            // canvas is 800x600 but the PHYSICAL window must not shrink to it —
+            // that trapped windowed mode at an 800x600 window. physWidth==0 =
+            // "keep the current OS window size" (the boot size from options.cfg);
+            // nonzero = explicit physical resize.
+            reqPhysWidth  = physWidth;
+            reqPhysHeight = physHeight;
             pendingRequest = true;
         }
 
@@ -2292,6 +1891,8 @@ class gosRenderer {
         MaterialDB_t materialDB_;
 
         DWORD reqWidth;
+        DWORD reqPhysWidth = 0;   // WINDOWED-8006-1: physical window size (logical may be clamped)
+        DWORD reqPhysHeight = 0;
         DWORD reqHeight;
         DWORD reqBitDepth;
         DWORD reqAntiAlias;
@@ -5018,16 +4619,10 @@ bool gos_terrain_bridge_drawDecalStatic(unsigned int               vboGL,
 // ──────────────────────────────────────────────────────────────────────────
 
 static GLuint gVAO = 0;
-static float  s_hud_scale = 0.85f;  // default while iterating; RAlt+5 cycles
-static bool   s_hud_scale_active = false;  // gated: only shrink during mission
-// When set, HUD draw calls recorded while it is on are tagged scaleExempt and
-// are NOT shrunk by the bottom-band s_hud_scale transform in flushHUDBatch.
-// Bracketed around the mouse cursor sprite and modal dialogs (quit prompt, etc.)
-// so the HUD-fit shrink only ever moves the in-game HUD chrome -- never the
-// pointer or a popup. Without this the cursor snapped from unscaled to 0.85x as
-// it crossed the 60%-height centroid gate (jump-at-center + 0.9x drift) and
-// dialogs straddling the gate tore at the seam.
-static bool   s_hud_scale_exempt = false;
+// GAMEOS-GRAPHICS-SPLIT-1 slice 5: the HUD-scale / UI-canvas state globals
+// moved to gameos_graphics_params.cpp (extern-declared in
+// gameos_graphics_internal.h; flushHUDBatch et al. still reference them
+// directly).
 
 
 void gosRenderer::init() {
@@ -5836,6 +5431,13 @@ void gosRenderer::beginFrame()
         SPEW(("GRAPHICS", "[HUD] gos_State_IsHUD still set at frame start -- callsite leak\n"));
         renderStates_[gos_State_IsHUD] = 0;
     }
+    // HUD-SCALE-EXEMPT-LEAK-1: same hygiene for the scale-exempt bracket. The
+    // cursor's z-order fix re-issues userInput->render() as a PostImGuiRender
+    // callback, which runs AFTER flushHUDBatch's end-of-flush exempt reset —
+    // its gos_SetHudScaleExempt(true) then leaked into the whole NEXT frame's
+    // HUD recording, tagging every call exempt and silently no-opping the 85%
+    // HUD shrink (observed: [HUDSCALE] apply skipExempt=100 scaled=0).
+    s_hud_scale_exempt = false;
     hudBatch_.clear();
     hudFlushed_ = false;
     glBindVertexArray(gVAO);
@@ -5933,9 +5535,17 @@ void gosRenderer::handleEvents()
                 0, 0, 1.0f, 0.0f,
                 0, 0, 0.0f, 1.0f);
 
+        // WINDOWED-8006-1: only resize the OS window on an EXPLICIT physical
+        // request. reqPhysWidth==0 (the HUD-RES-clamped path) keeps the boot
+        // window size — logical canvas lives in width_/height_/projection_.
+        bool windowOk = true;
+        if (reqPhysWidth > 0 && reqPhysHeight > 0)
         {
-        ZoneScopedN("gosRenderer::handleEvents resizeWindow");
-        if(graphics::resize_window(win_h_, width_, height_))
+            ZoneScopedN("gosRenderer::handleEvents resizeWindow");
+            windowOk = graphics::resize_window(win_h_, (int)reqPhysWidth, (int)reqPhysHeight);
+        }
+        {
+        if(windowOk)
 		{
             { ZoneScopedN("gosRenderer::handleEvents fullscreen"); graphics::set_window_fullscreen(win_h_, reqGotoFullscreen); }
 
@@ -5943,6 +5553,18 @@ void gosRenderer::handleEvents()
             Environment.screenHeight = height_;
 
 			{ ZoneScopedN("gosRenderer::handleEvents drawableSize"); graphics::get_drawable_size(win_h_, &Environment.drawableWidth, &Environment.drawableHeight); }
+
+#ifdef MC2_IMGUI
+            // Keep ImGui DisplaySize and FramebufferScale in sync with the
+            // actual window after a resolution change.  Without this,
+            // io.DisplaySize stays at the startup value (800x600) and all
+            // ImGui layout, hit-testing, and text rendering use stale dimensions.
+            GuiRuntime::NotifyResize(
+                Environment.drawableWidth,
+                Environment.drawableHeight,
+                Environment.screenWidth,
+                Environment.screenHeight);
+#endif
 
         }
         }
@@ -6016,6 +5638,8 @@ void gosRenderer::drawQuads(gos_VERTEX* vertices, int count) {
         call.fontTexId = 0;
         call.foregroundColor = 0;
         call.scaleExempt = s_hud_scale_exempt;
+        call.canvasExempt = (s_hud_canvas_exempt_mode < 0)
+            ? s_hud_scale_exempt : (s_hud_canvas_exempt_mode != 0);
         hudBatch_.push_back(std::move(call));
         return;
     }
@@ -6079,6 +5703,8 @@ void gosRenderer::drawLines(gos_VERTEX* vertices, int count) {
         call.fontTexId = 0;
         call.foregroundColor = 0;
         call.scaleExempt = s_hud_scale_exempt;
+        call.canvasExempt = (s_hud_canvas_exempt_mode < 0)
+            ? s_hud_scale_exempt : (s_hud_canvas_exempt_mode != 0);
         hudBatch_.push_back(std::move(call));
         return;
     }
@@ -6137,6 +5763,11 @@ void gosRenderer::drawTris(gos_VERTEX* vertices, int count) {
 
     gosASSERT((count % 3) == 0);
 
+    if ( getenv("MC2_LOG_PREVIEW") ) {
+        GLint curFbo = 0; glGetIntegerv(GL_FRAMEBUFFER_BINDING, &curFbo);
+        FILE* f = fopen("preview_debug.log","a");
+        if (f) { fprintf(f,"[PREVIEW] drawTris count=%d isHUD=%d curFbo=%d\n", count, (int)renderStates_[gos_State_IsHUD], curFbo); fflush(f); fclose(f); }
+    }
     if (renderStates_[gos_State_IsHUD]) {
         if (hudFlushed_) {
             SPEW(("GRAPHICS", "[HUD] Late drawTris discarded (after flushHUDBatch)\n"));
@@ -6150,6 +5781,8 @@ void gosRenderer::drawTris(gos_VERTEX* vertices, int count) {
         call.fontTexId = 0;
         call.foregroundColor = 0;
         call.scaleExempt = s_hud_scale_exempt;
+        call.canvasExempt = (s_hud_canvas_exempt_mode < 0)
+            ? s_hud_scale_exempt : (s_hud_canvas_exempt_mode != 0);
         hudBatch_.push_back(std::move(call));
         return;
     }
@@ -7623,6 +7256,8 @@ void gosRenderer::drawText(const char* text) {
             call.fontTexId = tex_id;
             call.foregroundColor = ta.Foreground;
             call.scaleExempt = s_hud_scale_exempt;
+        call.canvasExempt = (s_hud_canvas_exempt_mode < 0)
+            ? s_hud_scale_exempt : (s_hud_canvas_exempt_mode != 0);
             hudBatch_.push_back(std::move(call));
         } else if (hudFlushed_) {
             SPEW(("GRAPHICS", "[HUD] Late drawText discarded (after flushHUDBatch)\n"));
@@ -7760,23 +7395,122 @@ void gosRenderer::flushHUDBatch()
     // iteration; later attempts at max-Y gating / shrink-in-place broke more
     // than they fixed (touched scene/overlay draws, pulled tall panels out
     // of their corners, etc.).
+    // HUD-SCALE-SPACE-1: env override for harness A/B (MC2_HUD_SCALE=0.4 etc.);
+    // read once, wins over the default until the ImGui slider changes it.
+    {
+        static bool s_envScaleDone = false;
+        if (!s_envScaleDone) {
+            s_envScaleDone = true;
+            if (const char* e = getenv("MC2_HUD_SCALE")) {
+                const float v = (float)atof(e);
+                if (v >= 0.2f && v <= 1.0f) s_hud_scale = v;
+            }
+        }
+    }
     const float scale = s_hud_scale;
+    // HUD-SCALE-SPACE-1 diagnostic: which coordinate space are the batched HUD
+    // verts in vs the band test (width_/height_ = real drawable)? One line per
+    // 300 flushes under MC2_LOG_PREVIEW.
+    if (getenv("MC2_LOG_PREVIEW")) {
+        static int s_hudDiagTick = 0;
+        // Sample every flush while the shrink is supposed to be active (mission),
+        // every 300th otherwise — the earlier cadence missed the mission window.
+        if ((s_hud_scale_active || (s_hudDiagTick++ % 300) == 0) && !hudBatch_.empty()) {
+            float ymin = 1e9f, ymax = -1e9f, xmax = -1e9f;
+            size_t nv = 0;
+            for (const HudDrawCall& c : hudBatch_)
+                for (const gos_VERTEX& v : c.vertices) {
+                    if (v.y < ymin) ymin = v.y;
+                    if (v.y > ymax) ymax = v.y;
+                    if (v.x > xmax) xmax = v.x;
+                    ++nv;
+                }
+            if (FILE* hf = fopen("preview_debug.log", "a")) {
+                fprintf(hf,"[HUDSCALE] active=%d scale=%.2f rendererWH=%dx%d batch=%zu verts=%zu "
+                       "vertY=[%.0f..%.0f] vertXmax=%.0f band=%.0f\n",
+                    (int)s_hud_scale_active, scale, width_, height_,
+                    hudBatch_.size(), nv, ymin, ymax, xmax, (float)height_ * 0.60f);
+                fclose(hf);
+            }
+        }
+    }
     if (s_hud_scale_active && scale < 0.999f) {
-        const float sw = (float)width_;
-        const float sh = (float)height_;
+        // HUD-SCALE-SPACE-1: band + anchor must live in the SAME space as the
+        // batched verts. ControlGui lays the HUD out in Environment.screenWidth/
+        // Height space (real-res on stock nifty, the 800x600 logical canvas
+        // under the ui-phase1 HUD-RES-CLAMP) — using the renderer's physical
+        // size here put the 60% band at 1296px against 800-space verts, so no
+        // HUD centroid ever entered the band and the shrink silently no-opped.
+        const float sw = (Environment.screenWidth  > 0) ? (float)Environment.screenWidth  : (float)width_;
+        const float sh = (Environment.screenHeight > 0) ? (float)Environment.screenHeight : (float)height_;
         const float bottomBand = sh * 0.60f;
         const float ax = sw * 0.5f;
         const float ay = sh;
+        int scaled = 0, skippedBand = 0, skippedExempt = 0;
         for (HudDrawCall& call : hudBatch_) {
             if (call.vertices.empty()) continue;
-            if (call.scaleExempt) continue;   // cursor + modal dialogs: never shrink
+            if (call.scaleExempt) { ++skippedExempt; continue; }   // cursor + modal dialogs: never shrink
             float cy = 0.0f;
             for (const gos_VERTEX& v : call.vertices) cy += v.y;
             cy /= (float)call.vertices.size();
-            if (cy < bottomBand) continue;
+            if (cy < bottomBand) { ++skippedBand; continue; }
+            ++scaled;
             for (gos_VERTEX& v : call.vertices) {
                 v.x = ax + (v.x - ax) * scale;
                 v.y = ay + (v.y - ay) * scale;
+            }
+        }
+        if (getenv("MC2_LOG_PREVIEW")) {
+            static int s_hudApplyTick = 0;
+            if ((s_hudApplyTick++ % 60) == 0) {
+                float sampleY = -1.f;
+                for (const HudDrawCall& c : hudBatch_)
+                    if (!c.vertices.empty() && !c.scaleExempt) { sampleY = c.vertices[0].y; break; }
+                if (FILE* hf = fopen("preview_debug.log", "a")) {
+                    fprintf(hf,"[HUDSCALE] apply sw=%.0f sh=%.0f band=%.0f scaled=%d skipBand=%d skipExempt=%d firstVertYafter=%.0f\n",
+                        sw, sh, bottomBand, scaled, skippedBand, skippedExempt, sampleY);
+                    fclose(hf);
+                }
+            }
+        }
+    }
+
+    // UI-ASPECT-ANCHOR-1: map the logical-space UI verts onto the 16:9 canvas.
+    // The full-window stretch maps logical [0,width_] -> [0,drawableW]; the
+    // canvas wants [bx, bx+bw] instead, so in LOGICAL space that is a scale of
+    // bw/drawableW about origin plus a logical offset of width_*bx/drawableW
+    // (same vertex-space technique as the s_hud_scale block above). Applies to
+    // every call INCLUDING scaleExempt (cursor must follow the canvas mouse
+    // mapping); active only on frames the front-end asserted (menus).
+    // Two modes:
+    //   front-end (s_uiCanvasAssert): remap EVERY call including scaleExempt —
+    //     the cursor must follow the canvas-relative mouse mapping.
+    //   mission (s_hudCanvasActive): remap HUD chrome only, SKIP scaleExempt —
+    //     the mission cursor tracks the full screen (world pick spans the whole
+    //     drawable) and modal dialogs keep their legacy full-stretch space.
+    //     Hit-tests for remapped chrome go through gos_HudInverseMousePoint
+    //     (getMouseHudX/Y), which inverts this transform.
+    {
+        int bx = 0, by = 0, bw = 0, bh = 0;
+        const bool menuCanvas = gos_ComputeUiCanvasBox(
+            Environment.drawableWidth, Environment.drawableHeight, &bx, &by, &bw, &bh);
+        const bool hudCanvas = !menuCanvas && gos_ComputeHudCanvasBox(
+            Environment.drawableWidth, Environment.drawableHeight, &bx, &by, &bw, &bh);
+        if (menuCanvas || hudCanvas)
+        {
+            const float dw = (float)Environment.drawableWidth;
+            const float dh = (float)Environment.drawableHeight;
+            const float fx = (float)bw / dw;
+            const float fy = (float)bh / dh;
+            const float lx = (float)width_  * ((float)bx / dw);
+            const float ly = (float)height_ * ((float)by / dh);
+            for (HudDrawCall& call : hudBatch_) {
+                if (hudCanvas && call.canvasExempt)
+                    continue;   // cursor, world-anchored overlays, modals stay full-space
+                for (gos_VERTEX& v : call.vertices) {
+                    v.x = v.x * fx + lx;
+                    v.y = v.y * fy + ly;
+                }
             }
         }
     }
@@ -7846,6 +7580,11 @@ void gosRenderer::flushHUDBatch()
     // the next frame's non-exempt HUD recording. Callers (cursor sprite, modal
     // dialogs) set it true around their own draws; this is the single reset.
     s_hud_scale_exempt = false;
+
+    // UI-ASPECT-ANCHOR-1: latch this frame's canvas assert for early-next-frame
+    // consumers (mouse normalize runs before any render code), then re-arm.
+    s_uiCanvasLatch  = s_uiCanvasAssert;
+    s_uiCanvasAssert = false;
 
     render_contract::endPassScope(render_contract::PassIdentity::UI,
                                   "gosRenderer_flushHUDBatch");
@@ -7947,219 +7686,34 @@ void gos_RendererRebindVAO() {
     glBindVertexArray(gVAO);
 }
 
+// GAMEOS-GRAPHICS-SPLIT-1 slice 5: logical-canvas size shims for extraction
+// TUs (gameos_graphics_params.cpp) that must not see the gosRenderer class.
+// Return 0 when the renderer does not exist yet (callers treat 0 as "no-op").
+int gosRendererLogicalWidth()  { return g_gos_renderer ? g_gos_renderer->getWidth()  : 0; }
+int gosRendererLogicalHeight() { return g_gos_renderer ? g_gos_renderer->getHeight() : 0; }
+
 void gos_RendererHandleEvents() {
     gosASSERT(g_gos_renderer);
     g_gos_renderer->handleEvents();
 }
 
 
-gosFont::~gosFont()
+// GAMEOS-GRAPHICS-SPLIT-1 slice 1: gosFont implementation moved to
+// gameos_graphics_font.cpp. These shims give that TU renderer access without
+// exporting the gosRenderer class definition.
+DWORD gosRendererAddFontBmpTexture(const char* textureName)
 {
-    if(tex_id_ != INVALID_TEXTURE_ID)
-        getGosRenderer()->deleteTexture(tex_id_);
-
-    delete[] gi_.glyphs_;
-    delete[] gi_.ink_top_;
-    delete[] gi_.ink_bot_;
-    delete[] gi_.ink_valid_;
-    delete[] font_name_;
-    delete[] font_id_;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-gosFont* gosFont::load(const char* fontFile) {
-
-    char fname[256];
-    char dir[256];
-    _splitpath(fontFile, NULL, dir, fname, NULL);
-
-    // Retail .d3f wins when present. .bmp + .glyph stays as the
-    // permanent fallback for converted fonts and community content.
-    {
-        const char* d3f_ext = ".d3f";
-        const size_t d3fNameSize = strlen(fname) + 1 + strlen(dir) + strlen(d3f_ext) + 1;
-        char* d3fName = new char[d3fNameSize];
-        memset(d3fName, 0, d3fNameSize);
-        uint32_t d3f_len = S_snprintf(d3fName, d3fNameSize, "%s/%s%s", dir, fname, d3f_ext);
-        gosASSERT(d3f_len <= d3fNameSize - 1);
-
-        gosGlyphInfo gi;
-        gosD3FAtlas atlas;
-        if(gos_load_d3f(d3fName, gi, atlas)) {
-            // Legacy .glyph sidecar bridge — when a same-basename
-            // .glyph exists alongside the .d3f, adopt its line spacing
-            // and max-advance globals. UI widgets were authored against
-            // those values; D3F's dwFontHeight em-box would pack lines
-            // ~2x denser than retail. font_ascent_ is intentionally
-            // left at the calibrated value (visible band height) so
-            // the per-glyph maxy/miny set by calibrate_vertical stay
-            // consistent with the renderer's char_off_y math.
-            //
-            // .glyph header layout (matches gos_load_glyphs):
-            //   u32 num_glyphs, start_glyph, max_advance, ascent, line_skip
-            {
-                const char* glyph_ext = ".glyph";
-                const size_t sidecarNameSize = strlen(fname) + 1 + strlen(dir) + strlen(glyph_ext) + 1;
-                char* sidecarName = new char[sidecarNameSize];
-                memset(sidecarName, 0, sidecarNameSize);
-                S_snprintf(sidecarName, sidecarNameSize, "%s/%s%s", dir, fname, glyph_ext);
-
-                FILE* sidecar = fopen(sidecarName, "rb");
-                if(sidecar) {
-                    uint32_t legacy_globals[5] = {0};
-                    if(fread(legacy_globals, sizeof(uint32_t), 5, sidecar) == 5) {
-                        gi.max_advance_    = legacy_globals[2];
-                        gi.font_line_skip_ = legacy_globals[4];
-                    }
-                    fclose(sidecar);
-                }
-                delete[] sidecarName;
-            }
-
-            DWORD tex_id = gos_NewEmptyTexture(gos_Texture_Alpha, d3fName,
-                                               RECT_TEX(atlas.width, atlas.height), 0);
-            if(tex_id != 0) {
-                // Expand 8-bit alpha to RGBA8: fan alpha into R for the
-                // gos_text shader's .xxxx sample. Other channels also
-                // populated so any future shader change still gets sane data.
-                const size_t pixel_count = (size_t)atlas.width * (size_t)atlas.height;
-                DWORD* rgba = new DWORD[pixel_count];
-                for(size_t i = 0; i < pixel_count; ++i) {
-                    uint32_t a = atlas.pixels[i];
-                    rgba[i] = (a) | (a << 8) | (a << 16) | (a << 24);
-                }
-                delete[] atlas.pixels;
-                atlas.pixels = NULL;
-
-                GLuint gl_id = gos_GetTextureGLId(tex_id);
-                glBindTexture(GL_TEXTURE_2D, gl_id);
-                // Save/restore GL_UNPACK_ALIGNMENT — it's global state
-                // and a later texture upload may rely on a different
-                // value (driver default is 4, but other code paths set
-                // it to 1 for tightly-packed sources).
-                GLint prev_unpack_alignment = 0;
-                glGetIntegerv(GL_UNPACK_ALIGNMENT, &prev_unpack_alignment);
-                glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
-                                atlas.width, atlas.height,
-                                GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-                glPixelStorei(GL_UNPACK_ALIGNMENT, prev_unpack_alignment);
-                glBindTexture(GL_TEXTURE_2D, 0);
-                delete[] rgba;
-
-                gosFont* font = new gosFont();
-                font->gi_ = gi;
-                font->font_name_ = new char[strlen(fname) + 1];
-                strcpy(font->font_name_, fname);
-                font->font_id_ = new char[strlen(fontFile) + 1];
-                strcpy(font->font_id_, fontFile);
-                font->tex_id_ = tex_id;
-
-                delete[] d3fName;
-                return font;
-            }
-            // Texture allocation failed — release everything
-            // calibrate_vertical allocated, including the per-glyph ink
-            // bounds arrays, before falling through to the .bmp+.glyph
-            // path.
-            delete[] gi.glyphs_;
-            delete[] gi.ink_top_;
-            delete[] gi.ink_bot_;
-            delete[] gi.ink_valid_;
-            delete[] atlas.pixels;
-        }
-        delete[] d3fName;
-    }
-
-    const char* tex_ext = ".bmp";
-    const char* glyph_ext = ".glyph";
-
-	const size_t textureNameSize = strlen(fname) + sizeof('/') + strlen(dir) + strlen(tex_ext) + 1;
-    char* textureName = new char[textureNameSize];
-	memset(textureName, 0, textureNameSize);
-
-	const size_t glyphNameSize = strlen(fname) + sizeof('/') + strlen(dir) + strlen(glyph_ext) + 1;
-    char* glyphName = new char[glyphNameSize];
-	memset(glyphName, 0, glyphNameSize);
-
-    uint32_t formatted_len = S_snprintf(textureName, textureNameSize, "%s/%s%s", dir, fname, tex_ext);
-	gosASSERT(formatted_len <= textureNameSize - 1);
-
-    formatted_len = S_snprintf(glyphName, glyphNameSize, "%s/%s%s", dir, fname, glyph_ext);
-	gosASSERT(formatted_len <= glyphNameSize - 1);
-
     gosTexture* ptex = new gosTexture(gos_Texture_Alpha, textureName, 0, NULL, 0, false);
     if(!ptex || !ptex->createHardwareTexture()) {
         STOP(("Failed to create font texture: %s\n", textureName));
     }
-
-    DWORD tex_id = getGosRenderer()->addTexture(ptex);
-
-    gosFont* font = new gosFont();
-    if(!gos_load_glyphs(glyphName, font->gi_)) {
-        delete font;
-        STOP(("Failed to load font glyphs: %s\n", glyphName));
-        return NULL;
-    }
-
-    font->font_name_ = new char[strlen(fname) + 1];
-    strcpy(font->font_name_, fname);
-
-    font->font_id_ = new char[strlen(fontFile) + 1];
-    strcpy(font->font_id_, fontFile);
-
-    font->tex_id_ = tex_id;
-
-    delete[] textureName;
-    delete[] glyphName;
-
-    return font;
-
+    return getGosRenderer()->addTexture(ptex);
 }
 
-uint32_t gosFont::destroy(gosFont* font) {
-    uint32_t rc = font->decRef();
-    if(0 == rc) {
-        delete font;
-    }
-
-    return rc;
-}
-
-void gosFont::getCharUV(int c, uint32_t* u, uint32_t* v) const {
-
-    gosASSERT(u && v);
-
-    int32_t pos = c - gi_.start_glyph_;
-    if(pos < 0 || pos >= (int)gi_.num_glyphs_) {
-        *u = *v = 0;
-        return;
-    }
-
-    *u = gi_.glyphs_[pos].u;
-    *v = gi_.glyphs_[pos].v;
-}
-
-int gosFont::getCharAdvance(int c) const
+void gosRendererDeleteTexture(DWORD texId)
 {
-    int pos = c - gi_.start_glyph_;
-    if(pos < 0 || pos >= (int)gi_.num_glyphs_) {
-        return getMaxCharWidth();
-    }
-
-    return gi_.glyphs_[pos].advance;
+    getGosRenderer()->deleteTexture(texId);
 }
-
-const gosGlyphMetrics& gosFont::getGlyphMetrics(int c) const {
-    int pos = c - gi_.start_glyph_;
-    if(pos < 0 || pos >= (int)gi_.num_glyphs_)
-        pos = 0;
-
-    return gi_.glyphs_[pos];
-}
-
-
-
 
 ////////////////////////////////////////////////////////////////////////////////
 // graphics
@@ -8406,13 +7960,29 @@ void __stdcall gos_SetRenderState( gos_RenderState RenderState, int Value )
     g_gos_renderer->setRenderState(RenderState, Value);
 }
 
-// [HUD-RES-CLAMP v1] runtime gate. Default ON (game path). The Mission Editor
-// disables it via gos_SetHudResClampEnabled(false) so it renders at native
-// window resolution; clamping the editor's render base to 800x600 desyncs the
-// GL viewport (gos_GetViewport) from the MFC window/mouse space and corrupts
-// editor object pick + drag-move projection. Runtime gate (not #ifdef
-// MC2_IS_EDITOR) because gameos_graphics.cpp is compiled into the gameos_editor
-// library WITHOUT that define (GameOS/gameos/CMakeLists.txt:104).
+// [HUD-RES-CLAMP v1] runtime gate. The Mission Editor disables it via
+// gos_SetHudResClampEnabled(false) so it renders at native window resolution;
+// clamping the editor's render base to 800x600 desyncs the GL viewport
+// (gos_GetViewport) from the MFC window/mouse space and corrupts editor
+// object pick + drag-move projection. Runtime gate (not #ifdef MC2_IS_EDITOR)
+// because gameos_graphics.cpp is compiled into the gameos_editor library
+// WITHOUT that define (GameOS/gameos/CMakeLists.txt:104).
+//
+// ui-phase1 investigation update: tried flipping this default OFF to make
+// Environment.screenWidth/Height reflect the real resolution for the new
+// defs/ImGui pages. REVERTED -- adversarial+meta review (multi-agent, see
+// session notes) found several OTHER legacy files (mechicon.cpp,
+// keyboardref.cpp, loadscreen.cpp) branch on Environment.screenWidth==800/
+// 640/etc as a TUNED-RESOLUTION discriminator, and other code
+// (mechcmd2.cpp:2988-2989, logmain.cpp:780-781) independently re-hardcodes
+// 800x600/640x480 elsewhere in the same state machine regardless of this
+// gate -- so flipping this default doesn't reliably help and risks breaking
+// those other tuned-resolution branches. Real fix for the mech-preview-panel
+// scale bug: render the legacy MLR preview into its own fixed 800x600
+// offscreen FBO (untouched legacy math, Environment.screenWidth stays 800
+// exactly as every other legacy system already expects) and composite that
+// texture into the ImGui panel via GuiRuntime::DrawUiImage with UV cropping
+// -- see SimpleCamera::render()/mechlopedia.cpp. Default back to ON.
 static bool g_hudResClampEnabled = true;
 void __stdcall gos_SetHudResClampEnabled( bool enabled )
 {
@@ -8439,13 +8009,39 @@ void __stdcall gos_SetScreenMode( DWORD Width, DWORD Height, DWORD bitDepth/*=16
     // Memory: hud_scene_resolution_separation.
     // EDITOR: gated off (gos_SetHudResClampEnabled(false)) — the editor has no
     // legacy 2D HUD (ImGui) and must render at native res so pick/drag align.
+    // WINDOWED-8006-1 (issue #49): MC2_WINDOWED wins over every later
+    // fullscreen request too — prefs.applyPrefs() re-issues SetScreenMode
+    // with GotoFullScreen from options.cfg, which was overriding the boot
+    // override and bouncing the launcher's Windowed toggle back to
+    // fullscreen.
+    {
+        static int s_forceWindowed = -1;
+        if (s_forceWindowed < 0) {
+            const char* wv = getenv("MC2_WINDOWED");
+            s_forceWindowed = (wv && wv[0] && wv[0] != '0') ? 1 : 0;
+        }
+        if (s_forceWindowed) {
+            GotoFullScreen = false;
+            GotoWindowMode = true;
+        }
+    }
+
+    // WINDOWED-8006-1 (issue #49): clamped path keeps the PHYSICAL window at
+    // its current (boot/options.cfg) size — phys 0,0 = keep — while the game's
+    // logical canvas goes to 800x600. Unclamped (editor) resizes for real.
+    DWORD physW = 0, physH = 0;
     if (g_hudResClampEnabled)
     {
         Width  = 800;
         Height = 600;
     }
+    else
+    {
+        physW = Width;
+        physH = Height;
+    }
 
-    g_gos_renderer->setScreenMode(Width, Height, bitDepth, GotoFullScreen, AntiAlias);
+    g_gos_renderer->setScreenMode(Width, Height, bitDepth, GotoFullScreen, AntiAlias, physW, physH);
 }
 
 // [FORCE-43 v1] Centered 4:3 pillarbox rect. Single source of truth shared by
@@ -8479,6 +8075,14 @@ void __stdcall gos_SetupViewport( bool FillZ, float ZBuffer, bool FillBG, DWORD 
 void __stdcall gos_SetRenderViewport(float x, float y, float w, float h)
 {
     gosASSERT(g_gos_renderer);
+	// IN-MISSION-DETACH-1: store-only, EXACTLY like the nifty base (the
+	// glViewport call has been commented out there since the GL port). The
+	// UI-phase1 merge armed it with a HiDPI-scaled glViewport, which stomps
+	// the GL viewport for every in-mission caller — terrain (own MVP
+	// dispatch) and TGL objects/water (viewport-transformed) desync, so
+	// props/mechs/trees/water visibly slide off the terrain while panning.
+	// The defs/ImGui UI never needed this: it scales via
+	// GuiRuntime::GetDisplaySize, and the preview FBO sets its own viewport.
 	//glViewport(x, y, w, h);
 	g_gos_renderer->setRenderViewport(vec4(x, y, w, h));
 }
@@ -8927,369 +8531,10 @@ void __stdcall gos_SetRenderMaterialSamplerUnit(HGOSRENDERMATERIAL material, con
 	material->setSamplerUnit(name, unit);
 }
 
-// ===================================================================
-// [LIGHTSSBO v1] LightsData SSBO. Was a std140 UBO (ObjectLights
-// light[64]) at LIGHT_DATA_ATTACHMENT_SLOT; converted to an unbounded
-// std430 SSBO at LIGHT_DATA_SSBO_BINDING to remove the 64-slot ceiling
-// (mc2_17 was 57/64 combined mech+static — one dense mission from silent
-// corruption). The gos buffer API has no STORAGE type, so this is raw
-// GL, mirroring the s_perCmdSsbo pattern. Named device-mediated helper
-// (vulkan-prep): callers do NOT touch GL directly.
-// See docs/superpowers/plans/2026-05-17-lightsdata-ubo-to-ssbo.md
-// ===================================================================
-// LIGHTDATA-SSBO-OWNER-1: the live default-path light-data SSBO is narrowed behind
-// a GpuBufferOwner identity record (logical id + lifetime + debug name + GLuint
-// value). Every gen/bind/bufferData/subdata/delete/guard site reaches the raw
-// handle ONLY via s_lightDataOwner.glName; GL args/binding-slot/flags/order are
-// unchanged. Persistent lifetime: lazy-created on first upload, destroyed in
-// gos_LightDataSsbo_Destroy (txmmgr.cpp mcTextureManager teardown). Grow-once:
-// on grow the handle is deleted+regenerated, so the owner is RE-REGISTERED on the
-// new handle (registerLightDataSsbo helper) and invalidated on destroy.
-static RenderCore::GpuBufferOwner s_lightDataOwner{
-    RenderCore::RenderResourceId::LightDataSsbo,
-    RenderCore::RenderResourceLifetime::Persistent,
-    "LightDataSsbo",
-    0u};
-#define s_lightDataSsbo (s_lightDataOwner.glName)
-static GLsizeiptr s_lightDataSsboBytes = 0;
-
-// LIGHTDATA-SSBO-OWNER-1: (re)register the owner in the resource registry at every
-// create/grow site (observe-only metadata; never read by the draw/upload path).
-static void registerLightDataSsbo(GLsizeiptr bytes) {
-    RenderCore::RenderResourceDesc d;
-    d.id        = RenderCore::RenderResourceId::LightDataSsbo;
-    d.kind      = RenderCore::RenderResourceKind::Buffer;
-    d.lifetime  = RenderCore::RenderResourceLifetime::Persistent;
-    d.format    = RenderCore::RenderResourceFormat::BufferRaw;
-    d.debugName = "LightDataSsbo";
-    d.glName    = static_cast<GLuint>(s_lightDataOwner.glName);
-    d.sizeBytes = static_cast<uint64_t>(bytes);
-    d.valid     = true;
-    RenderCore::registerOrUpdateRenderResource(d);
-}
-static void invalidateLightDataSsbo() {
-    RenderCore::RenderResourceDesc invalid;
-    invalid.id = RenderCore::RenderResourceId::LightDataSsbo;
-    RenderCore::registerOrUpdateRenderResource(invalid);
-}
-static const bool s_lightSsboTrace =
-	(getenv("MC2_LIGHTSSBO_TRACE") != nullptr);
-
-// LIGHT-GROW-ONCE-SUBDATA-1: per-record stride for headroom sizing.
-// Lockstep with mclib/tgl.h `static_assert(sizeof(TG_HWLightsData) == 3600)`.
-// gameos_graphics.cpp does NOT include tgl.h, so the value is mirrored here
-// (same convention as LIGHT_DATA_SSBO_BINDING being a hardcoded #define).
-// LIGHT-ABI-WIDEN-STAGE0-1: widened 1808->3600 (per-object cap N=16->32). This
-// hand-copied literal is the sneakiest drift site — scripts/check-light-abi-lockstep.py
-// fails CI if it disagrees with the other 4 lockstep sites.
-// Headroom of +128 records matches the CPU backing grow step
-// (mclib/txmmgr.cpp addLightDataStructure, `lightDataStructuresCapacity + 128`)
-// so the GL grow cadence equals the CPU grow cadence — both amortized, rare.
-static constexpr GLsizeiptr kLightRecordStride = 3600;
-static constexpr GLsizeiptr kLightGrowHeadroomRecords = 128;
-
-// LIGHT-PREFIX-GPU-COPY-1 (TXMMGR-PERF-EASYWINS-1): keep a VRAM stash of the
-// immutable static light prefix [0..S) and, per frame, glCopyBufferSubData it
-// into the freshly-orphaned slot-20 SSBO instead of re-pushing it over PCIe.
-// Only the dynamic suffix [S..count) goes through glBufferSubData each frame.
-//
-// WHY: LIGHTSSBO-ORPHAN-1 (the NVIDIA implicit-sync stall fix) orphans the
-// whole store every frame, which defeated the STATIC_LIGHT_UPLOAD_SPLIT
-// prefix-skip — measured [RENDERLISTS_COST v1] light_upload ~950 µs/frame on
-// mc2_24 (~2.7k static records × 3600 B ≈ 9.7 MB PCIe re-upload per frame).
-//
-// NVIDIA-SAFETY (why this does NOT reintroduce the ORPHAN-1 stall): the orphan
-// still happens (fresh store, no in-flight readers), the prefix arrives via a
-// GPU-side VRAM->VRAM copy (no CPU-blocking PCIe write), and the stash itself
-// is only WRITTEN on prefixDirty frames (mission-load bake / re-bake) — it is
-// read-only in steady state, so no cross-frame in-flight-write hazard exists.
-// Contract: any [0..S) mutation sets mc2MarkStaticLightPrefixDirty()
-// (mclib/txmmgr.cpp:1583-1591), which refreshes the stash here.
-//
-// Default OFF pending soak; kill-switch by unsetting. Requires the split path
-// (MC2_STATIC_LIGHT_UPLOAD_SPLIT default-ON + MC2_LIGHTBAKE default-ON).
-// Subsumed by MC2_GPUBUF_LIGHT_GROWONCE when that ships (grow-once branch
-// runs first).
-static bool gosLightPrefixGpuCopyEnabled() {
-    static const bool s_on = []() {
-        const char* v = std::getenv("MC2_LIGHT_PREFIX_GPU_COPY");
-        return v && v[0] != '0';
-    }();
-    return s_on;
-}
-static GLuint     s_lightPrefixStash      = 0;  // immutable prefix mirror (VRAM)
-static GLsizeiptr s_lightPrefixStashBytes = 0;  // stash capacity
-static GLsizeiptr s_lightPrefixStashLive  = 0;  // live prefix bytes valid in stash
-
-// LIGHT-GROW-ONCE-SUBDATA-1: when MC2_GPUBUF_LIGHT_GROWONCE is ON, upload only
-// the live used bytes into the single persistent slot-20 SSBO via
-// glBufferSubData (no per-frame full glBufferData orphan re-spec). Grow ONLY
-// when used bytes exceed current GL capacity, sized with +128-record headroom
-// so grow is rare. Returns true if it handled the upload (ON path); false to
-// fall through to the unchanged OFF (orphan) path.
-//
-// CRITICAL NVIDIA CAVEAT (documented, NOT solved here — see slice + recon §3/§4):
-// glBufferSubData into the single live buffer that is read all-frame by every
-// lit draw (and cross-phase by the mech/static-prop batchers, txmmgr.cpp:485-492)
-// has a CROSS-FRAME in-flight-write hazard. On NVIDIA, SubData into a buffer the
-// GPU is still reading from the prior frame's draws STALLS the CPU until the GPU
-// finishes — exactly the ~80ms stall the LIGHTSSBO-ORPHAN-1 orphan path dodges.
-// On AMD this is tolerated (no stall), which is WHY this gate is default-OFF and
-// NVIDIA is a HARD BLOCKER before any default-on. Do NOT add an N-buffer rotation
-// to fix it — that is the full GpuStorageRing ring (explicitly out of scope here).
-static bool gos_LightDataSsbo_UploadGrowOnce(const void* data, size_t bytes)
-{
-	const GLsizeiptr want = (GLsizeiptr)bytes;
-	if (s_lightDataSsbo == 0) {
-		// First create: allocate at requested size + headroom, no data copy
-		// of trailing slack. Upload the live bytes via SubData.
-		const GLsizeiptr cap = want + kLightGrowHeadroomRecords * kLightRecordStride;
-		glGenBuffers(1, &s_lightDataSsbo);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
-		// Allocate uninitialized capacity (nullptr) ONCE, then fill live bytes.
-		// GL_DYNAMIC_DRAW: rewritten-often, drawn-often (read every frame).
-		glBufferData(GL_SHADER_STORAGE_BUFFER, cap, nullptr, GL_DYNAMIC_DRAW);
-		s_lightDataSsboBytes = cap;
-		MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, want, data);
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-		registerLightDataSsbo(s_lightDataSsboBytes);  // LIGHTDATA-SSBO-OWNER-1: register at create
-		if (s_lightSsboTrace) {
-			std::fprintf(stderr,
-			    "[LIGHTSSBO v1] event=growonce_create binding=%d capBytes=%td liveBytes=%zu\n",
-			    LIGHT_DATA_SSBO_BINDING, (ptrdiff_t)cap, bytes);
-			std::fflush(stderr);
-		}
-		return true;
-	}
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
-	if (want > s_lightDataSsboBytes) {
-		// RARE grow. The old buffer may be read in-flight by the prior frame's
-		// lit draws; a stall on the (rare) grow is acceptable, so DRAIN with
-		// glFinish before deleting it. Recreate at new capacity WITH +128-record
-		// headroom so growth amortizes, rebind to slot 20, log ONCE per grow.
-		// RF2 invariant preserved: glBindBufferBase (buffer->binding-point) is
-		// CONTEXT state and must re-follow the new storage; the program block
-		// binding (gos_BindLightDataStorageBlock) is PROGRAM state and is NOT
-		// re-issued here.
-		const GLsizeiptr newCap = want + kLightGrowHeadroomRecords * kLightRecordStride;
-		const GLsizeiptr oldCap = s_lightDataSsboBytes;
-		glFinish();  // drain any in-flight reads of the old store before delete
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-		glDeleteBuffers(1, &s_lightDataSsbo);
-		glGenBuffers(1, &s_lightDataSsbo);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, newCap, nullptr, GL_DYNAMIC_DRAW);
-		s_lightDataSsboBytes = newCap;
-		MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, want, data);
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-		registerLightDataSsbo(s_lightDataSsboBytes);  // LIGHTDATA-SSBO-OWNER-1: handle recreated on grow -> re-register
-		if (s_lightSsboTrace) {
-			std::fprintf(stderr,
-			    "[LIGHTSSBO v1] event=growonce_grow oldCap=%td newCap=%td liveBytes=%zu\n",
-			    (ptrdiff_t)oldCap, (ptrdiff_t)newCap, bytes);
-			std::fflush(stderr);
-		}
-		return true;
-	}
-	// Steady state: in-place partial update of the live bytes ONLY. No orphan,
-	// no full re-spec. This is the per-frame win — [GPUBUF v1] light owner
-	// orphan bytes drop to ~0 (routed through MC2_GL_BufferSubData, NOT the
-	// owner glBufferData macro, so the light orphan tally is not incremented).
-	MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, want, data);
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-	return true;
-}
-
-void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
-{
-	if (bytes == 0) return;
-	// LIGHT-GROW-ONCE-SUBDATA-1: ON path takes over entirely (grow-once +
-	// per-frame SubData). When OFF, fall through to the byte-identical legacy
-	// orphan path below — nothing in that path changes.
-	if (gosLightGrowOnceEnabled()) {
-		if (gos_LightDataSsbo_UploadGrowOnce(data, bytes)) return;
-	}
-	if (s_lightDataSsbo == 0) {
-		glGenBuffers(1, &s_lightDataSsbo);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
-		MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW, LightSsbo);
-		s_lightDataSsboBytes = (GLsizeiptr)bytes;
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-		registerLightDataSsbo(s_lightDataSsboBytes);  // LIGHTDATA-SSBO-OWNER-1: register at create (legacy path)
-		if (s_lightSsboTrace) {
-			std::fprintf(stderr, "[LIGHTSSBO v1] event=enabled binding=%d bytes=%zu\n",
-			             LIGHT_DATA_SSBO_BINDING, bytes);
-			std::fflush(stderr);
-		}
-		return;
-	}
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
-	if ((GLsizeiptr)bytes > s_lightDataSsboBytes) {
-		// Grow: reallocate storage. RF2 — the buffer->binding-point
-		// (glBindBufferBase below) is CONTEXT state and must follow the
-		// new storage; the program block->binding
-		// (glShaderStorageBlockBinding, gos_BindLightDataStorageBlock) is
-		// PROGRAM state and is UNAFFECTED by buffer reallocation — do NOT
-		// re-issue it here.
-		MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW, LightSsbo);
-		if (s_lightSsboTrace) {
-			std::fprintf(stderr, "[LIGHTSSBO v1] event=buffer_grow old=%td new=%zu\n",
-			             (ptrdiff_t)s_lightDataSsboBytes, bytes);
-			std::fflush(stderr);
-		}
-		s_lightDataSsboBytes = (GLsizeiptr)bytes;
-		registerLightDataSsbo(s_lightDataSsboBytes);  // LIGHTDATA-SSBO-OWNER-1: storage realloc'd (same handle) -> refresh size
-	} else {
-		// LIGHTSSBO-ORPHAN-1: buffer orphaning eliminates the implicit GPU pipeline
-		// sync stall on NVIDIA. glBufferSubData on a buffer that the GPU is still
-		// reading (from the prior frame's draw calls) forces the NVIDIA driver to
-		// block the CPU until the GPU finishes — observed as ~80ms in the
-		// RenderLists.LightDataUpload Tracy zone on a 1050 Ti. AMD tolerates it
-		// silently. glBufferData(nullptr) discards the old backing store immediately;
-		// the driver retires it asynchronously once the GPU finishes, and hands the
-		// CPU a fresh store with no sync stall. GL_STREAM_DRAW is the correct hint
-		// for write-once-per-frame data (vs GL_DYNAMIC_DRAW which NVIDIA can place
-		// in VRAM, making the subsequent write go through PCI-E with sync).
-		MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW, LightSsbo);
-		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)bytes, data);
-	}
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-}
-
-void __stdcall gos_LightDataSsbo_UploadSplit(const void* data, size_t prefixBytes,
-                                             size_t totalBytes, bool prefixDirty)
-{
-	if (totalBytes == 0) return;
-	if (prefixBytes > totalBytes) prefixBytes = totalBytes;  // clamp (S floored by count)
-	const char* base = static_cast<const char*>(data);
-
-	// LIGHT-GROW-ONCE-SUBDATA-1: when ON, the split (prefix/suffix) optimization
-	// is moot — the grow-once path keeps a persistent store, so SubData of the
-	// full live range is correct and cheap (no orphan to defeat prefixDirty, no
-	// full re-spec). Route the whole upload through the grow-once helper. The
-	// per-frame cost is one glBufferSubData of usedBytes (the win). See the
-	// NVIDIA in-flight caveat on gos_LightDataSsbo_UploadGrowOnce.
-	if (gosLightGrowOnceEnabled()) {
-		gos_LightDataSsbo_UploadGrowOnce(data, totalBytes);
-		if (s_lightSsboTrace) {
-			std::fprintf(stderr,
-			    "[LIGHTSSBO v2] event=growonce_split_subsumed total=%zu prefix=%zu\n",
-			    totalBytes, prefixBytes);
-			std::fflush(stderr);
-		}
-		return;
-	}
-
-	// Create or grow → full upload (prefix necessarily included; dirty cleared
-	// implicitly since the whole buffer is now fresh).
-	if (s_lightDataSsbo == 0 || (GLsizeiptr)totalBytes > s_lightDataSsboBytes) {
-		gos_LightDataSsbo_Upload(data, totalBytes);  // reuses create/grow + binding
-		// LIGHT-PREFIX-GPU-COPY-1: the caller CONSUMED prefixDirty before this
-		// early return. If a re-bake (S unchanged) landed on the same frame as a
-		// buffer grow, the stash would silently keep the stale prefix. Force a
-		// refresh on the next gated frame (cheap; grow frames are rare).
-		s_lightPrefixStashLive = 0;
-		if (s_lightSsboTrace) {
-			std::fprintf(stderr, "[LIGHTSSBO v2] event=full_on_grow total=%zu prefix=%zu\n",
-			             totalBytes, prefixBytes);
-			std::fflush(stderr);
-		}
-		return;
-	}
-
-	// LIGHT-PREFIX-GPU-COPY-1 (gated, default OFF): orphan-preserving prefix
-	// restore via VRAM->VRAM copy; PCIe traffic = dynamic suffix only.
-	if (gosLightPrefixGpuCopyEnabled() && prefixBytes > 0) {
-		// Refresh the stash when the prefix mutated (bake/re-bake sets the
-		// dirty flag), on first use, or when S extended (mission-load growth).
-		const bool stashStale = prefixDirty || s_lightPrefixStash == 0 ||
-		                        (GLsizeiptr)prefixBytes != s_lightPrefixStashLive;
-		if (stashStale) {
-			if ((GLsizeiptr)prefixBytes > s_lightPrefixStashBytes) {
-				// Grow with the same +128-record headroom cadence as the CPU
-				// backing store so mission-load growth amortizes.
-				const GLsizeiptr cap = (GLsizeiptr)prefixBytes +
-				    kLightGrowHeadroomRecords * kLightRecordStride;
-				if (s_lightPrefixStash) glDeleteBuffers(1, &s_lightPrefixStash);
-				glGenBuffers(1, &s_lightPrefixStash);
-				glBindBuffer(GL_COPY_READ_BUFFER, s_lightPrefixStash);
-				glBufferData(GL_COPY_READ_BUFFER, cap, nullptr, GL_STATIC_DRAW);
-				s_lightPrefixStashBytes = cap;
-			} else {
-				glBindBuffer(GL_COPY_READ_BUFFER, s_lightPrefixStash);
-			}
-			MC2_GL_BufferSubData(GL_COPY_READ_BUFFER, 0, (GLsizeiptr)prefixBytes, base);
-			s_lightPrefixStashLive = (GLsizeiptr)prefixBytes;
-			if (s_lightSsboTrace) {
-				std::fprintf(stderr,
-				    "[LIGHTSSBO v3] event=prefix_stash_refresh prefix=%zu cap=%td dirty=%d\n",
-				    prefixBytes, (ptrdiff_t)s_lightPrefixStashBytes, prefixDirty ? 1 : 0);
-				std::fflush(stderr);
-			}
-		} else {
-			glBindBuffer(GL_COPY_READ_BUFFER, s_lightPrefixStash);
-		}
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
-		// Same orphan discipline as ORPHAN-1: fresh store, no in-flight readers.
-		MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW, LightSsbo);
-		glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER,
-		                    0, 0, (GLsizeiptr)prefixBytes);
-		if (totalBytes > prefixBytes) {
-			glBufferSubData(GL_SHADER_STORAGE_BUFFER, (GLintptr)prefixBytes,
-			                (GLsizeiptr)(totalBytes - prefixBytes), base + prefixBytes);
-		}
-		glBindBuffer(GL_COPY_READ_BUFFER, 0);
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-		return;
-	}
-
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
-	// LIGHTSSBO-ORPHAN-1: orphan before any write to avoid implicit GPU sync stall
-	// on NVIDIA (same root cause as the non-split path above). After orphaning, the
-	// old data store is gone, so we must re-upload the prefix unconditionally —
-	// the prefixDirty skip is disabled. On AMD the orphan is equally fast (~1us)
-	// and eliminates the latent stall if the GPU falls behind the CPU.
-	MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW, LightSsbo);
-	if (prefixBytes > 0) {
-		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)prefixBytes, base);
-	}
-	if (totalBytes > prefixBytes) {
-		glBufferSubData(GL_SHADER_STORAGE_BUFFER, (GLintptr)prefixBytes,
-		                (GLsizeiptr)(totalBytes - prefixBytes), base + prefixBytes);
-	}
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-	if (s_lightSsboTrace) {
-		// prefixDirty is always treated as true post-orphan; log what was requested
-		std::fprintf(stderr, "[LIGHTSSBO v2] event=split_orphan prefixDirty=%d prefix=%zu suffix=%zu\n",
-		             prefixDirty ? 1 : 0, prefixBytes, totalBytes - prefixBytes);
-		std::fflush(stderr);
-	}
-}
-
-void __stdcall gos_LightDataSsbo_Destroy()
-{
-	if (s_lightDataSsbo) {
-		glDeleteBuffers(1, &s_lightDataSsbo);
-		s_lightDataSsbo      = 0;
-		s_lightDataSsboBytes = 0;
-		invalidateLightDataSsbo();  // LIGHTDATA-SSBO-OWNER-1: mark registry slot unavailable on teardown
-	}
-	// LIGHT-PREFIX-GPU-COPY-1: tear down the prefix stash alongside the main
-	// SSBO; the next mission's first dirty frame recreates it.
-	if (s_lightPrefixStash) {
-		glDeleteBuffers(1, &s_lightPrefixStash);
-		s_lightPrefixStash      = 0;
-		s_lightPrefixStashBytes = 0;
-		s_lightPrefixStashLive  = 0;
-	}
-}
+// GAMEOS-GRAPHICS-SPLIT-1 slice 4: the [LIGHTSSBO v1] LightsData SSBO
+// cluster (owner record, grow-once, prefix GPU-copy, upload/destroy) moved
+// to gameos_graphics_light_ssbo.cpp. gos_BindLightDataStorageBlock stays
+// here (needs gosRenderMaterial internals).
 
 // RF1: bind the LightsData SSBO block for a lit material's program.
 // Unconditional per-draw (idempotent, ~free, and immune to the CLAUDE.md
@@ -9320,6 +8565,27 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 	gosASSERT(material);
 	gosASSERT(g_gos_renderer);
 
+	// MERGE-CONFLICT-UI-PHASE1: theirs (ui-phase1 fork) wanted to move this
+	// `gosPostProcess* pp = getGosPostProcess(); if (!pp) return;` guard to
+	// AFTER the terrainMVP upload block below, so that 3D camera views shown
+	// during the logistics/menu phase (encyclopedia mech viewer, options
+	// gameplay preview — added by the ui-phase1 GuiRuntime work) still get a
+	// valid MVP uniform even when gosPostProcess hasn't been created yet
+	// (pp is only created once a mission/scene is loaded). Ours has since
+	// substantially rewritten the terrainMVP upload block itself
+	// (OBJECT-DECAL-MATRIX-SHARE-1 / OBJECT-SHADOW-MVP-CURRENCY-1: routes
+	// object MVP through gos_GetObjectDrawMVP with a view-epoch check +
+	// MC2_PROP_FIXB_MVP killswitch, rather than always using
+	// getTerrainMVP() directly) — the exact lines theirs' hunk reorders.
+	// Reordering the pp-null-check without re-verifying that rewritten
+	// block's assumptions (e.g. whether gos_GetObjectDrawMVP or
+	// g_gos_renderer state depends on pp already existing) is exactly the
+	// kind of renderer-internals change this merge must not blind-apply.
+	// Preserving ours' early-return-before-MVP-upload ordering as-is;
+	// theirs' pp-guard-after-MVP reordering was NOT applied. If the
+	// encyclopedia/options 3D preview needs a valid MVP without
+	// gosPostProcess, this is the seam to revisit — verify the rewritten
+	// MVP block tolerates pp==nullptr before moving the guard.
 	gosPostProcess* pp = getGosPostProcess();
 	if (!pp) return;
 
@@ -9477,6 +8743,189 @@ void __stdcall gos_ForceApplyRenderStates() {
 void __stdcall gos_InvalidateRenderStateCache() {
     if (!g_gos_renderer) return;
     g_gos_renderer->invalidateRenderStateCache();
+}
+
+// Called from GuiRuntime::Render() just before post-ImGui 3D camera callbacks.
+// Restores GL state that shadow sub-passes leave dirty and that applyRenderStates()
+// has no tracking for (glColorMask, scissor test, FB binding).
+void __stdcall gos_PrepareForPostImGuiRender() {
+    // Shadow passes (gosPostProcess::beginShadowPass*) call
+    // glColorMask(GL_FALSE,...) and restore in endShadowPass(). If endScene()
+    // finishes with colorMask still FALSE (e.g. shadows disabled mid-frame or
+    // early-out path), all subsequent color writes are silently suppressed.
+    // applyRenderStates() has no gos_State_ColorMask and never fixes this.
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+    // Ensure we are on the default framebuffer and scissor is not clipping.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_SCISSOR_TEST);
+
+    static const bool s_diag = (getenv("MC2_3DVIEW_DIAG") != nullptr);
+    if (s_diag) {
+        static bool s_diagDone = false;
+        if (!s_diagDone) {
+            s_diagDone = true;
+            GLint fbo = 0; glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+            GLboolean depthTest = glIsEnabled(GL_DEPTH_TEST);
+            GLboolean scissor   = glIsEnabled(GL_SCISSOR_TEST);
+            GLint depthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+            GLboolean depthMask = GL_FALSE; glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+            GLboolean cm[4] = {}; glGetBooleanv(GL_COLOR_WRITEMASK, cm);
+            GLint vp[4] = {}; glGetIntegerv(GL_VIEWPORT, vp);
+            fprintf(stderr,
+                "[3DVIEW_DIAG v1] post-imgui: fbo=%d depthTest=%d depthFunc=0x%x "
+                "depthMask=%d scissor=%d colorMask=%d%d%d%d vp=[%d,%d,%d,%d]\n",
+                fbo, (int)depthTest, depthFunc, (int)depthMask, (int)scissor,
+                (int)cm[0], (int)cm[1], (int)cm[2], (int)cm[3],
+                vp[0], vp[1], vp[2], vp[3]);
+            fflush(stderr);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Camera preview FBO — used by SimpleCamera to render 3D panel views
+// (encyclopedia, options gameplay) into a clean offscreen buffer so they
+// are unaffected by the scene's reverse-Z depth state or gosPostProcess
+// lifecycle.
+//
+// PREVIEW-FBO-FIXED-800x600-1: the FBO is a FIXED 800x600 (the legacy 2D
+// UI's native virtual canvas), NOT the real drawable size. The legacy MLR
+// mech-preview draw (SimpleCamera::render(), gos_GetViewport(), TG_Shape's
+// screen-space math) is written entirely in terms of that 800x600 canvas
+// and Environment.screenWidth/Height (which stays 800x600 by design -- see
+// g_hudResClampEnabled above; do not "fix" that to real resolution, it desyncs
+// other legacy tuned-resolution code). Rendering into an 800x600 FBO means
+// none of that legacy math needs to know or care about the real window size
+// at all -- it draws exactly as it always has. The caller then samples just
+// the small preview rect (in 0..800/0..600 UV space) out of this texture and
+// draws it, scaled to fit, as a normal ImGui image in the real-resolution
+// defs UI panel (see GuiRuntime::DrawUiImage + gos_GetCameraPreviewTexture
+// below, wired from SimpleCamera::render()/mechlopedia.cpp/mechbayscreen.cpp).
+// This avoids EVERY resolution-mismatch class of bug the direct-draw
+// approach hit: no real-vs-800 scale math, no glViewport scoping, no
+// depth-state-after-ImGui issues (the FBO gets its own clean depth buffer
+// every frame).
+// ---------------------------------------------------------------------------
+namespace {
+    GLuint s_camPreviewFbo = 0;
+    GLuint s_camPreviewColorTex = 0;
+    GLuint s_camPreviewDepthRbo = 0;
+    int    s_camPreviewW = 0;
+    int    s_camPreviewH = 0;
+
+    void ensureCamPreviewFbo(int w, int h)
+    {
+        if (s_camPreviewFbo && s_camPreviewW == w && s_camPreviewH == h)
+            return;
+
+        if (s_camPreviewFbo)
+        {
+            glDeleteFramebuffers(1, &s_camPreviewFbo);
+            glDeleteTextures(1, &s_camPreviewColorTex);
+            glDeleteRenderbuffers(1, &s_camPreviewDepthRbo);
+            s_camPreviewFbo = s_camPreviewColorTex = s_camPreviewDepthRbo = 0;
+        }
+
+        glGenFramebuffers(1, &s_camPreviewFbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_camPreviewFbo);
+
+        glGenTextures(1, &s_camPreviewColorTex);
+        glBindTexture(GL_TEXTURE_2D, s_camPreviewColorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        // PREVIEW-SUPERSAMPLE-1: LINEAR, not NEAREST — the panel crop is a small
+        // sub-rect scaled up to the real-resolution ImGui panel; NEAREST is what
+        // made the preview look chunky even before supersampling.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_camPreviewColorTex, 0);
+
+        glGenRenderbuffers(1, &s_camPreviewDepthRbo);
+        glBindRenderbuffer(GL_RENDERBUFFER, s_camPreviewDepthRbo);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, w, h);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, s_camPreviewDepthRbo);
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        s_camPreviewW = w;
+        s_camPreviewH = h;
+    }
+}
+
+// Bind the offscreen preview FBO (fixed 800x600, the legacy 2D UI's native
+// canvas) and prepare it for a fresh mech render. Must be paired with
+// gos_EndCameraPreviewRender(). See PREVIEW-FBO-FIXED-800x600-1 above for why
+// this is fixed-size rather than drawable-size.
+// PREVIEW-SUPERSAMPLE-1: raster scale for the preview FBO. The legacy math
+// stays in its 800x600 virtual canvas — the ortho projection maps 0..800/0..600
+// to NDC regardless of viewport size, so an NxN-scaled FBO + viewport simply
+// rasterizes the same geometry at N-times the resolution (free supersampling;
+// the ImGui composite crops in normalized UV space, unaffected). Default 4x
+// (3200x2400 RGBA8 ~= 30 MB, one instance); MC2_PREVIEW_FBO_SCALE overrides 1-8.
+static int camPreviewScale()
+{
+    static int s_scale = -1;
+    if (s_scale < 0) {
+        s_scale = 4;
+        if (const char* v = getenv("MC2_PREVIEW_FBO_SCALE")) {
+            const int n = atoi(v);
+            if (n >= 1 && n <= 8) s_scale = n;
+        }
+    }
+    return s_scale;
+}
+
+void __stdcall gos_BeginCameraPreviewRender()
+{
+    if (!g_gos_renderer) return;
+    const int sc = camPreviewScale();
+    ensureCamPreviewFbo(800 * sc, 600 * sc);
+
+    static bool s_once = false;
+    if (!s_once) {
+        s_once = true;
+        GLenum status = GL_FRAMEBUFFER_UNDEFINED;
+        if (s_camPreviewFbo) {
+            glBindFramebuffer(GL_FRAMEBUFFER, s_camPreviewFbo);
+            status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        }
+        fprintf(stderr, "[3DVIEW_DIAG v2] BeginCameraPreviewRender: fbo=%u 800x600 status=0x%x\n",
+                s_camPreviewFbo, status);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, s_camPreviewFbo);
+    glViewport(0, 0, 800 * sc, 600 * sc);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    // 3D-viewer background: black, matching the surrounding panel.
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(0.0);  // reverse-Z: far=0, near=1
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
+}
+
+// Restore the default framebuffer (and its real-resolution glViewport) after
+// camera preview rendering.
+void __stdcall gos_EndCameraPreviewRender()
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (g_gos_renderer) {
+        glViewport(0, 0, g_gos_renderer->getWidth(), g_gos_renderer->getHeight());
+        g_gos_renderer->invalidateRenderStateCache();
+    }
+}
+
+// GL texture name of the 800x600 preview color attachment, for a caller to
+// wrap as an ImTextureID and draw via GuiRuntime::DrawUiImage with UV
+// cropping -- the composite-to-real-screen step happens entirely in ImGui
+// space, not via glBlitFramebuffer, so no resolution/scale math is needed
+// here at all.
+GLuint __stdcall gos_GetCameraPreviewTexture()
+{
+    return s_camPreviewColorTex;
 }
 
 // Terrain tessellation API
@@ -10031,40 +9480,9 @@ bool gos_GetTerrainDrawEnabled() {
     return g_gos_renderer ? g_gos_renderer->getTerrainDrawEnabled() : true;
 }
 
-// HUD scale — clamped to [0.5, 1.0]. 1.0 disables the transform entirely.
-// s_hud_scale itself is defined near the top of this file so flushHUDBatch()
-// can reference it directly without a forward declaration dance.
-void gos_SetHudScale(float s) {
-    if (s < 0.5f) s = 0.5f;
-    if (s > 1.0f) s = 1.0f;
-    s_hud_scale = s;
-}
-float gos_GetHudScale() { return s_hud_scale; }
-
-void gos_SetHudScaleActive(bool on) { s_hud_scale_active = on; }
-bool gos_GetHudScaleActive()        { return s_hud_scale_active; }
-
-// HUD-scale exemption: while set, HUD draw calls recorded are tagged scaleExempt
-// and skip the bottom-band shrink in flushHUDBatch. Bracket the cursor sprite
-// and modal dialogs so the HUD-fit shrink never moves the pointer or a popup.
-void gos_SetHudScaleExempt(bool on) { s_hud_scale_exempt = on; }
-bool gos_GetHudScaleExempt()        { return s_hud_scale_exempt; }
-
-void gos_HudInverseMousePoint(float& x, float& y) {
-    // Inverse of the single-anchor bottom-center HUD transform. Must stay in
-    // sync with gosRenderer::flushHUDBatch() above.
-    const float scale = s_hud_scale;
-    if (!s_hud_scale_active || scale > 0.999f || !g_gos_renderer) return;
-    const float sw = (float)g_gos_renderer->getWidth();
-    const float sh = (float)g_gos_renderer->getHeight();
-    const float bottomBand = sh * 0.60f;
-    const float renderedBandTop = sh + (bottomBand - sh) * scale;
-    if (y < renderedBandTop) return;
-    const float ax = sw * 0.5f;
-    const float ay = sh;
-    x = ax + (x - ax) / scale;
-    y = ay + (y - ay) / scale;
-}
+// GAMEOS-GRAPHICS-SPLIT-1 slice 5: HUD-scale + UI-canvas gos_* accessors
+// (SetHudScale/Exempt, canvas asserts, ComputeUiCanvasBox/HudCanvasBox,
+// HudInverseMousePoint) moved to gameos_graphics_params.cpp.
 
 // ── World-space overlay batch API ────────────────────────────────────────────
 

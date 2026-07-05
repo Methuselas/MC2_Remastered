@@ -4,6 +4,10 @@ project(gameos)
 set(SOURCES ${SOURCES}
     gameos.cpp
     gameos_graphics.cpp
+    gameos_graphics_font.cpp
+    gameos_graphics_texture.cpp
+    gameos_graphics_light_ssbo.cpp
+    gameos_graphics_params.cpp
     gameos_res.cpp
     MC2Strings.cpp
     gameos_fileio.cpp

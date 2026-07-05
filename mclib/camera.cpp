@@ -2710,7 +2710,24 @@ void Camera::setOrthogonal(void)
 			far_clip = editorFar;
 
 		float horizontal_fov = camera_fov * DEGREES_TO_RADS;
+		// UI-ASPECT-ANCHOR-1 (camera): build the projection with the REAL
+		// display aspect, not the HUD-clamped 800x600 (4:3). The clamped ratio
+		// baked a 4:3 frustum that the full-window stretch then distorted at
+		// any other aspect (16:9 = fat mechs; 25:9 = squashed scene). Pick math
+		// shares this matrix (project/inverse through the same constants), so
+		// screen<->world stays consistent. MC2_CAMERA_ASPECT_NATIVE=0 restores
+		// the legacy stretched look.
 		float height2width = ((float)Environment.screenHeight / (float)Environment.screenWidth);
+		{
+			static const bool s_nativeAspect =
+				[]{ const char* e = getenv("MC2_CAMERA_ASPECT_NATIVE"); return !(e && e[0] == '0'); }();
+			// Panel previews (SimpleCamera -> fixed 800x600 FBO) must keep the
+			// clamped ratio: their render target IS 4:3, not the window.
+			extern int g_mechPreviewRenderDepth;
+			if (s_nativeAspect && g_mechPreviewRenderDepth == 0
+				&& Environment.drawableWidth > 0 && Environment.drawableHeight > 0)
+				height2width = (float)Environment.drawableHeight / (float)Environment.drawableWidth;
+		}
 
 		//
 		//-------------------------------------------------------

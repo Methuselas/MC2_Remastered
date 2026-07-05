@@ -4604,6 +4604,19 @@ void Mission::start (void)
 	if (missionInterface)
 		MissionInterfaceManager::armHoverTarget();
 	gos_SetHudScaleActive(true);  // enable HUD shrink only during mission
+	gos_SetHudCanvasActive(true); // UI-ASPECT-ANCHOR-1: HUD chrome on the 16:9 canvas
+	// LOAD-BANNER-RESIDUE-1 (queue #4 floating banner): the ProgressTimer
+	// async blit keeps compositing the load-progress art over live mission
+	// frames while loadProgress lingers in 1..99 after mission_ready — the
+	// ~1s world-floating blue panel at mission start. Load is DONE here;
+	// zero the progress so the blit's (0,100) window closes immediately.
+	// MP 'waiting for players' uses loadProgress==1000 and is untouched.
+	if (!MPlayer)
+	{
+		extern float loadProgress;
+		if (loadProgress > 0.0f && loadProgress < 100.0f)
+			loadProgress = 0.0f;
+	}
 	for (long i = 0; i < NumGameObjectsToDisplay; i++)
 		DEBUGWINS_setGameObject(-1, ObjectManager->getByWatchID(parts[GameObjectWindowList[i]].objectWID));
 }
@@ -4771,6 +4784,7 @@ void Mission::destroy (bool initLogistics)
 	mc2verify::MissionSummary(missionFileName);
 
 	gos_SetHudScaleActive(false);  // back to 100% for menus/logistics
+	gos_SetHudCanvasActive(false); // UI-ASPECT-ANCHOR-1: canvas off with the shrink
 
 	// C2: release async readback ring buffer at mission teardown.
 	gpu_cull::readback_shutdown();

@@ -36,4 +36,10 @@ typedef bool (*CommandHandler)(const char* paramsJson,
                                std::string& errorOut);
 void registerCommand(const char* name, CommandHandler fn);
 
+// RESULTS-CAPTURE-1: engine-side screenshot scheduling — game code (e.g.
+// MissionResults) can request the same end-of-frame capture the socket
+// "screenshot" command uses. No-op when the shell gate is OFF or a shot is
+// already pending. name is sanitized like the socket path.
+void scheduleScreenshot(const char* name, bool backbuffer);
+
 }  // namespace gos_dev_shell

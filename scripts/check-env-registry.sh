@@ -101,6 +101,9 @@ ALLOWLIST=(
     MC2_FORCE_DYNAMIC_BUILDINGS # override -- dev testing
     MC2_FORCE_DYNAMIC_TREES     # override -- dev testing
     MC2_FPS_CAP                 # infra
+    MC2_HEIGHT                  # infra -- window height override (launcher/windowed)
+    MC2_WIDTH                   # infra -- window width override (launcher/windowed)
+    MC2_WINDOWED                # infra -- windowed-mode override (launcher, issue #49)
     MC2_FRAMECAP_TRACE          # trace
     MC2_FX_TRACE                # trace
     MC2_GOSFX_GROUP_LOG         # trace

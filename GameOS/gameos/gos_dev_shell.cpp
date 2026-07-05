@@ -515,6 +515,14 @@ bool pollCommands(uint32_t frame)
     return quit;
 }
 
+void scheduleScreenshot(const char* name, bool backbuffer)
+{
+    if (!shellEnabled() || !name || !name[0]) return;
+    if (!s_pendingShotPath.empty()) return;
+    s_pendingShotPath = sanitizeShotName(name, 0);
+    s_pendingShotBackbuffer = backbuffer;
+}
+
 void capturePendingScreenshot(uint32_t frame)
 {
     if (!shellEnabled() || s_pendingShotPath.empty()) return;

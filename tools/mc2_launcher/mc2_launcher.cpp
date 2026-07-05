@@ -176,6 +176,9 @@ static const EnvVarDef k_envVars[] = {
     { "MC2_STATIC_PROP_IBL_SH",      "Static prop SH-L2 IBL ambient (ON)",    true,  "1",    "Rendering" },
     // --- Display ---
     { "MC2_FORCE_43",                "Force 4:3 aspect (pillarbox widescreen)", true, "",    "Display"   },
+    { "MC2_WINDOWED",                "Windowed mode",                          true,  "",    "Display"   },
+    { "MC2_WIDTH",                   "Window width (blank = options.cfg)",     false, "",    "Display"   },
+    { "MC2_HEIGHT",                  "Window height (blank = options.cfg)",    false, "",    "Display"   },
     // --- Terrain ---
     { "MC2_TERRAIN_LOD_CHUNK",       "Chunk terrain LOD renderer (default ON)", true, "1",   "Terrain"   },
     { "MC2_COLORMAP_KTX2",           "BC7 KTX2 colormap atlas (default ON)",  true,  "1",    "Terrain"   },
